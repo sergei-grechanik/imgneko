@@ -1,0 +1,375 @@
+#!/bin/sh
+
+set -eu
+
+usage() {
+    cat <<'EOF'
+Usage:
+  ./configure [OPTIONS] [VAR=VALUE ...]
+
+Options:
+  --profile=NAME       Select profile: default, release, debug, asan
+  --build-dir=DIR      Build directory (default: build/<profile>)
+  --comp-db-mj         Generate compile_commands.json via compiler -MJ output
+  --prefix=PATH        Install prefix
+  --cc=CC              C compiler
+  --cppflags=FLAGS     Preprocessor flags
+  --cflags=FLAGS       C compiler flags
+  --ldflags=FLAGS      Linker flags
+  --ldlibs=LIBS        Libraries for linking
+  --feature-x=ON|OFF   Example feature toggle
+  --force              Overwrite an existing different config
+  --help               Show this help
+
+You can also use make-style assignments:
+  ./configure PROFILE=debug BUILD_DIR=build/debug CC=clang
+
+Examples:
+  ./configure --profile=release
+  ./configure PROFILE=debug BUILD_DIR=build/debug
+  ./configure --profile=asan --cc=clang
+EOF
+}
+
+die() {
+    printf '%s\n' "error: $*" >&2
+    exit 1
+}
+
+require_no_whitespace() {
+    var_name=$1
+    var_value=$2
+
+    case $var_value in
+        *[[:space:]]*)
+            die "$var_name must not contain whitespace ($var_value)"
+            ;;
+    esac
+}
+
+# Escape a value for a make variable assignment.
+# We escape:
+#   $  -> $$   so make keeps it literal
+#   #  -> \#   so it does not start a make comment
+escape_make() {
+    printf '%s' "$1" | sed 's/\$/$$/g; s/#/\\#/g'
+}
+
+# A function to test if the compiler supports -MJ for generating
+# compile_commands.json.
+probe_comp_db_mj() {
+    probe_dir="$(mktemp -d)"
+    probe_src="$probe_dir/probe.c"
+    probe_obj="$probe_dir/probe.o"
+    probe_json="$probe_dir/probe.json"
+    probe_err="$probe_dir/stderr"
+
+    printf '%s\n' 'int main(void) { return 0; }' >"$probe_src"
+
+    if ! CC=$CC CPPFLAGS=$CPPFLAGS CFLAGS=$CFLAGS PROBE_SRC=$probe_src PROBE_OBJ=$probe_obj PROBE_JSON=$probe_json \
+        sh -ec 'eval "set -- $CC $CPPFLAGS $CFLAGS"; exec "$@" -MJ "$PROBE_JSON" -c "$PROBE_SRC" -o "$PROBE_OBJ"' \
+        > /dev/null 2>"$probe_err"; then
+        probe_msg=$(sed -n '1p' "$probe_err")
+        rm -rf "$probe_dir"
+        if [ -n "$probe_msg" ]; then
+            die "--comp-db-mj requires a compiler that accepts -MJ (got: $probe_msg)"
+        fi
+        die "--comp-db-mj requires a compiler that accepts -MJ"
+    fi
+
+    rm -rf "$probe_dir"
+}
+
+# Absolute repository root, assuming this script lives in the project root.
+ROOT_DIR=$(CDPATH= cd "$(dirname "$0")" && pwd)
+require_no_whitespace ROOT_DIR "$ROOT_DIR"
+
+FORCE=0
+
+# Track which command-line options were explicitly provided.
+ARG_PROFILE_SET=0
+ARG_BUILD_DIR_SET=0
+ARG_PREFIX_SET=0
+ARG_CC_SET=0
+ARG_CPPFLAGS_SET=0
+ARG_CFLAGS_SET=0
+ARG_LDFLAGS_SET=0
+ARG_LDLIBS_SET=0
+ARG_FEATURE_X_SET=0
+ARG_COMP_DB_MJ_SET=0
+
+ARG_PROFILE=
+ARG_BUILD_DIR=
+ARG_PREFIX=
+ARG_CC=
+ARG_CPPFLAGS=
+ARG_CFLAGS=
+ARG_LDFLAGS=
+ARG_LDLIBS=
+ARG_FEATURE_X=
+ARG_COMP_DB_MJ=
+
+while [ "$#" -gt 0 ]; do
+    case $1 in
+        --help|-h)
+            usage
+            exit 0
+            ;;
+        --force)
+            FORCE=1
+            ;;
+        --profile=*)
+            ARG_PROFILE_SET=1
+            ARG_PROFILE=${1#*=}
+            ;;
+        --build-dir=*)
+            ARG_BUILD_DIR_SET=1
+            ARG_BUILD_DIR=${1#*=}
+            ;;
+        --comp-db-mj)
+            ARG_COMP_DB_MJ_SET=1
+            ARG_COMP_DB_MJ=ON
+            ;;
+        --prefix=*)
+            ARG_PREFIX_SET=1
+            ARG_PREFIX=${1#*=}
+            ;;
+        --cc=*)
+            ARG_CC_SET=1
+            ARG_CC=${1#*=}
+            ;;
+        --cppflags=*)
+            ARG_CPPFLAGS_SET=1
+            ARG_CPPFLAGS=${1#*=}
+            ;;
+        --cflags=*)
+            ARG_CFLAGS_SET=1
+            ARG_CFLAGS=${1#*=}
+            ;;
+        --ldflags=*)
+            ARG_LDFLAGS_SET=1
+            ARG_LDFLAGS=${1#*=}
+            ;;
+        --ldlibs=*)
+            ARG_LDLIBS_SET=1
+            ARG_LDLIBS=${1#*=}
+            ;;
+        --feature-x=*)
+            ARG_FEATURE_X_SET=1
+            ARG_FEATURE_X=${1#*=}
+            ;;
+        PROFILE=*)
+            ARG_PROFILE_SET=1
+            ARG_PROFILE=${1#*=}
+            ;;
+        BUILD_DIR=*)
+            ARG_BUILD_DIR_SET=1
+            ARG_BUILD_DIR=${1#*=}
+            ;;
+        PREFIX=*)
+            ARG_PREFIX_SET=1
+            ARG_PREFIX=${1#*=}
+            ;;
+        CC=*)
+            ARG_CC_SET=1
+            ARG_CC=${1#*=}
+            ;;
+        CPPFLAGS=*)
+            ARG_CPPFLAGS_SET=1
+            ARG_CPPFLAGS=${1#*=}
+            ;;
+        CFLAGS=*)
+            ARG_CFLAGS_SET=1
+            ARG_CFLAGS=${1#*=}
+            ;;
+        LDFLAGS=*)
+            ARG_LDFLAGS_SET=1
+            ARG_LDFLAGS=${1#*=}
+            ;;
+        LDLIBS=*)
+            ARG_LDLIBS_SET=1
+            ARG_LDLIBS=${1#*=}
+            ;;
+        FEATURE_X=*)
+            ARG_FEATURE_X_SET=1
+            ARG_FEATURE_X=${1#*=}
+            ;;
+        COMP_DB_MJ=*)
+            ARG_COMP_DB_MJ_SET=1
+            ARG_COMP_DB_MJ=${1#*=}
+            ;;
+        --)
+            shift
+            break
+            ;;
+        *)
+            die "unknown option or assignment: $1"
+            ;;
+    esac
+    shift
+done
+
+[ "$#" -eq 0 ] || die "unexpected positional arguments"
+
+# Command-line options > Environment variables > Profile defaults
+: "${PROFILE:=default}"
+
+if [ "$ARG_PROFILE_SET" -eq 1 ]; then
+    PROFILE=$ARG_PROFILE
+fi
+
+case $PROFILE in
+    default)
+        : "${PREFIX:=/usr/local}"
+        : "${CC:=cc}"
+        : "${CPPFLAGS:=}"
+        : "${CFLAGS:=-O2 -g -Wall -Wextra -Wpedantic}"
+        : "${LDFLAGS:=}"
+        : "${LDLIBS:=}"
+        : "${FEATURE_X:=OFF}"
+        : "${COMP_DB_MJ:=OFF}"
+        ;;
+    release)
+        : "${PREFIX:=/usr/local}"
+        : "${CC:=cc}"
+        : "${CPPFLAGS:=}"
+        : "${CFLAGS:=-O2 -DNDEBUG -Wall -Wextra -Wpedantic}"
+        : "${LDFLAGS:=}"
+        : "${LDLIBS:=}"
+        : "${FEATURE_X:=OFF}"
+        : "${COMP_DB_MJ:=OFF}"
+        ;;
+    debug)
+        : "${PREFIX:=/usr/local}"
+        : "${CC:=cc}"
+        : "${CPPFLAGS:=}"
+        : "${CFLAGS:=-O0 -g3 -Wall -Wextra -Wpedantic}"
+        : "${LDFLAGS:=}"
+        : "${LDLIBS:=}"
+        : "${FEATURE_X:=OFF}"
+        : "${COMP_DB_MJ:=OFF}"
+        ;;
+    asan)
+        : "${PREFIX:=/usr/local}"
+        : "${CC:=clang}"
+        : "${CPPFLAGS:=}"
+        : "${CFLAGS:=-O0 -g3 -Wall -Wextra -Wpedantic -fsanitize=address,undefined}"
+        : "${LDFLAGS:=-fsanitize=address,undefined}"
+        : "${LDLIBS:=}"
+        : "${FEATURE_X:=OFF}"
+        : "${COMP_DB_MJ:=OFF}"
+        ;;
+    *)
+        die "unknown profile: $PROFILE"
+        ;;
+esac
+
+# Command-line options/assignments override both environment and profile defaults.
+if [ "$ARG_PREFIX_SET" -eq 1 ]; then PREFIX=$ARG_PREFIX; fi
+if [ "$ARG_CC_SET" -eq 1 ]; then CC=$ARG_CC; fi
+if [ "$ARG_CPPFLAGS_SET" -eq 1 ]; then CPPFLAGS=$ARG_CPPFLAGS; fi
+if [ "$ARG_CFLAGS_SET" -eq 1 ]; then CFLAGS=$ARG_CFLAGS; fi
+if [ "$ARG_LDFLAGS_SET" -eq 1 ]; then LDFLAGS=$ARG_LDFLAGS; fi
+if [ "$ARG_LDLIBS_SET" -eq 1 ]; then LDLIBS=$ARG_LDLIBS; fi
+if [ "$ARG_FEATURE_X_SET" -eq 1 ]; then FEATURE_X=$ARG_FEATURE_X; fi
+if [ "$ARG_COMP_DB_MJ_SET" -eq 1 ]; then COMP_DB_MJ=$ARG_COMP_DB_MJ; fi
+
+case $FEATURE_X in
+    ON|OFF) ;;
+    *)
+        die "FEATURE_X must be ON or OFF (got: $FEATURE_X)"
+        ;;
+esac
+
+case $COMP_DB_MJ in
+    ON|OFF) ;;
+    *)
+        die "COMP_DB_MJ must be ON or OFF (got: $COMP_DB_MJ)"
+        ;;
+esac
+
+if [ "$COMP_DB_MJ" = "ON" ]; then
+    probe_comp_db_mj
+fi
+
+# Create the build directory if it does not exist.
+if [ "$ARG_BUILD_DIR_SET" -eq 1 ]; then
+    BUILD_DIR=$ARG_BUILD_DIR
+else
+    : "${BUILD_DIR:=build/$PROFILE}"
+fi
+
+require_no_whitespace BUILD_DIR "$BUILD_DIR"
+
+mkdir -p "$BUILD_DIR"
+
+# Find the absolute path of the build directory.
+BUILD_DIR=$(CDPATH= cd "$BUILD_DIR" && pwd)
+
+if [ "$BUILD_DIR" = "$ROOT_DIR" ]; then
+    die "BUILD_DIR must not resolve to ROOT_DIR ($ROOT_DIR)"
+fi
+
+CONFIG_MK=$BUILD_DIR/config.mk
+WRAPPER_MK=$BUILD_DIR/Makefile
+
+tmp_config=$CONFIG_MK.tmp
+tmp_wrapper=$WRAPPER_MK.tmp
+
+cat >"$tmp_config" <<EOF
+# Generated by ./configure. Re-run configure to change these settings.
+
+override PROFILE = $(escape_make "$PROFILE")
+
+override PREFIX = $(escape_make "$PREFIX")
+override CC = $(escape_make "$CC")
+override CPPFLAGS = $(escape_make "$CPPFLAGS")
+override CFLAGS = $(escape_make "$CFLAGS")
+override LDFLAGS = $(escape_make "$LDFLAGS")
+override LDLIBS = $(escape_make "$LDLIBS")
+override FEATURE_X = $(escape_make "$FEATURE_X")
+override COMP_DB_MJ = $(escape_make "$COMP_DB_MJ")
+EOF
+
+if [ -f "$CONFIG_MK" ] && ! cmp -s "$CONFIG_MK" "$tmp_config"; then
+    if [ "$FORCE" -ne 1 ]; then
+        rm -f "$tmp_config"
+        die "$CONFIG_MK already exists and differs; rerun with --force to replace it"
+    fi
+fi
+
+mv "$tmp_config" "$CONFIG_MK"
+
+# Small convenience wrapper. It forwards common targets back to the real
+# top-level Makefile while fixing BUILD_DIR to this directory.
+cat >"$tmp_wrapper" <<EOF
+# Generated by ./configure. Convenience wrapper for this build directory.
+ROOT_DIR := $ROOT_DIR
+BUILD_DIR := $BUILD_DIR
+
+.DEFAULT_GOAL := all
+Makefile: ;
+.PHONY: FORCE
+%: FORCE
+	+\$(MAKE) -C "\$(ROOT_DIR)" BUILD_DIR="\$(BUILD_DIR)" \$@
+FORCE:
+EOF
+
+mv "$tmp_wrapper" "$WRAPPER_MK"
+
+printf '%s\n' "Configured $BUILD_DIR"
+printf '%s\n' "  PROFILE=$PROFILE"
+printf '%s\n' "  PREFIX=$PREFIX"
+printf '%s\n' "  CC=$CC"
+printf '%s\n' "  CPPFLAGS=$CPPFLAGS"
+printf '%s\n' "  CFLAGS=$CFLAGS"
+printf '%s\n' "  LDFLAGS=$LDFLAGS"
+printf '%s\n' "  LDLIBS=$LDLIBS"
+printf '%s\n' "  FEATURE_X=$FEATURE_X"
+printf '%s\n' "  COMP_DB_MJ=$COMP_DB_MJ"
+printf '%s\n' ""
+printf '%s\n' "Wrote:"
+printf '%s\n' "  $CONFIG_MK"
+printf '%s\n' "  $WRAPPER_MK"
+printf '%s\n' ""
+printf '%s\n' "To build, run make -C $BUILD_DIR"
