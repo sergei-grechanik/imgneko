@@ -1,0 +1,17 @@
+name: Makefile Tests
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+
+jobs:
+  makefile-tests:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Run makefile test suite
+        run: /bin/sh tests/test-makefile.sh
