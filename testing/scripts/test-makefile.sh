@@ -5,7 +5,7 @@
 
 set -eu
 
-ROOT_DIR=$(CDPATH= cd "$(dirname "$0")/.." && pwd)
+ROOT_DIR=$(CDPATH= cd "$(dirname "$0")/../.." && pwd)
 
 # Keep all repository-local artifacts directly under ./build so the script
 # exercises the same layout that regular users will hit.
@@ -17,12 +17,13 @@ INVALID_FEATURE_BUILD=$ROOT_DIR/build/test-invalid-feature
 INVALID_COMPDB_BUILD=$ROOT_DIR/build/test-invalid-compdb
 COMPDB_WITH_MESSAGE_BUILD=$ROOT_DIR/build/test-compdb-with-message
 COMPDB_WITHOUT_MESSAGE_BUILD=$ROOT_DIR/build/test-compdb-without-message
+COMPDB_CLANG_BUILD=$ROOT_DIR/build/test-compdb-clang
 SPACE_BUILD="$ROOT_DIR/build/test bad dir"
 RECONFIGURE_BUILD=$ROOT_DIR/build/test-reconfigure-check
 
-# Use one fixed /tmp root for scenarios that intentionally leave the project
-# tree.
-TMP_TEST_ROOT=/tmp/imgneko-makefile-test-artifacts
+# Use one temporary root for scenarios that intentionally leave the project
+# tree, and clean it up on exit.
+TMP_TEST_ROOT=$(mktemp -d /tmp/imgneko-makefile-test-artifacts.XXXXXX)
 OUTSIDE_BUILD=$TMP_TEST_ROOT/outside-build
 INSTALL_ROOT=$TMP_TEST_ROOT/install-root
 STALE_REPO=$TMP_TEST_ROOT/stale-repo
@@ -41,6 +42,10 @@ say() {
 fail() {
     printf '%s\n' "FAIL: $*" >&2
     exit 1
+}
+
+cleanup() {
+    rm -rf "$TMP_TEST_ROOT"
 }
 
 # Refuse to use a path that already exists so the test never clobbers a build
@@ -62,6 +67,32 @@ assert_file_exists() {
     fi
 }
 
+# Verify that a file contains a required string.
+assert_file_contains() {
+    path=$1
+    needle=$2
+
+    if ! grep -F -- "$needle" "$path" >/dev/null 2>&1; then
+        printf '%s\n' "Expected file to contain: $needle" >&2
+        printf '%s\n' "Actual file: $path" >&2
+        sed -n '1,200p' "$path" >&2
+        exit 1
+    fi
+}
+
+# Verify that a file does not contain a forbidden string.
+assert_file_not_contains() {
+    path=$1
+    needle=$2
+
+    if grep -F -- "$needle" "$path" >/dev/null 2>&1; then
+        printf '%s\n' "Expected file not to contain: $needle" >&2
+        printf '%s\n' "Actual file: $path" >&2
+        sed -n '1,200p' "$path" >&2
+        exit 1
+    fi
+}
+
 # Verify that a directory was created where the scenario expects one.
 assert_dir_exists() {
     path=$1
@@ -74,26 +105,14 @@ assert_dir_exists() {
 # Check that the last captured command output contains a required string.
 assert_output_contains() {
     needle=$1
-
-    if ! grep -F -- "$needle" "$LAST_OUTPUT" >/dev/null 2>&1; then
-        printf '%s\n' "Expected output to contain: $needle" >&2
-        printf '%s\n' "Actual output from $LAST_OUTPUT:" >&2
-        sed -n '1,200p' "$LAST_OUTPUT" >&2
-        exit 1
-    fi
+    assert_file_contains "$LAST_OUTPUT" "$needle"
 }
 
 # Check that the last captured command output does not contain a forbidden
 # string.
 assert_output_not_contains() {
     needle=$1
-
-    if grep -F -- "$needle" "$LAST_OUTPUT" >/dev/null 2>&1; then
-        printf '%s\n' "Expected output not to contain: $needle" >&2
-        printf '%s\n' "Actual output from $LAST_OUTPUT:" >&2
-        sed -n '1,200p' "$LAST_OUTPUT" >&2
-        exit 1
-    fi
+    assert_file_not_contains "$LAST_OUTPUT" "$needle"
 }
 
 # Verify that the last captured command succeeded.
@@ -142,6 +161,8 @@ copy_repo() {
     chmod +x "$destination/configure"
 }
 
+trap cleanup EXIT
+
 assert_path_absent "$LOG_DIR"
 assert_path_absent "$DEFAULT_BUILD"
 assert_path_absent "$CUSTOM_BUILD"
@@ -150,12 +171,10 @@ assert_path_absent "$INVALID_FEATURE_BUILD"
 assert_path_absent "$INVALID_COMPDB_BUILD"
 assert_path_absent "$COMPDB_WITH_MESSAGE_BUILD"
 assert_path_absent "$COMPDB_WITHOUT_MESSAGE_BUILD"
+assert_path_absent "$COMPDB_CLANG_BUILD"
 assert_path_absent "$SPACE_BUILD"
 assert_path_absent "$RECONFIGURE_BUILD"
-assert_path_absent "$TMP_TEST_ROOT"
-
 mkdir -p "$LOG_DIR"
-mkdir -p "$TMP_TEST_ROOT"
 
 # Verify the fully default path: no --build-dir, no profile override, and a
 # normal build/run from build/default.
@@ -188,6 +207,19 @@ assert_output_contains "profile: debug"
 assert_output_contains "cc: cc"
 assert_output_contains "-DFEATURE_X=1"
 
+# With multiple configured build directories, plain root-level make must ask
+# users to disambiguate instead of silently picking build/default.
+say "Root make requires explicit disambiguation with multiple build directories"
+run_capture "$LOG_DIR/root-make-ambiguous.out" make -C "$ROOT_DIR"
+assert_status_nonzero
+assert_output_contains "run make -C build/<name> or pass BUILD_DIR=<path> explicitly"
+
+# Explicit BUILD_DIR from the repository root should still work.
+say "Root make with explicit BUILD_DIR succeeds"
+run_capture "$LOG_DIR/root-make-explicit-default.out" make -C "$ROOT_DIR" BUILD_DIR="$DEFAULT_BUILD"
+assert_status_zero
+assert_file_exists "$DEFAULT_BUILD/bin/imgneko"
+
 # Exercise a build directory outside ./build and verify that install still puts
 # the binary in the requested DESTDIR layout.
 say "Build and install from a build directory outside ./build"
@@ -207,13 +239,6 @@ run_capture "$LOG_DIR/make-missing-config.out" make -C "$ROOT_DIR" BUILD_DIR="$M
 assert_status_nonzero
 assert_output_contains "error: $MISSING_CONFIG_BUILD/config.mk does not exist"
 assert_output_contains "run ./configure --build-dir='$MISSING_CONFIG_BUILD' first"
-
-# Request compile_commands.json from a build that was configured without
-# --comp-db-mj and verify the custom Makefile error.
-say "Makefile error when compile_commands.json was not enabled"
-run_capture "$LOG_DIR/make-missing-compdb.out" make -C "$DEFAULT_BUILD" compile_commands_json
-assert_status_nonzero
-assert_output_contains "error: $DEFAULT_BUILD/compile_commands.json requires ./configure --comp-db-mj"
 
 # Build from a copied repository after making configure newer than config.mk so
 # the staleness warning path fires without blocking the actual build.
@@ -277,6 +302,26 @@ run_capture "$LOG_DIR/cfg-compdb-without-message.out" sh "$ROOT_DIR/configure" -
 assert_status_nonzero
 assert_output_contains "error: --comp-db-mj requires a compiler that accepts -MJ"
 assert_output_not_contains "(got:"
+
+# Enable compile_commands.json generation with clang and verify that
+# non-test builds keep test entries out, while test-list brings them in.
+say "compile_commands.json excludes test runner after make all, includes it after test-list"
+sh "$ROOT_DIR/configure" --build-dir="$COMPDB_CLANG_BUILD" --cc=clang --comp-db-mj
+
+run_capture "$LOG_DIR/compdb-make-all.out" make -C "$COMPDB_CLANG_BUILD" all
+assert_status_zero
+assert_file_exists "$COMPDB_CLANG_BUILD/bin/imgneko"
+assert_path_absent "$COMPDB_CLANG_BUILD/bin/test-runner"
+assert_path_absent "$COMPDB_CLANG_BUILD/test-bin"
+assert_file_exists "$COMPDB_CLANG_BUILD/compile_commands.json"
+assert_file_contains "$COMPDB_CLANG_BUILD/compile_commands.json" "src/main.c"
+assert_file_not_contains "$COMPDB_CLANG_BUILD/compile_commands.json" "test-runner.c"
+assert_file_not_contains "$COMPDB_CLANG_BUILD/compile_commands.json" "/tests/"
+
+run_capture "$LOG_DIR/compdb-test-list.out" make -C "$COMPDB_CLANG_BUILD" test-list
+assert_status_zero
+assert_file_exists "$COMPDB_CLANG_BUILD/compile_commands.json"
+assert_file_contains "$COMPDB_CLANG_BUILD/compile_commands.json" "test-runner.c"
 
 # Reject build directories whose path includes whitespace before any files are
 # written there.
