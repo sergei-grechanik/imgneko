@@ -1,0 +1,22 @@
+name: Make Test
+
+# This workflow runs all tests with the default configuration.
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+
+jobs:
+  make-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Configure default build
+        run: ./configure
+
+      - name: Run make test
+        run: make test

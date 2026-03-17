@@ -6,8 +6,11 @@
 ROOT_DIR := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
 
 # BUILD_DIR is normally passed by the generated wrapper Makefile.
-# Keep a fallback for friendlier error messages when running from the root.
-BUILD_DIR ?= $(ROOT_DIR)/build/default
+# Keep a fallback for root-level invocations that do not pass BUILD_DIR.
+BUILD_DIR_IMPLICIT := $(if $(filter undefined,$(origin BUILD_DIR)),1,0)
+ifeq ($(BUILD_DIR_IMPLICIT),1)
+BUILD_DIR := $(ROOT_DIR)/build/default
+endif
 
 # Important build-directory-local paths.
 CONFIG_MK      := $(BUILD_DIR)/config.mk
@@ -15,14 +18,16 @@ WRAPPER_MKFILE := $(BUILD_DIR)/Makefile
 BIN_DIR        := $(BUILD_DIR)/bin
 OBJ_DIR        := $(BUILD_DIR)/obj
 GEN_DIR        := $(BUILD_DIR)/generated
+TEST_BIN_DIR   := $(BUILD_DIR)/test-bin
 
 # When enabled, -MJ fragments are emitted alongside object files.
 MJ_DIR         := $(BUILD_DIR)/compile_commands.d
 COMPILE_DB     := $(BUILD_DIR)/compile_commands.json
 
-# Final binary and generated metadata header.
-TARGET       := $(BIN_DIR)/imgneko
-BUILD_INFO_H := $(GEN_DIR)/build_info.h
+# Important targets.
+BIN_IMGNEKO     := $(BIN_DIR)/imgneko
+BIN_TEST_RUNNER := $(BIN_DIR)/test-runner
+BUILD_INFO_H    := $(GEN_DIR)/build_info.h
 
 # Checked-in version file.
 VERSION_FILE := $(ROOT_DIR)/VERSION
@@ -32,11 +37,17 @@ VERSION_FILE := $(ROOT_DIR)/VERSION
 ###############################################################################
 
 SOURCES := src/main.c
+TEST_RUNNER_SOURCE := testing/support/test-runner.c
+TEST_SUPPORT_SOURCES := $(shell if [ -d "$(ROOT_DIR)/testing/support" ]; then cd "$(ROOT_DIR)" && find testing/support -type f -name '*.c' ! -name 'test-runner.c' -print | LC_ALL=C sort; fi)
+TEST_C_SOURCES := $(shell if [ -d "$(ROOT_DIR)/testing/tests" ]; then cd "$(ROOT_DIR)" && find testing/tests -type f -name '*.c' -print | LC_ALL=C sort; fi)
 
 # Preserve the source tree under $(OBJ_DIR), so:
 #   src/main.c -> $(OBJ_DIR)/src/main.o
 OBJECTS := $(addprefix $(OBJ_DIR)/,$(SOURCES:.c=.o))
-MJ_FRAGMENTS := $(addprefix $(MJ_DIR)/,$(SOURCES:.c=.json))
+TEST_RUNNER_OBJECT := $(OBJ_DIR)/$(TEST_RUNNER_SOURCE:.c=.o)
+TEST_SUPPORT_OBJECTS := $(addprefix $(OBJ_DIR)/,$(TEST_SUPPORT_SOURCES:.c=.o))
+TEST_TOOLS := $(BIN_TEST_RUNNER)
+TEST_C_BINS := $(patsubst testing/tests/%.c,$(TEST_BIN_DIR)/%.c.bin,$(TEST_C_SOURCES))
 
 ###############################################################################
 # Fixed project metadata
@@ -65,6 +76,19 @@ REQUESTED_GOALS := $(if $(MAKECMDGOALS),$(MAKECMDGOALS),all)
 # All other targets are normal build/install targets and require config.mk.
 NEEDS_CONFIG := $(filter-out $(NO_CONFIG_TARGETS),$(REQUESTED_GOALS))
 
+# When BUILD_DIR was not set explicitly (for example plain `make` from the
+# repository root), only auto-select build/default if there are no other
+# configured build directories under ./build.
+ifneq ($(NEEDS_CONFIG),)
+ifeq ($(BUILD_DIR_IMPLICIT),1)
+CONFIGURED_BUILD_DIRS := $(patsubst %/,%,$(sort $(dir $(wildcard $(ROOT_DIR)/build/*/config.mk))))
+NONDEFAULT_CONFIGURED_BUILD_DIRS := $(filter-out $(ROOT_DIR)/build/default,$(CONFIGURED_BUILD_DIRS))
+ifneq ($(NONDEFAULT_CONFIGURED_BUILD_DIRS),)
+$(error error: found multiple configured build directories under $(ROOT_DIR)/build; run make -C build/<name> or pass BUILD_DIR=<path> explicitly)
+endif
+endif
+endif
+
 # Include the saved configuration only when needed.
 #
 # The generated config.mk should contain lines like:
@@ -84,10 +108,11 @@ endif
 
 # Convert the example feature toggle into a preprocessor define.
 FEATURE_CPPFLAGS := $(if $(filter ON,$(FEATURE_X)),-DFEATURE_X=1,-DFEATURE_X=0)
-ALL_OUTPUTS      := $(TARGET) $(if $(filter ON,$(COMP_DB_MJ)),$(COMPILE_DB))
 
-# The generated header lives in $(GEN_DIR), so the compiler must search there.
-BUILD_INFO_CPPFLAGS := -I$(GEN_DIR)
+# Generated headers live in $(GEN_DIR), and internal headers live under src/.
+COMMON_INCLUDES := -I$(GEN_DIR) -I$(ROOT_DIR)/src
+TEST_SUPPORT_INCLUDES := -I$(ROOT_DIR)/testing/support
+TEST_INCLUDES := $(COMMON_INCLUDES) $(TEST_SUPPORT_INCLUDES)
 
 # Standard install location:
 INSTALL_BINDIR := $(DESTDIR)$(PREFIX)/bin
@@ -95,23 +120,22 @@ INSTALL_BINDIR := $(DESTDIR)$(PREFIX)/bin
 # Escape values before embedding them into generated C string literals.
 c_escape = $(subst ",\",$(subst \,\\,$(1)))
 
+TEST_RUNNER_DEFINES := \
+	-DTEST_RUNNER_ROOT_DIR=\"$(call c_escape,$(ROOT_DIR))\" \
+	-DTEST_RUNNER_BUILD_DIR=\"$(call c_escape,$(BUILD_DIR))\"
+
+# A command to combine the -MJ fragments into a complete compile_commands.json,
+# or a no-op when the feature is disabled.
+ifeq ($(COMP_DB_MJ),ON)
+COMPILE_DB_REFRESH = "$(ROOT_DIR)/tools/build-compile-db.sh" "$(MJ_DIR)" "$(COMPILE_DB)"
+else
+COMPILE_DB_REFRESH = :
+endif
+
 # Emit one #define line per saved configuration variable.
 CONFIG_INFO_DEFINES := \
 	$(foreach var,PROFILE PREFIX CC CPPFLAGS CFLAGS LDFLAGS LDLIBS FEATURE_X COMP_DB_MJ, \
 		printf '%s\n' '#define BUILD_CONFIG_$(var) "$(call c_escape,$($(var)))"';)
-
-###############################################################################
-# Targets
-###############################################################################
-
-.DEFAULT_GOAL := all
-
-.PHONY: all install clean help check-config-date compile_commands_json
-
-# Normal build entry point.
-all: check-config-date $(ALL_OUTPUTS)
-
-compile_commands_json: $(COMPILE_DB)
 
 # Check that config.mk exists and issue a warning if it is older than configure.
 check-config-date:
@@ -138,9 +162,13 @@ check-config-date:
 # check-config-date is an order-only prerequisite so direct invocations like:
 #   make /abs/path/to/build/debug/bin/imgneko
 # still issue a warning if the saved profile is stale.
-$(TARGET): $(OBJECTS) $(CONFIG_MK) $(BUILD_INFO_H) | check-config-date
+$(BIN_IMGNEKO): $(OBJECTS) $(CONFIG_MK) $(BUILD_INFO_H) | check-config-date
 	@mkdir -p "$(dir $@)"
 	$(CC) $(LDFLAGS) -o "$@" $(OBJECTS) $(LDLIBS)
+
+$(BIN_TEST_RUNNER): $(TEST_RUNNER_OBJECT) $(CONFIG_MK) $(BUILD_INFO_H) | check-config-date
+	@mkdir -p "$(dir $@)"
+	$(CC) $(LDFLAGS) -o "$@" $(TEST_RUNNER_OBJECT) $(LDLIBS)
 
 # Generate a header used by `--version` to print all build information.
 $(BUILD_INFO_H): $(CONFIG_MK) $(VERSION_FILE) | check-config-date
@@ -162,47 +190,71 @@ $(BUILD_INFO_H): $(CONFIG_MK) $(VERSION_FILE) | check-config-date
 ifeq ($(COMP_DB_MJ),ON)
 # When compile_commands.json is enabled, each compile emits its clang-style
 # -MJ fragment alongside the object file in the same compiler invocation.
+$(TEST_RUNNER_OBJECT): $(TEST_RUNNER_SOURCE) $(CONFIG_MK) $(BUILD_INFO_H) | check-config-date
+	@mkdir -p "$(dir $@)" "$(MJ_DIR)/$(dir $(TEST_RUNNER_SOURCE))"
+	$(CC) $(COMMON_INCLUDES) $(TEST_RUNNER_DEFINES) $(CPPFLAGS) $(FEATURE_CPPFLAGS) $(CFLAGS) -MJ "$(MJ_DIR)/$(TEST_RUNNER_SOURCE:.c=.json)" -c "$<" -o "$@"
+
 $(OBJ_DIR)/%.o: %.c $(CONFIG_MK) $(BUILD_INFO_H) | check-config-date
 	@mkdir -p "$(dir $@)" "$(MJ_DIR)/$(dir $*)"
-	$(CC) $(BUILD_INFO_CPPFLAGS) $(CPPFLAGS) $(FEATURE_CPPFLAGS) $(CFLAGS) -MJ "$(MJ_DIR)/$*.json" -c "$<" -o "$@"
+	$(CC) $(COMMON_INCLUDES) $(CPPFLAGS) $(FEATURE_CPPFLAGS) $(CFLAGS) -MJ "$(MJ_DIR)/$*.json" -c "$<" -o "$@"
 
-$(COMPILE_DB): $(OBJECTS) | check-config-date
-	@{ \
-		printf '[\n'; \
-		first=1; \
-		for fragment in $(MJ_FRAGMENTS); do \
-			if [ $$first -eq 0 ]; then printf ',\n'; fi; \
-			sed '$$s/,[[:space:]]*$$//' "$$fragment"; \
-			first=0; \
-		done; \
-		printf '\n]\n'; \
-	} > "$@"
+$(TEST_BIN_DIR)/%.c.bin: testing/tests/%.c $(TEST_SUPPORT_OBJECTS) $(CONFIG_MK) $(BUILD_INFO_H) | check-config-date
+	@mkdir -p "$(dir $@)" "$(MJ_DIR)/testing/tests/$(dir $*)"
+	$(CC) $(TEST_INCLUDES) $(CPPFLAGS) $(FEATURE_CPPFLAGS) $(CFLAGS) $(LDFLAGS) -MJ "$(MJ_DIR)/testing/tests/$*.json" "$<" $(TEST_SUPPORT_OBJECTS) -o "$@" $(LDLIBS)
 else
 # Compile one source file into one object file.
 #
 # Objects depend on config.mk and build_info.h so that configuration changes and
 # regenerated metadata trigger recompilation automatically.
+$(TEST_RUNNER_OBJECT): $(TEST_RUNNER_SOURCE) $(CONFIG_MK) $(BUILD_INFO_H) | check-config-date
+	@mkdir -p "$(dir $@)"
+	$(CC) $(COMMON_INCLUDES) $(TEST_RUNNER_DEFINES) $(CPPFLAGS) $(FEATURE_CPPFLAGS) $(CFLAGS) -c "$<" -o "$@"
+
 $(OBJ_DIR)/%.o: %.c $(CONFIG_MK) $(BUILD_INFO_H) | check-config-date
 	@mkdir -p "$(dir $@)"
-	$(CC) $(BUILD_INFO_CPPFLAGS) $(CPPFLAGS) $(FEATURE_CPPFLAGS) $(CFLAGS) -c "$<" -o "$@"
+	$(CC) $(COMMON_INCLUDES) $(CPPFLAGS) $(FEATURE_CPPFLAGS) $(CFLAGS) -c "$<" -o "$@"
 
-$(COMPILE_DB): | check-config-date
-	@echo "error: $(COMPILE_DB) requires ./configure --comp-db-mj" >&2
-	@exit 1
+$(TEST_BIN_DIR)/%.c.bin: testing/tests/%.c $(TEST_SUPPORT_OBJECTS) $(CONFIG_MK) $(BUILD_INFO_H) | check-config-date
+	@mkdir -p "$(dir $@)"
+	$(CC) $(TEST_INCLUDES) $(CPPFLAGS) $(FEATURE_CPPFLAGS) $(CFLAGS) $(LDFLAGS) "$<" $(TEST_SUPPORT_OBJECTS) -o "$@" $(LDLIBS)
 endif
 
 ###############################################################################
-# Utility targets
+# Main targets
 ###############################################################################
 
+.DEFAULT_GOAL := all
+
+.PHONY: all install clean help check-config-date test test-list test-tools test-c-bins
+
+# Targets to build things.
+all: check-config-date $(BIN_IMGNEKO)
+	@$(COMPILE_DB_REFRESH)
+test-tools: check-config-date $(TEST_TOOLS)
+	@$(COMPILE_DB_REFRESH)
+test-c-bins: check-config-date $(TEST_C_BINS)
+	@$(COMPILE_DB_REFRESH)
+
 # Install the built binary.
-install: check-config-date $(TARGET)
+install: check-config-date $(BIN_IMGNEKO)
 	@mkdir -p "$(INSTALL_BINDIR)"
-	install -m 0755 "$(TARGET)" "$(INSTALL_BINDIR)/imgneko"
+	install -m 0755 "$(BIN_IMGNEKO)" "$(INSTALL_BINDIR)/imgneko"
+
+# Run tests.
+test: check-config-date $(BIN_IMGNEKO) test-tools test-c-bins
+	@set --; \
+	if [ -n "$(FILTER)" ]; then set -- --filter "$(FILTER)"; else set -- --all; fi; \
+	"$(BIN_TEST_RUNNER)" "$$@"
+
+# List tests.
+test-list: check-config-date $(BIN_IMGNEKO) test-tools test-c-bins
+	@set -- --list; \
+	if [ -n "$(FILTER)" ]; then set -- "$$@" --filter "$(FILTER)"; fi; \
+	"$(BIN_TEST_RUNNER)" "$$@"
 
 # Remove build outputs but keep the saved configuration and wrapper Makefile.
 clean:
-	rm -rf "$(OBJ_DIR)" "$(BIN_DIR)" "$(GEN_DIR)" "$(MJ_DIR)" "$(COMPILE_DB)"
+	rm -rf "$(OBJ_DIR)" "$(BIN_DIR)" "$(GEN_DIR)" "$(TEST_BIN_DIR)" "$(MJ_DIR)" "$(COMPILE_DB)"
 
 # Brief user-facing help.
 help:
@@ -220,3 +272,8 @@ help:
 	@printf '%s\n' 'To also generate compile_commands.json during normal builds:'
 	@printf '%s\n' '  ./configure --profile=debug --comp-db-mj'
 	@printf '%s\n' '  make -C build/debug'
+	@printf '%s\n' ''
+	@printf '%s\n' 'To run tests from a configured build directory:'
+	@printf '%s\n' '  make -C build/debug test'
+	@printf '%s\n' '  make -C build/debug test FILTER='\''test-runner*|some_test.c/subtest'\'''
+	@printf '%s\n' '  make -C build/debug test-list FILTER='\''*.sh|*.test'\'''

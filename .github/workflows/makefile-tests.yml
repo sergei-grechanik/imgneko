@@ -1,5 +1,7 @@
 name: Makefile Tests
 
+# This workflow runs tests for the Makefile and the configure script.
+
 on:
   push:
     branches: ["main"]
@@ -13,5 +15,10 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
+      - name: Install clang
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang
+
       - name: Run makefile test suite
-        run: /bin/sh tests/test-makefile.sh
+        run: /bin/sh testing/scripts/test-makefile.sh
