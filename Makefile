@@ -12,6 +12,10 @@ ifeq ($(BUILD_DIR_IMPLICIT),1)
 BUILD_DIR := $(ROOT_DIR)/build/default
 endif
 
+# Normalize user-supplied BUILD_DIR values so generated paths and test-runner
+# environment variables stay absolute even when callers pass `build/foo/`.
+BUILD_DIR := $(abspath $(BUILD_DIR))
+
 # Important build-directory-local paths.
 CONFIG_MK      := $(BUILD_DIR)/config.mk
 WRAPPER_MKFILE := $(BUILD_DIR)/Makefile
@@ -19,6 +23,7 @@ BIN_DIR        := $(BUILD_DIR)/bin
 OBJ_DIR        := $(BUILD_DIR)/obj
 GEN_DIR        := $(BUILD_DIR)/generated
 TEST_BIN_DIR   := $(BUILD_DIR)/test-bin
+TEST_OUTPUT_DIR := $(BUILD_DIR)/test-outputs
 
 # When enabled, -MJ fragments are emitted alongside object files.
 MJ_DIR         := $(BUILD_DIR)/compile_commands.d
@@ -226,7 +231,7 @@ endif
 
 .DEFAULT_GOAL := all
 
-.PHONY: all install clean help check-config-date test test-list test-tools test-c-bins
+.PHONY: all install clean help check-config-date test test-list test-tools test-c-bins clean-test-output
 
 # Targets to build things.
 all: check-config-date $(BIN_IMGNEKO)
@@ -242,7 +247,7 @@ install: check-config-date $(BIN_IMGNEKO)
 	install -m 0755 "$(BIN_IMGNEKO)" "$(INSTALL_BINDIR)/imgneko"
 
 # Run tests.
-test: check-config-date $(BIN_IMGNEKO) test-tools test-c-bins
+test: check-config-date $(BIN_IMGNEKO) test-tools test-c-bins clean-test-output
 	@set --; \
 	if [ -n "$(FILTER)" ]; then set -- --filter "$(FILTER)"; else set -- --all; fi; \
 	"$(BIN_TEST_RUNNER)" "$$@"
@@ -253,8 +258,12 @@ test-list: check-config-date $(BIN_IMGNEKO) test-tools test-c-bins
 	if [ -n "$(FILTER)" ]; then set -- "$$@" --filter "$(FILTER)"; fi; \
 	"$(BIN_TEST_RUNNER)" "$$@"
 
+# Remove captured per-test output files so each `make test` run starts fresh.
+clean-test-output: check-config-date
+	rm -rf "$(TEST_OUTPUT_DIR)"
+
 # Remove build outputs but keep the saved configuration and wrapper Makefile.
-clean:
+clean: clean-test-output
 	rm -rf "$(OBJ_DIR)" "$(BIN_DIR)" "$(GEN_DIR)" "$(TEST_BIN_DIR)" "$(MJ_DIR)" "$(COMPILE_DB)"
 
 # Brief user-facing help.

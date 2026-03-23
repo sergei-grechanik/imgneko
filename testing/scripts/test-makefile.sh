@@ -20,6 +20,7 @@ COMPDB_WITHOUT_MESSAGE_BUILD=$ROOT_DIR/build/test-compdb-without-message
 COMPDB_CLANG_BUILD=$ROOT_DIR/build/test-compdb-clang
 SPACE_BUILD="$ROOT_DIR/build/test bad dir"
 RECONFIGURE_BUILD=$ROOT_DIR/build/test-reconfigure-check
+RELATIVE_BUILD_DIR_TEST=$ROOT_DIR/build/test-relative-builddir
 
 # Use one temporary root for scenarios that intentionally leave the project
 # tree, and clean it up on exit.
@@ -174,6 +175,7 @@ assert_path_absent "$COMPDB_WITHOUT_MESSAGE_BUILD"
 assert_path_absent "$COMPDB_CLANG_BUILD"
 assert_path_absent "$SPACE_BUILD"
 assert_path_absent "$RECONFIGURE_BUILD"
+assert_path_absent "$RELATIVE_BUILD_DIR_TEST"
 mkdir -p "$LOG_DIR"
 
 # Verify the fully default path: no --build-dir, no profile override, and a
@@ -219,6 +221,18 @@ say "Root make with explicit BUILD_DIR succeeds"
 run_capture "$LOG_DIR/root-make-explicit-default.out" make -C "$ROOT_DIR" BUILD_DIR="$DEFAULT_BUILD"
 assert_status_zero
 assert_file_exists "$DEFAULT_BUILD/bin/imgneko"
+
+# A relative BUILD_DIR with a trailing slash should normalize to the same
+# absolute build directory so test-runner env vars remain stable, and `make
+# test` should also clear the default output tree before running tests.
+say "Root make test accepts relative BUILD_DIR with trailing slash"
+sh "$ROOT_DIR/configure" --build-dir="$RELATIVE_BUILD_DIR_TEST"
+mkdir -p "$RELATIVE_BUILD_DIR_TEST/test-outputs/stale"
+printf '%s\n' stale >"$RELATIVE_BUILD_DIR_TEST/test-outputs/stale/old-file"
+run_capture "$LOG_DIR/root-make-relative-builddir.out" make -C "$ROOT_DIR" test BUILD_DIR=build/test-relative-builddir/ FILTER=runner/environment.sh
+assert_status_zero
+assert_output_contains "1/1 tests passed"
+assert_path_absent "$RELATIVE_BUILD_DIR_TEST/test-outputs/stale/old-file"
 
 # Exercise a build directory outside ./build and verify that install still puts
 # the binary in the requested DESTDIR layout.
