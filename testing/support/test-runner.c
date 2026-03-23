@@ -4,6 +4,7 @@
 #include <ctype.h>
 #include <dirent.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <fnmatch.h>
 #include <limits.h>
 #include <stdbool.h>
@@ -74,8 +75,15 @@ static const char *const root_dir = TEST_RUNNER_ROOT_DIR;
 // Absolute path to the selected build directory (for example:
 // /path/to/imgneko/build/default).
 static const char *const build_dir = TEST_RUNNER_BUILD_DIR;
+
 // Repository-relative directory containing runnable tests.
 static const char *const tests_root_rel = "testing/tests";
+// Default directory under the build tree for per-test captured output.
+static const char *const default_test_output_dir_rel = "test-outputs";
+
+// Per-test environment variables that point tests at their own captured output.
+static const char *const test_output_dir_env = "IMGNEKO_TEST_OUTPUT_DIR";
+static const char *const test_output_file_env = "IMGNEKO_TEST_OUTPUT_FILE";
 
 static void die_errno(const char *message) {
     fprintf(stderr, "error: %s: %s\n", message, strerror(errno));
@@ -144,6 +152,28 @@ static void trim_in_place(char *line) {
     line[end - start] = '\0';
 }
 
+// Return whether path already uses an absolute filesystem location.
+static bool is_absolute_path(const char *path) {
+    return path[0] == '/';
+}
+
+// Return whether `prefix` names the same path as `path`, or a parent directory
+// of it, with a component boundary at the match point.
+static bool path_is_prefix(const char *prefix, const char *path) {
+    size_t prefix_len = strlen(prefix);
+
+    if (strncmp(prefix, path, prefix_len) != 0)
+        return false;
+
+    return path[prefix_len] == '\0' || path[prefix_len] == '/';
+}
+
+// Normalize directory paths by dropping trailing slashes, while preserving "/".
+static void trim_trailing_slashes(String *path) {
+    while (path->len > 1 && path->cstr[path->len - 1] == '/')
+        str_truncate(*path, path->len - 1);
+}
+
 // Comparator for deterministic sorting of discovered files by relative path.
 static int compare_test_files(const void *lhs, const void *rhs) {
     const TestFile *a = lhs;
@@ -156,6 +186,40 @@ static int compare_test_cases(const void *lhs, const void *rhs) {
     const TestCase *a = lhs;
     const TestCase *b = rhs;
     return strcmp(a->id.cstr, b->id.cstr);
+}
+
+// Resolve a user-supplied path to an absolute path using the current working
+// directory when the input is relative. The caller owns the returned string and
+// must free it with str_free.
+static String resolve_absolute_path(const char *path) {
+    char cwd[PATH_MAX];
+    String resolved = str_empty;
+
+    if (is_absolute_path(path))
+        resolved = str_from_cstr(path);
+    else {
+        if (getcwd(cwd, sizeof(cwd)) == NULL)
+            die_errno("failed to get current working directory");
+        resolved = join_two_paths(cwd, path);
+    }
+
+    trim_trailing_slashes(&resolved);
+    return resolved;
+}
+
+// Resolve the compiled build-dir string against the repository root when it is
+// not already absolute. The caller owns the returned string and must free it
+// with str_free.
+static String absolute_build_dir(void) {
+    String resolved = str_empty;
+
+    if (is_absolute_path(build_dir))
+        resolved = str_from_cstr(build_dir);
+    else
+        resolved = join_two_paths(root_dir, build_dir);
+
+    trim_trailing_slashes(&resolved);
+    return resolved;
 }
 
 // Recursively discover supported test files tests_root_abs/rel_dir/** and
@@ -240,21 +304,135 @@ static void discover_test_files(const char *tests_root_abs,
     qsort(files->data, files->size, sizeof(files->data[0]), compare_test_files);
 }
 
-// Run argv in a child process and return an exit-like status code.
-static int run_argv(char *const *argv) {
+// Create a directory and any missing parents. Existing directories are kept.
+static void mkdir_p(const char *path) {
+    String mutable_path = str_from_cstr(path);
+
+    for (size_t i = 1; i < mutable_path.len; ++i) {
+        if (mutable_path.cstr[i] != '/')
+            continue;
+
+        mutable_path.cstr[i] = '\0';
+        if (mkdir(mutable_path.cstr, 0755) != 0 && errno != EEXIST) {
+            str_free(mutable_path);
+            die_errno("failed to create a directory");
+        }
+        mutable_path.cstr[i] = '/';
+    }
+
+    if (mkdir(mutable_path.cstr, 0755) != 0 && errno != EEXIST) {
+        str_free(mutable_path);
+        die_errno("failed to create a directory");
+    }
+
+    str_free(mutable_path);
+}
+
+// Ensure that the parent directory for a file path exists.
+static void ensure_parent_dir(const char *file_path) {
+    String parent = str_from_cstr(file_path);
+    char *slash = strrchr(parent.cstr, '/');
+
+    if (slash == NULL) {
+        str_free(parent);
+        return;
+    }
+
+    // Preserve "/" when the file lives directly under the filesystem root.
+    if (slash == parent.cstr) {
+        str_truncate(parent, 1);
+    } else {
+        str_truncate(parent, (size_t)(slash - parent.cstr));
+    }
+
+    mkdir_p(parent.cstr);
+    str_free(parent);
+}
+
+// Compute the default absolute directory that stores per-test output files. The
+// caller owns the returned string and must free it with str_free.
+static String default_test_output_dir(void) {
+    String build_dir_abs = absolute_build_dir();
+    String output_dir = join_two_paths(build_dir_abs.cstr,
+                                       default_test_output_dir_rel);
+
+    trim_trailing_slashes(&output_dir);
+    str_free(build_dir_abs);
+    return output_dir;
+}
+
+// Reject output roots that would let the runner delete the repository root,
+// the whole build directory, or the filesystem root.
+static void validate_output_dir(const char *output_dir) {
+    String build_dir_abs = absolute_build_dir();
+    bool unsafe = false;
+
+    if (!is_absolute_path(output_dir))
+        unsafe = true;
+
+    if (strcmp(output_dir, "/") == 0 || path_is_prefix(output_dir, root_dir) ||
+        path_is_prefix(output_dir, build_dir_abs.cstr)) {
+        unsafe = true;
+    }
+
+    if (unsafe) {
+        str_free(build_dir_abs);
+        fprintf(stderr, "error: unsafe output directory: %s\n", output_dir);
+        exit(1);
+    }
+
+    str_free(build_dir_abs);
+}
+
+// Build the per-test output file path under output_root. Executable tests map
+// to `<root>/<test-id>.out`; C subtests map to
+// `<root>/<file-id>/<subtest>.out`. The caller owns the returned string and
+// must free it with str_free.
+static String test_output_path(const TestCase *test_case,
+                               const char *output_root) {
+    String path = join_two_paths(output_root, test_case->id.cstr);
+    str_append_cstr(path, ".out");
+    return path;
+}
+
+// Run argv in a child process with stdout/stderr redirected into output_path.
+// The child also receives per-test output environment variables.
+static int run_argv(char *const *argv, const char *output_root,
+                    const char *output_path) {
     pid_t pid = fork();
     int status;
+    int output_fd;
+
+    ensure_parent_dir(output_path);
+    output_fd = open(output_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (output_fd < 0)
+        die_errno("failed to open a test output file");
 
     if (pid < 0) {
+        close(output_fd);
         die_errno("fork failed");
     }
 
     if (pid == 0) {
+        if (dup2(output_fd, STDOUT_FILENO) < 0 ||
+            dup2(output_fd, STDERR_FILENO) < 0) {
+            fprintf(stderr, "error: dup2 failed: %s\n", strerror(errno));
+            _exit(127);
+        }
+        close(output_fd);
+        if (setenv(test_output_dir_env, output_root, 1) != 0 ||
+            setenv(test_output_file_env, output_path, 1) != 0) {
+            fprintf(stderr, "error: failed to update test output env: %s\n",
+                    strerror(errno));
+            _exit(127);
+        }
         execvp(argv[0], argv);
         fprintf(stderr, "error: failed to exec %s: %s\n", argv[0],
                 strerror(errno));
         _exit(127);
     }
+
+    close(output_fd);
 
     if (waitpid(pid, &status, 0) < 0) {
         die_errno("waitpid failed");
@@ -347,6 +525,49 @@ static int run_argv_capture_stdout(char *const *argv, String *stdout_text) {
     return 1;
 }
 
+// Print the failing output path and the last max_lines lines so users do not
+// need to open the full file just to see the failure context.
+static void print_output_tail(const char *output_path, size_t max_lines) {
+    String output_text = str_empty;
+    size_t start = 0;
+    size_t lines = 0;
+    int fd = open(output_path, O_RDONLY);
+
+    fprintf(stderr, "output: %s\n", output_path);
+    if (fd < 0) {
+        fprintf(stderr, "error: failed to read captured output: %s\n",
+                strerror(errno));
+        return;
+    }
+
+    output_text = read_all_from_fd(fd);
+    close(fd);
+
+    if (output_text.len == 0) {
+        fprintf(stderr, "(empty output)\n");
+        str_free(output_text);
+        return;
+    }
+
+    for (size_t i = output_text.len; i > 0; --i) {
+        if (output_text.cstr[i - 1] != '\n')
+            continue;
+
+        lines++;
+        if (lines > max_lines) {
+            start = i;
+            break;
+        }
+    }
+
+    fprintf(stderr, "last %zu lines:\n", max_lines);
+    fwrite(output_text.cstr + start, 1, output_text.len - start, stderr);
+    if (output_text.cstr[output_text.len - 1] != '\n')
+        fputc('\n', stderr);
+
+    str_free(output_text);
+}
+
 // Check whether a test case matches a pattern.
 //
 // C tests with discovered subtests have two stable identifiers:
@@ -404,10 +625,12 @@ static bool test_matches_filters(const TestCase *test_case,
 // Build the expected on-disk path for a compiled C test binary.
 // The caller owns the returned string and must free it with str_free.
 static String c_test_output_path(const char *rel_path) {
-    String base = join_two_paths(build_dir, "test-bin");
+    String build_dir_abs = absolute_build_dir();
+    String base = join_two_paths(build_dir_abs.cstr, "test-bin");
     String final_path = join_two_paths(base.cstr, rel_path);
 
     str_append_cstr(final_path, ".bin");
+    str_free(build_dir_abs);
     str_free(base);
     return final_path;
 }
@@ -415,10 +638,12 @@ static String c_test_output_path(const char *rel_path) {
 // Build a user-facing command hint for building C test binaries.
 // The caller owns the returned string and must free it with str_free.
 static String c_test_build_hint(void) {
+    String build_dir_abs = absolute_build_dir();
     String hint = str_from_cstr("make -C ");
 
-    str_append_cstr(hint, build_dir);
+    str_append_cstr(hint, build_dir_abs.cstr);
     str_append_cstr(hint, " test-programs");
+    str_free(build_dir_abs);
     return hint;
 }
 
@@ -542,7 +767,9 @@ static void discover_test_cases(const TestFileArray *files,
 }
 
 // Run one executable test file directly.
-static int run_executable_test(const TestCase *test_case) {
+static int run_executable_test(const TestCase *test_case,
+                               const char *output_root,
+                               const char *output_path) {
     char *argv[] = {test_case->file_abs_path.cstr, NULL};
 
     if (access(test_case->file_abs_path.cstr, X_OK) != 0) {
@@ -551,25 +778,27 @@ static int run_executable_test(const TestCase *test_case) {
         return 1;
     }
 
-    return run_argv(argv);
+    return run_argv(argv, output_root, output_path);
 }
 
 // Run one compiled C test, either a selected subtest or all subtests.
-static int run_c_test(const TestCase *test_case) {
+static int run_c_test(const TestCase *test_case, const char *output_root,
+                      const char *output_path) {
     char *argv[] = {
         test_case->c_exe_path.cstr,
         test_case->c_subtest.len != 0 ? test_case->c_subtest.cstr : "--all",
         NULL,
     };
 
-    return run_argv(argv);
+    return run_argv(argv, output_root, output_path);
 }
 
 // Prepend build/bin to PATH and export stable test-runner environment
 // variables.
 static void prepare_env_vars(void) {
     const char *old_path = getenv("PATH");
-    String bin_dir = join_two_paths(build_dir, "bin");
+    String build_dir_abs = absolute_build_dir();
+    String bin_dir = join_two_paths(build_dir_abs.cstr, "bin");
     String new_path = copy_str(bin_dir);
 
     if (old_path != NULL && old_path[0] != '\0') {
@@ -586,31 +815,41 @@ static void prepare_env_vars(void) {
     // tests.
     if (unsetenv("BUILD_DIR") != 0 || unsetenv("MAKEFLAGS") != 0 ||
         unsetenv("MAKEOVERRIDES") != 0 || unsetenv("MFLAGS") != 0 ||
-        unsetenv("MAKELEVEL") != 0) {
+        unsetenv("MAKELEVEL") != 0 ||
+        unsetenv(test_output_dir_env) != 0 ||
+        unsetenv(test_output_file_env) != 0) {
         str_free(bin_dir);
         str_free(new_path);
         die_errno("failed to clear inherited make state");
     }
     if (setenv("IMGNEKO_ROOT_DIR", root_dir, 1) != 0 ||
-        setenv("IMGNEKO_BUILD_DIR", build_dir, 1) != 0) {
+        setenv("IMGNEKO_BUILD_DIR", build_dir_abs.cstr, 1) != 0) {
+        str_free(build_dir_abs);
         str_free(bin_dir);
         str_free(new_path);
         die_errno("failed to update test environment");
     }
 
+    str_free(build_dir_abs);
     str_free(bin_dir);
     str_free(new_path);
 }
 
 // Print CLI usage help.
 static void usage(FILE *stream) {
+    String default_output_dir = default_test_output_dir();
+
     fprintf(stream,
-            "Usage: %s [--list] [--all] [--filter PATTERN] [PATTERN ...]\n"
+            "Usage: %s [--list] [--all] [--output-dir DIR] [--filter PATTERN]\n"
+            "       [PATTERN ...]\n"
             "\n"
             "Discover tests under %s/ relative to %s.\n"
             "\n"
-            "Patterns use shell-style wildcards and may be joined with '|'.\n",
-            "test-runner", tests_root_rel, root_dir);
+            "Patterns use shell-style wildcards and may be joined with '|'.\n"
+            "Default output dir: %s\n",
+            "test-runner", tests_root_rel, root_dir, default_output_dir.cstr);
+
+    str_free(default_output_dir);
 }
 
 int main(int argc, char **argv) {
@@ -618,6 +857,7 @@ int main(int argc, char **argv) {
     StringArray filters = arr_empty;
     bool list_only = false;
     bool run_all = false;
+    String output_dir = str_empty;
 
     // Collected files and test cases.
     TestFileArray files = arr_empty;
@@ -646,6 +886,21 @@ int main(int argc, char **argv) {
             usage(stdout);
             exit_code = 0;
             goto cleanup;
+        }
+        if (strcmp(argv[i], "--output-dir") == 0) {
+            if (i + 1 >= argc) {
+                usage(stderr);
+                exit_code = 1;
+                goto cleanup;
+            }
+            str_free(output_dir);
+            output_dir = resolve_absolute_path(argv[++i]);
+            continue;
+        }
+        if (strncmp(argv[i], "--output-dir=", 13) == 0) {
+            str_free(output_dir);
+            output_dir = resolve_absolute_path(argv[i] + 13);
+            continue;
         }
         if (strcmp(argv[i], "--filter") == 0) {
             if (i + 1 >= argc) {
@@ -676,6 +931,10 @@ int main(int argc, char **argv) {
         exit_code = 1;
         goto cleanup;
     }
+
+    if (output_dir.len == 0)
+        output_dir = default_test_output_dir();
+    validate_output_dir(output_dir.cstr);
 
     // Discover tests.
 
@@ -717,10 +976,13 @@ int main(int argc, char **argv) {
         fflush(stdout);
 
         int test_exit_code = -1;
+        String output_path = test_output_path(test_case, output_dir.cstr);
         if (test_case->kind == TEST_KIND_C) {
-            test_exit_code = run_c_test(test_case);
+            test_exit_code =
+                run_c_test(test_case, output_dir.cstr, output_path.cstr);
         } else if (test_case->kind == TEST_KIND_EXECUTABLE) {
-            test_exit_code = run_executable_test(test_case);
+            test_exit_code =
+                run_executable_test(test_case, output_dir.cstr, output_path.cstr);
         } else {
             test_exit_code = 1;
         }
@@ -730,8 +992,11 @@ int main(int argc, char **argv) {
             printf("PASS: %s\n", test_case->id.cstr);
         } else {
             printf("FAIL: %s\n", test_case->id.cstr);
+            print_output_tail(output_path.cstr, 20);
+            str_free(output_path);
             break;
         }
+        str_free(output_path);
         fflush(stdout);
     }
 
@@ -750,6 +1015,7 @@ int main(int argc, char **argv) {
     }
 
 cleanup:
+    str_free(output_dir);
     str_free(tests_dir);
     string_array_free(&filters);
     test_case_array_free(&cases);
