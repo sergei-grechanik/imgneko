@@ -1,6 +1,6 @@
 name: Make Test
 
-# This workflow runs all tests with the default configuration.
+# This workflow runs all tests with the default and ASan configurations.
 
 on:
   push:
@@ -8,7 +8,7 @@ on:
   pull_request:
 
 jobs:
-  make-test:
+  make-test-default:
     runs-on: ubuntu-latest
 
     steps:
@@ -18,5 +18,24 @@ jobs:
       - name: Configure default build
         run: ./configure
 
-      - name: Run make test
+      - name: Run default-profile tests
         run: make test
+
+  make-test-asan:
+    runs-on: ubuntu-latest
+    needs: make-test-default
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install clang
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang
+
+      - name: Configure ASan build
+        run: ./configure --profile=asan --cc=clang
+
+      - name: Run ASan-profile tests
+        run: make -C build/asan test
