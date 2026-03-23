@@ -241,17 +241,17 @@ assert_output_contains "error: $MISSING_CONFIG_BUILD/config.mk does not exist"
 assert_output_contains "run ./configure --build-dir='$MISSING_CONFIG_BUILD' first"
 
 # Build from a copied repository after making configure newer than config.mk so
-# the staleness warning path fires without blocking the actual build.
-say "Makefile warning when config.mk is older than configure"
+# the staleness error path blocks the build.
+say "Makefile error when config.mk is older than configure"
 copy_repo "$STALE_REPO"
 sh "$STALE_REPO/configure" --build-dir="$STALE_REPO/build/stale"
 sleep 1
 touch "$STALE_REPO/configure"
 
 run_capture "$LOG_DIR/stale-build.out" make -C "$STALE_REPO/build/stale"
-assert_status_zero
+assert_status_nonzero
 assert_output_contains "error: $STALE_REPO/build/stale/config.mk is older than $STALE_REPO/configure. Reconfigure or touch config.mk"
-assert_file_exists "$STALE_REPO/build/stale/bin/imgneko"
+assert_path_absent "$STALE_REPO/build/stale/bin/imgneko"
 
 # Remove VERSION in a copied repository so the top-level Makefile parse-time
 # check fails before any target logic runs.

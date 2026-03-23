@@ -137,7 +137,7 @@ CONFIG_INFO_DEFINES := \
 	$(foreach var,PROFILE PREFIX CC CPPFLAGS CFLAGS LDFLAGS LDLIBS FEATURE_X COMP_DB_MJ, \
 		printf '%s\n' '#define BUILD_CONFIG_$(var) "$(call c_escape,$($(var)))"';)
 
-# Check that config.mk exists and issue a warning if it is older than configure.
+# Check that config.mk exists and fail if it is older than configure.
 check-config-date:
 	@if [ ! -f "$(CONFIG_MK)" ]; then \
 		echo "error: $(CONFIG_MK) does not exist"; \
@@ -147,6 +147,7 @@ check-config-date:
 	@if [ -f "$(ROOT_DIR)/configure" ]; then \
 		if [ "$(CONFIG_MK)" -ot "$(ROOT_DIR)/configure" ]; then \
 			echo "error: $(CONFIG_MK) is older than $(ROOT_DIR)/configure. Reconfigure or touch config.mk"; \
+			exit 1; \
 		fi \
 	fi
 
@@ -161,7 +162,7 @@ check-config-date:
 #
 # check-config-date is an order-only prerequisite so direct invocations like:
 #   make /abs/path/to/build/debug/bin/imgneko
-# still issue a warning if the saved profile is stale.
+# still fail if the saved profile is stale.
 $(BIN_IMGNEKO): $(OBJECTS) $(CONFIG_MK) $(BUILD_INFO_H) | check-config-date
 	@mkdir -p "$(dir $@)"
 	$(CC) $(LDFLAGS) -o "$@" $(OBJECTS) $(LDLIBS)
