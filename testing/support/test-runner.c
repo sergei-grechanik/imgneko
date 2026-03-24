@@ -81,9 +81,9 @@ static const char *const tests_root_rel = "testing/tests";
 // Default directory under the build tree for per-test captured output.
 static const char *const default_test_output_dir_rel = "test-outputs";
 
-// Per-test environment variables that point tests at their own captured output.
+// Per-test environment variable that points tests at their own output
+// directory.
 static const char *const test_output_dir_env = "IMGNEKO_TEST_OUTPUT_DIR";
-static const char *const test_output_file_env = "IMGNEKO_TEST_OUTPUT_FILE";
 
 static void die_errno(const char *message) {
     fprintf(stderr, "error: %s: %s\n", message, strerror(errno));
@@ -328,29 +328,9 @@ static void mkdir_p(const char *path) {
     str_free(mutable_path);
 }
 
-// Ensure that the parent directory for a file path exists.
-static void ensure_parent_dir(const char *file_path) {
-    String parent = str_from_cstr(file_path);
-    char *slash = strrchr(parent.cstr, '/');
-
-    if (slash == NULL) {
-        str_free(parent);
-        return;
-    }
-
-    // Preserve "/" when the file lives directly under the filesystem root.
-    if (slash == parent.cstr) {
-        str_truncate(parent, 1);
-    } else {
-        str_truncate(parent, (size_t)(slash - parent.cstr));
-    }
-
-    mkdir_p(parent.cstr);
-    str_free(parent);
-}
-
-// Compute the default absolute directory that stores per-test output files. The
-// caller owns the returned string and must free it with str_free.
+// Compute the default absolute directory that stores per-test output
+// directories. The caller owns the returned string and must free it with
+// str_free.
 static String default_test_output_dir(void) {
     String build_dir_abs = absolute_build_dir();
     String output_dir = join_two_paths(build_dir_abs.cstr,
@@ -384,26 +364,31 @@ static void validate_output_dir(const char *output_dir) {
     str_free(build_dir_abs);
 }
 
-// Build the per-test output file path under output_root. Executable tests map
-// to `<root>/<test-id>.out`; C subtests map to
-// `<root>/<file-id>/<subtest>.out`. The caller owns the returned string and
-// must free it with str_free.
-static String test_output_path(const TestCase *test_case,
-                               const char *output_root) {
-    String path = join_two_paths(output_root, test_case->id.cstr);
-    str_append_cstr(path, ".out");
-    return path;
+// Build the per-test output directory path under output_root. Executable tests
+// map to `<root>/<test-id>/`; C subtests map to
+// `<root>/<file-id>/<subtest>/`. The caller owns the returned string and must
+// free it with str_free.
+static String test_output_dir_path(const TestCase *test_case,
+                                   const char *output_root) {
+    return join_two_paths(output_root, test_case->id.cstr);
+}
+
+// Build the per-test captured output file path (`.../output`) inside a
+// per-test output directory. The caller owns the returned string and must free
+// it with str_free.
+static String test_output_file_path(const char *test_output_dir) {
+    return join_two_paths(test_output_dir, "output");
 }
 
 // Run argv in a child process with stdout/stderr redirected into output_path.
-// The child also receives per-test output environment variables.
-static int run_argv(char *const *argv, const char *output_root,
+// The child also receives its per-test output directory and runs from it.
+static int run_argv(char *const *argv, const char *test_output_dir,
                     const char *output_path) {
     pid_t pid = fork();
     int status;
     int output_fd;
 
-    ensure_parent_dir(output_path);
+    mkdir_p(test_output_dir);
     output_fd = open(output_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
     if (output_fd < 0)
         die_errno("failed to open a test output file");
@@ -420,10 +405,14 @@ static int run_argv(char *const *argv, const char *output_root,
             _exit(127);
         }
         close(output_fd);
-        if (setenv(test_output_dir_env, output_root, 1) != 0 ||
-            setenv(test_output_file_env, output_path, 1) != 0) {
+        if (setenv(test_output_dir_env, test_output_dir, 1) != 0) {
             fprintf(stderr, "error: failed to update test output env: %s\n",
                     strerror(errno));
+            _exit(127);
+        }
+        if (chdir(test_output_dir) != 0) {
+            fprintf(stderr, "error: failed to chdir to %s: %s\n",
+                    test_output_dir, strerror(errno));
             _exit(127);
         }
         execvp(argv[0], argv);
@@ -768,7 +757,7 @@ static void discover_test_cases(const TestFileArray *files,
 
 // Run one executable test file directly.
 static int run_executable_test(const TestCase *test_case,
-                               const char *output_root,
+                               const char *test_output_dir,
                                const char *output_path) {
     char *argv[] = {test_case->file_abs_path.cstr, NULL};
 
@@ -778,11 +767,11 @@ static int run_executable_test(const TestCase *test_case,
         return 1;
     }
 
-    return run_argv(argv, output_root, output_path);
+    return run_argv(argv, test_output_dir, output_path);
 }
 
 // Run one compiled C test, either a selected subtest or all subtests.
-static int run_c_test(const TestCase *test_case, const char *output_root,
+static int run_c_test(const TestCase *test_case, const char *test_output_dir,
                       const char *output_path) {
     char *argv[] = {
         test_case->c_exe_path.cstr,
@@ -790,7 +779,7 @@ static int run_c_test(const TestCase *test_case, const char *output_root,
         NULL,
     };
 
-    return run_argv(argv, output_root, output_path);
+    return run_argv(argv, test_output_dir, output_path);
 }
 
 // Prepend build/bin to PATH and export stable test-runner environment
@@ -815,9 +804,7 @@ static void prepare_env_vars(void) {
     // tests.
     if (unsetenv("BUILD_DIR") != 0 || unsetenv("MAKEFLAGS") != 0 ||
         unsetenv("MAKEOVERRIDES") != 0 || unsetenv("MFLAGS") != 0 ||
-        unsetenv("MAKELEVEL") != 0 ||
-        unsetenv(test_output_dir_env) != 0 ||
-        unsetenv(test_output_file_env) != 0) {
+        unsetenv("MAKELEVEL") != 0 || unsetenv(test_output_dir_env) != 0) {
         str_free(bin_dir);
         str_free(new_path);
         die_errno("failed to clear inherited make state");
@@ -976,13 +963,15 @@ int main(int argc, char **argv) {
         fflush(stdout);
 
         int test_exit_code = -1;
-        String output_path = test_output_path(test_case, output_dir.cstr);
+        String test_output_dir =
+            test_output_dir_path(test_case, output_dir.cstr);
+        String output_path = test_output_file_path(test_output_dir.cstr);
         if (test_case->kind == TEST_KIND_C) {
             test_exit_code =
-                run_c_test(test_case, output_dir.cstr, output_path.cstr);
+                run_c_test(test_case, test_output_dir.cstr, output_path.cstr);
         } else if (test_case->kind == TEST_KIND_EXECUTABLE) {
-            test_exit_code =
-                run_executable_test(test_case, output_dir.cstr, output_path.cstr);
+            test_exit_code = run_executable_test(
+                test_case, test_output_dir.cstr, output_path.cstr);
         } else {
             test_exit_code = 1;
         }
@@ -993,9 +982,11 @@ int main(int argc, char **argv) {
         } else {
             printf("FAIL: %s\n", test_case->id.cstr);
             print_output_tail(output_path.cstr, 20);
+            str_free(test_output_dir);
             str_free(output_path);
             break;
         }
+        str_free(test_output_dir);
         str_free(output_path);
         fflush(stdout);
     }

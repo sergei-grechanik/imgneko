@@ -19,25 +19,25 @@ require_unset() {
 test -n "${IMGNEKO_ROOT_DIR:-}" || fail "IMGNEKO_ROOT_DIR is not set"
 test -n "${IMGNEKO_BUILD_DIR:-}" || fail "IMGNEKO_BUILD_DIR is not set"
 test -n "${IMGNEKO_TEST_OUTPUT_DIR:-}" || fail "IMGNEKO_TEST_OUTPUT_DIR is not set"
-test -n "${IMGNEKO_TEST_OUTPUT_FILE:-}" || fail "IMGNEKO_TEST_OUTPUT_FILE is not set"
 
 test -d "$IMGNEKO_ROOT_DIR" || fail "IMGNEKO_ROOT_DIR is not a directory"
 test -d "$IMGNEKO_BUILD_DIR" || fail "IMGNEKO_BUILD_DIR is not a directory"
 test -d "$IMGNEKO_BUILD_DIR/bin" || fail "build bin directory is missing"
 test -f "$IMGNEKO_ROOT_DIR/src/main.c" || fail "project root does not look correct"
 
-# Each test gets an absolute output file path plus the root of the output tree.
-expected_output_dir=$IMGNEKO_BUILD_DIR/test-outputs
-expected_output_file=$expected_output_dir/runner/environment.sh.out
+# Each test gets its own absolute output directory and runs from it.
+expected_output_dir=$IMGNEKO_BUILD_DIR/test-outputs/runner/environment.sh
+expected_output_file=$expected_output_dir/output
 
 test "$IMGNEKO_TEST_OUTPUT_DIR" = "$expected_output_dir" ||
-    fail "IMGNEKO_TEST_OUTPUT_DIR does not match the default output tree"
-test "$IMGNEKO_TEST_OUTPUT_FILE" = "$expected_output_file" ||
-    fail "IMGNEKO_TEST_OUTPUT_FILE does not match this test's output file"
+    fail "IMGNEKO_TEST_OUTPUT_DIR does not match this test's output directory"
 test -d "$IMGNEKO_TEST_OUTPUT_DIR" ||
     fail "IMGNEKO_TEST_OUTPUT_DIR is not a directory"
-test -f "$IMGNEKO_TEST_OUTPUT_FILE" ||
-    fail "IMGNEKO_TEST_OUTPUT_FILE is not a regular file"
+test -f "$expected_output_file" || fail "output file is not a regular file"
+
+current_dir=$(pwd)
+test "$current_dir" = "$IMGNEKO_TEST_OUTPUT_DIR" ||
+    fail "current directory does not match IMGNEKO_TEST_OUTPUT_DIR"
 
 # PATH should be prefixed with the build bin dir so tests can execute freshly
 # built tools without extra setup.
