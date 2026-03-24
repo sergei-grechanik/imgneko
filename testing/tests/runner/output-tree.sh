@@ -42,9 +42,12 @@ assert_file_not_contains() {
 
 RUNNER=$IMGNEKO_BUILD_DIR/bin/test-runner
 OUTPUT_ROOT=$IMGNEKO_TEST_OUTPUT_DIR/nested
-EXEC_OUTPUT=$OUTPUT_ROOT/runner/output.sh.out
-RUNNER_C_OUTPUT=$OUTPUT_ROOT/runner/output.c/emit_output.out
-UNIT_C_OUTPUT=$OUTPUT_ROOT/unit/util/string.c/empty_and_reserve.out
+EXEC_OUTPUT_DIR=$OUTPUT_ROOT/runner/output.sh
+EXEC_OUTPUT=$EXEC_OUTPUT_DIR/output
+RUNNER_C_OUTPUT_DIR=$OUTPUT_ROOT/runner/output.c/emit_output
+RUNNER_C_OUTPUT=$RUNNER_C_OUTPUT_DIR/output
+UNIT_C_OUTPUT_DIR=$OUTPUT_ROOT/unit/util/string.c/empty_and_reserve
+UNIT_C_OUTPUT=$UNIT_C_OUTPUT_DIR/output
 SUCCESS_LOG=$(mktemp /tmp/imgneko-runner-success.XXXXXX)
 FAILURE_LOG=$(mktemp /tmp/imgneko-runner-failure.XXXXXX)
 C_LOG=$(mktemp /tmp/imgneko-runner-c.XXXXXX)

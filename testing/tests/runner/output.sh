@@ -11,17 +11,15 @@ fail() {
 }
 
 test -n "${IMGNEKO_TEST_OUTPUT_DIR:-}" || fail "IMGNEKO_TEST_OUTPUT_DIR is not set"
-test -n "${IMGNEKO_TEST_OUTPUT_FILE:-}" || fail "IMGNEKO_TEST_OUTPUT_FILE is not set"
 
 case $IMGNEKO_TEST_OUTPUT_DIR in
     /*) ;;
     *) fail "IMGNEKO_TEST_OUTPUT_DIR is not absolute" ;;
 esac
 
-case $IMGNEKO_TEST_OUTPUT_FILE in
-    "$IMGNEKO_TEST_OUTPUT_DIR"/*) ;;
-    *) fail "IMGNEKO_TEST_OUTPUT_FILE is not under IMGNEKO_TEST_OUTPUT_DIR" ;;
-esac
+test "$(pwd)" = "$IMGNEKO_TEST_OUTPUT_DIR" ||
+    fail "current directory does not match IMGNEKO_TEST_OUTPUT_DIR"
+test -f output || fail "output file is missing"
 
 if [ "${IMGNEKO_TEST_SHOULD_FAIL:-0}" = "1" ]; then
     i=1

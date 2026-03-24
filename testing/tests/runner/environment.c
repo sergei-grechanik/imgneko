@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #include "test_main.h"
 #include "util/string.h"
@@ -28,19 +29,19 @@ static int test_output_env(TestContext *ctx) {
     const char *subtest = ctx->test_name;
     const char *build_dir = getenv("IMGNEKO_BUILD_DIR");
     const char *output_dir = getenv("IMGNEKO_TEST_OUTPUT_DIR");
-    const char *output_file = getenv("IMGNEKO_TEST_OUTPUT_FILE");
     String expected_dir = str_empty;
     String expected_file = str_empty;
+    char cwd[4096];
     int status = 0;
 
-    if (build_dir == NULL || output_dir == NULL || output_file == NULL) {
+    if (build_dir == NULL || output_dir == NULL) {
         status = fail_message(subtest, "required test output env vars are unset");
         goto cleanup;
     }
 
-    expected_dir = join_two_paths(build_dir, "test-outputs");
-    expected_file = join_two_paths(expected_dir.cstr,
-                                   "runner/environment.c/output_env.out");
+    expected_dir = join_two_paths(
+        build_dir, "test-outputs/runner/environment.c/output_env");
+    expected_file = join_two_paths(expected_dir.cstr, "output");
 
     if (strcmp(output_dir, expected_dir.cstr) != 0) {
         status =
@@ -48,10 +49,18 @@ static int test_output_env(TestContext *ctx) {
         goto cleanup;
     }
 
-    if (strcmp(output_file, expected_file.cstr) != 0) {
-        status = fail_message(subtest,
-                              "IMGNEKO_TEST_OUTPUT_FILE has the wrong value");
+    if (access(expected_file.cstr, F_OK) != 0) {
+        status = fail_message(subtest, "output file does not exist");
+        goto cleanup;
     }
+
+    if (getcwd(cwd, sizeof(cwd)) == NULL) {
+        status = fail_message(subtest, "getcwd failed");
+        goto cleanup;
+    }
+
+    if (strcmp(cwd, expected_dir.cstr) != 0)
+        status = fail_message(subtest, "current directory has the wrong value");
 
 cleanup:
     str_free(expected_file);

@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #include "test_main.h"
 
@@ -15,20 +16,22 @@ static int fail_message(const char *subtest, const char *message) {
 static int test_emit_output(TestContext *ctx) {
     const char *subtest = ctx->test_name;
     const char *output_dir = getenv("IMGNEKO_TEST_OUTPUT_DIR");
-    const char *output_file = getenv("IMGNEKO_TEST_OUTPUT_FILE");
+    char cwd[4096];
 
-    if (output_dir == NULL || output_file == NULL)
+    if (output_dir == NULL)
         return fail_message(subtest, "required test output env vars are unset");
 
     if (output_dir[0] != '/')
         return fail_message(subtest, "IMGNEKO_TEST_OUTPUT_DIR is not absolute");
 
-    if (strncmp(output_file, output_dir, strlen(output_dir)) != 0 ||
-        output_file[strlen(output_dir)] != '/') {
-        return fail_message(subtest,
-                            "IMGNEKO_TEST_OUTPUT_FILE is not under the output "
-                            "directory");
-    }
+    if (access("output", F_OK) != 0)
+        return fail_message(subtest, "output file is missing");
+
+    if (getcwd(cwd, sizeof(cwd)) == NULL)
+        return fail_message(subtest, "getcwd failed");
+
+    if (strcmp(cwd, output_dir) != 0)
+        return fail_message(subtest, "current directory has the wrong value");
 
     if (getenv("IMGNEKO_TEST_SHOULD_FAIL") != NULL &&
         strcmp(getenv("IMGNEKO_TEST_SHOULD_FAIL"), "1") == 0) {
