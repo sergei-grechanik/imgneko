@@ -3,8 +3,7 @@
 
 #include "build_info.h"
 
-static int print_version_if_requested(int argc, char **argv)
-{
+static int print_version_if_requested(int argc, char **argv) {
     int i;
 
     for (i = 1; i < argc; ++i) {
@@ -26,8 +25,7 @@ static int print_version_if_requested(int argc, char **argv)
     return 0;
 }
 
-int main(int argc, char **argv)
-{
+int main(int argc, char **argv) {
     if (print_version_if_requested(argc, argv)) {
         return 0;
     }
