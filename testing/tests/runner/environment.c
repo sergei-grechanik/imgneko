@@ -35,7 +35,8 @@ static int test_output_env(TestContext *ctx) {
     int status = 0;
 
     if (build_dir == NULL || output_dir == NULL) {
-        status = fail_message(subtest, "required test output env vars are unset");
+        status =
+            fail_message(subtest, "required test output env vars are unset");
         goto cleanup;
     }
 
@@ -44,8 +45,8 @@ static int test_output_env(TestContext *ctx) {
     expected_file = join_two_paths(expected_dir.cstr, "output");
 
     if (strcmp(output_dir, expected_dir.cstr) != 0) {
-        status =
-            fail_message(subtest, "IMGNEKO_TEST_OUTPUT_DIR has the wrong value");
+        status = fail_message(subtest,
+                              "IMGNEKO_TEST_OUTPUT_DIR has the wrong value");
         goto cleanup;
     }
 

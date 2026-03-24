@@ -8,8 +8,26 @@ on:
   pull_request:
 
 jobs:
+  clang-format-check:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install clang-format
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang-format
+
+      - name: Check C formatting
+        run: |
+          git ls-files '*.c' '*.h' | xargs clang-format -i
+          git diff --exit-code
+
   make-test-default:
     runs-on: ubuntu-latest
+    needs: clang-format-check
 
     steps:
       - name: Check out repository

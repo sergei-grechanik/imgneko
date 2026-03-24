@@ -153,9 +153,7 @@ static void trim_in_place(char *line) {
 }
 
 // Return whether path already uses an absolute filesystem location.
-static bool is_absolute_path(const char *path) {
-    return path[0] == '/';
-}
+static bool is_absolute_path(const char *path) { return path[0] == '/'; }
 
 // Return whether `prefix` names the same path as `path`, or a parent directory
 // of it, with a component boundary at the match point.
@@ -333,8 +331,8 @@ static void mkdir_p(const char *path) {
 // str_free.
 static String default_test_output_dir(void) {
     String build_dir_abs = absolute_build_dir();
-    String output_dir = join_two_paths(build_dir_abs.cstr,
-                                       default_test_output_dir_rel);
+    String output_dir =
+        join_two_paths(build_dir_abs.cstr, default_test_output_dir_rel);
 
     trim_trailing_slashes(&output_dir);
     str_free(build_dir_abs);
