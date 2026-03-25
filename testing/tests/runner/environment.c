@@ -4,23 +4,13 @@
 #include <unistd.h>
 
 #include "test_main.h"
+#include "util/path.h"
 #include "util/string.h"
 
 // Emit one failure message for the current subtest and return a failing status.
 static int fail_message(const char *subtest, const char *message) {
     fprintf(stderr, "%s: %s\n", subtest, message);
     return 1;
-}
-
-// Join two path segments into a newly allocated String. The caller owns the
-// returned String and frees it with str_free.
-static String join_two_paths(const char *left, const char *right) {
-    String result = str_from_cstr(left);
-
-    if (result.len > 0 && result.cstr[result.len - 1] != '/')
-        str_push(result, '/');
-    str_append_cstr(result, right);
-    return result;
 }
 
 // Verify that C subtests receive the same stable output-tree environment as
@@ -40,9 +30,9 @@ static int test_output_env(TestContext *ctx) {
         goto cleanup;
     }
 
-    expected_dir = join_two_paths(
-        build_dir, "test-outputs/runner/environment.c/output_env");
-    expected_file = join_two_paths(expected_dir.cstr, "output");
+    expected_dir =
+        path_join(build_dir, "test-outputs/runner/environment.c/output_env");
+    expected_file = path_join(expected_dir.cstr, "output");
 
     if (strcmp(output_dir, expected_dir.cstr) != 0) {
         status = fail_message(subtest,

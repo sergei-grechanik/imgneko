@@ -17,6 +17,7 @@
 #include <unistd.h>
 
 #include "util/array.h"
+#include "util/path.h"
 #include "util/string.h"
 
 #ifndef TEST_RUNNER_ROOT_DIR
@@ -119,17 +120,6 @@ static void test_case_array_free(TestCaseArray *array) {
     arr_free(*array);
 }
 
-// Join two path segments and return a newly allocated absolute/relative path.
-// The caller owns the returned string and must free it with str_free.
-static String join_two_paths(const char *left, const char *right) {
-    String result = str_from_cstr(left);
-
-    if (result.len > 0 && result.cstr[result.len - 1] != '/')
-        str_push(result, '/');
-    str_append_cstr(result, right);
-    return result;
-}
-
 // Trim leading and trailing ASCII whitespace from a string in place.
 static void trim_in_place(char *line) {
     size_t len;
@@ -152,9 +142,6 @@ static void trim_in_place(char *line) {
     line[end - start] = '\0';
 }
 
-// Return whether path already uses an absolute filesystem location.
-static bool is_absolute_path(const char *path) { return path[0] == '/'; }
-
 // Return whether `prefix` names the same path as `path`, or a parent directory
 // of it, with a component boundary at the match point.
 static bool path_is_prefix(const char *prefix, const char *path) {
@@ -164,12 +151,6 @@ static bool path_is_prefix(const char *prefix, const char *path) {
         return false;
 
     return path[prefix_len] == '\0' || path[prefix_len] == '/';
-}
-
-// Normalize directory paths by dropping trailing slashes, while preserving "/".
-static void trim_trailing_slashes(String *path) {
-    while (path->len > 1 && path->cstr[path->len - 1] == '/')
-        str_truncate(*path, path->len - 1);
 }
 
 // Comparator for deterministic sorting of discovered files by relative path.
@@ -186,37 +167,18 @@ static int compare_test_cases(const void *lhs, const void *rhs) {
     return strcmp(a->id.cstr, b->id.cstr);
 }
 
-// Resolve a user-supplied path to an absolute path using the current working
-// directory when the input is relative. The caller owns the returned string and
-// must free it with str_free.
-static String resolve_absolute_path(const char *path) {
-    char cwd[PATH_MAX];
-    String resolved = str_empty;
-
-    if (is_absolute_path(path))
-        resolved = str_from_cstr(path);
-    else {
-        if (getcwd(cwd, sizeof(cwd)) == NULL)
-            die_errno("failed to get current working directory");
-        resolved = join_two_paths(cwd, path);
-    }
-
-    trim_trailing_slashes(&resolved);
-    return resolved;
-}
-
 // Resolve the compiled build-dir string against the repository root when it is
 // not already absolute. The caller owns the returned string and must free it
 // with str_free.
 static String absolute_build_dir(void) {
     String resolved = str_empty;
 
-    if (is_absolute_path(build_dir))
+    if (path_is_absolute(build_dir))
         resolved = str_from_cstr(build_dir);
     else
-        resolved = join_two_paths(root_dir, build_dir);
+        resolved = path_join(root_dir, build_dir);
 
-    trim_trailing_slashes(&resolved);
+    path_trim_trailing_slashes(&resolved);
     return resolved;
 }
 
@@ -226,12 +188,12 @@ static String absolute_build_dir(void) {
 static void discover_test_files_rec(const char *tests_root_abs,
                                     const char *rel_dir, TestFileArray *files) {
     // Resolve the directory represented by rel_dir relative to tests_root_abs.
-    String dir_path = rel_dir[0] == '\0'
-                          ? str_from_cstr(tests_root_abs)
-                          : join_two_paths(tests_root_abs, rel_dir);
-    DIR *dir = opendir(dir_path.cstr);
+    String dir_path = rel_dir[0] == '\0' ? str_from_cstr(tests_root_abs)
+                                         : path_join(tests_root_abs, rel_dir);
     struct dirent *entry;
+    DIR *dir;
 
+    dir = opendir(dir_path.cstr);
     if (dir == NULL) {
         str_free(dir_path);
         die_errno("failed to open tests directory");
@@ -249,8 +211,8 @@ static void discover_test_files_rec(const char *tests_root_abs,
         }
 
         rel_path = rel_dir[0] == '\0' ? str_from_cstr(entry->d_name)
-                                      : join_two_paths(rel_dir, entry->d_name);
-        abs_path = join_two_paths(tests_root_abs, rel_path.cstr);
+                                      : path_join(rel_dir, entry->d_name);
+        abs_path = path_join(tests_root_abs, rel_path.cstr);
 
         if (stat(abs_path.cstr, &st) != 0) {
             str_free(rel_path);
@@ -332,9 +294,9 @@ static void mkdir_p(const char *path) {
 static String default_test_output_dir(void) {
     String build_dir_abs = absolute_build_dir();
     String output_dir =
-        join_two_paths(build_dir_abs.cstr, default_test_output_dir_rel);
+        path_join(build_dir_abs.cstr, default_test_output_dir_rel);
 
-    trim_trailing_slashes(&output_dir);
+    path_trim_trailing_slashes(&output_dir);
     str_free(build_dir_abs);
     return output_dir;
 }
@@ -345,7 +307,7 @@ static void validate_output_dir(const char *output_dir) {
     String build_dir_abs = absolute_build_dir();
     bool unsafe = false;
 
-    if (!is_absolute_path(output_dir))
+    if (!path_is_absolute(output_dir))
         unsafe = true;
 
     if (strcmp(output_dir, "/") == 0 || path_is_prefix(output_dir, root_dir) ||
@@ -368,14 +330,14 @@ static void validate_output_dir(const char *output_dir) {
 // free it with str_free.
 static String test_output_dir_path(const TestCase *test_case,
                                    const char *output_root) {
-    return join_two_paths(output_root, test_case->id.cstr);
+    return path_join(output_root, test_case->id.cstr);
 }
 
 // Build the per-test captured output file path (`.../output`) inside a
 // per-test output directory. The caller owns the returned string and must free
 // it with str_free.
 static String test_output_file_path(const char *test_output_dir) {
-    return join_two_paths(test_output_dir, "output");
+    return path_join(test_output_dir, "output");
 }
 
 // Run argv in a child process with stdout/stderr redirected into output_path.
@@ -613,12 +575,12 @@ static bool test_matches_filters(const TestCase *test_case,
 // The caller owns the returned string and must free it with str_free.
 static String c_test_output_path(const char *rel_path) {
     String build_dir_abs = absolute_build_dir();
-    String base = join_two_paths(build_dir_abs.cstr, "test-bin");
-    String final_path = join_two_paths(base.cstr, rel_path);
+    String base = path_join(build_dir_abs.cstr, "test-bin");
+    String final_path = path_join(base.cstr, rel_path);
 
     str_append_cstr(final_path, ".bin");
-    str_free(build_dir_abs);
     str_free(base);
+    str_free(build_dir_abs);
     return final_path;
 }
 
@@ -785,7 +747,7 @@ static int run_c_test(const TestCase *test_case, const char *test_output_dir,
 static void prepare_env_vars(void) {
     const char *old_path = getenv("PATH");
     String build_dir_abs = absolute_build_dir();
-    String bin_dir = join_two_paths(build_dir_abs.cstr, "bin");
+    String bin_dir = path_join(build_dir_abs.cstr, "bin");
     String new_path = copy_str(bin_dir);
 
     if (old_path != NULL && old_path[0] != '\0') {
@@ -878,13 +840,13 @@ int main(int argc, char **argv) {
                 exit_code = 1;
                 goto cleanup;
             }
-            str_free(output_dir);
-            output_dir = resolve_absolute_path(argv[++i]);
+            if (!path_resolve_absolute(&output_dir, argv[++i]))
+                die_errno("failed to resolve output directory");
             continue;
         }
         if (strncmp(argv[i], "--output-dir=", 13) == 0) {
-            str_free(output_dir);
-            output_dir = resolve_absolute_path(argv[i] + 13);
+            if (!path_resolve_absolute(&output_dir, argv[i] + 13))
+                die_errno("failed to resolve output directory");
             continue;
         }
         if (strcmp(argv[i], "--filter") == 0) {
@@ -924,7 +886,7 @@ int main(int argc, char **argv) {
     // Discover tests.
 
     prepare_env_vars();
-    tests_dir = join_two_paths(root_dir, tests_root_rel);
+    tests_dir = path_join(root_dir, tests_root_rel);
 
     if (chdir(root_dir) != 0) {
         str_free(tests_dir);

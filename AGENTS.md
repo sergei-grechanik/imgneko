@@ -35,7 +35,8 @@ and what the expected behavior is.
   single exit point to ensure proper cleanup (i.e. goto cleanup).
 - Declare loop variables in the `for` header when practical.
 - Use `int` for `argc`-indexed loops; use `size_t` for collection-length loops.
-- Drop {} around one-line single-statement bodies.
+- Drop {} around one-line single-statement bodies. However, if an if-statement
+  has an else branch that requires {}, keep {} on both branches for consistency.
 - Declare variables as close as possible to their first use, unless they
   participate in cleaning up (goto cleanup idiom), in which case declare them at
   the top of the function and initialize them (likely to NULL) right away.

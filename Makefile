@@ -41,14 +41,17 @@ VERSION_FILE := $(ROOT_DIR)/VERSION
 # Sources
 ###############################################################################
 
-SOURCES := src/main.c
+APP_SOURCES := src/main.c
+UTIL_SOURCES := $(shell if [ -d "$(ROOT_DIR)/src/util" ]; then cd "$(ROOT_DIR)" && find src/util -type f -name '*.c' -print | LC_ALL=C sort; fi)
 TEST_RUNNER_SOURCE := testing/support/test-runner.c
 TEST_SUPPORT_SOURCES := $(shell if [ -d "$(ROOT_DIR)/testing/support" ]; then cd "$(ROOT_DIR)" && find testing/support -type f -name '*.c' ! -name 'test-runner.c' -print | LC_ALL=C sort; fi)
 TEST_C_SOURCES := $(shell if [ -d "$(ROOT_DIR)/testing/tests" ]; then cd "$(ROOT_DIR)" && find testing/tests -type f -name '*.c' -print | LC_ALL=C sort; fi)
 
 # Preserve the source tree under $(OBJ_DIR), so:
 #   src/main.c -> $(OBJ_DIR)/src/main.o
-OBJECTS := $(addprefix $(OBJ_DIR)/,$(SOURCES:.c=.o))
+APP_OBJECTS := $(addprefix $(OBJ_DIR)/,$(APP_SOURCES:.c=.o))
+UTIL_OBJECTS := $(addprefix $(OBJ_DIR)/,$(UTIL_SOURCES:.c=.o))
+OBJECTS := $(APP_OBJECTS) $(UTIL_OBJECTS)
 TEST_RUNNER_OBJECT := $(OBJ_DIR)/$(TEST_RUNNER_SOURCE:.c=.o)
 TEST_SUPPORT_OBJECTS := $(addprefix $(OBJ_DIR)/,$(TEST_SUPPORT_SOURCES:.c=.o))
 TEST_TOOLS := $(BIN_TEST_RUNNER)
@@ -172,9 +175,9 @@ $(BIN_IMGNEKO): $(OBJECTS) $(CONFIG_MK) $(BUILD_INFO_H) | check-config-date
 	@mkdir -p "$(dir $@)"
 	$(CC) $(LDFLAGS) -o "$@" $(OBJECTS) $(LDLIBS)
 
-$(BIN_TEST_RUNNER): $(TEST_RUNNER_OBJECT) $(CONFIG_MK) $(BUILD_INFO_H) | check-config-date
+$(BIN_TEST_RUNNER): $(TEST_RUNNER_OBJECT) $(UTIL_OBJECTS) $(CONFIG_MK) $(BUILD_INFO_H) | check-config-date
 	@mkdir -p "$(dir $@)"
-	$(CC) $(LDFLAGS) -o "$@" $(TEST_RUNNER_OBJECT) $(LDLIBS)
+	$(CC) $(LDFLAGS) -o "$@" $(TEST_RUNNER_OBJECT) $(UTIL_OBJECTS) $(LDLIBS)
 
 # Generate a header used by `--version` to print all build information.
 $(BUILD_INFO_H): $(CONFIG_MK) $(VERSION_FILE) | check-config-date
@@ -204,9 +207,9 @@ $(OBJ_DIR)/%.o: %.c $(CONFIG_MK) $(BUILD_INFO_H) | check-config-date
 	@mkdir -p "$(dir $@)" "$(MJ_DIR)/$(dir $*)"
 	$(CC) $(COMMON_INCLUDES) $(CPPFLAGS) $(FEATURE_CPPFLAGS) $(CFLAGS) -MJ "$(MJ_DIR)/$*.json" -c "$<" -o "$@"
 
-$(TEST_BIN_DIR)/%.c.bin: testing/tests/%.c $(TEST_SUPPORT_OBJECTS) $(CONFIG_MK) $(BUILD_INFO_H) | check-config-date
+$(TEST_BIN_DIR)/%.c.bin: testing/tests/%.c $(TEST_SUPPORT_OBJECTS) $(UTIL_OBJECTS) $(CONFIG_MK) $(BUILD_INFO_H) | check-config-date
 	@mkdir -p "$(dir $@)" "$(MJ_DIR)/testing/tests/$(dir $*)"
-	$(CC) $(TEST_INCLUDES) $(CPPFLAGS) $(FEATURE_CPPFLAGS) $(CFLAGS) $(LDFLAGS) -MJ "$(MJ_DIR)/testing/tests/$*.json" "$<" $(TEST_SUPPORT_OBJECTS) -o "$@" $(LDLIBS)
+	$(CC) $(TEST_INCLUDES) $(CPPFLAGS) $(FEATURE_CPPFLAGS) $(CFLAGS) $(LDFLAGS) -MJ "$(MJ_DIR)/testing/tests/$*.json" "$<" $(TEST_SUPPORT_OBJECTS) $(UTIL_OBJECTS) -o "$@" $(LDLIBS)
 else
 # Compile one source file into one object file.
 #
@@ -220,9 +223,9 @@ $(OBJ_DIR)/%.o: %.c $(CONFIG_MK) $(BUILD_INFO_H) | check-config-date
 	@mkdir -p "$(dir $@)"
 	$(CC) $(COMMON_INCLUDES) $(CPPFLAGS) $(FEATURE_CPPFLAGS) $(CFLAGS) -c "$<" -o "$@"
 
-$(TEST_BIN_DIR)/%.c.bin: testing/tests/%.c $(TEST_SUPPORT_OBJECTS) $(CONFIG_MK) $(BUILD_INFO_H) | check-config-date
+$(TEST_BIN_DIR)/%.c.bin: testing/tests/%.c $(TEST_SUPPORT_OBJECTS) $(UTIL_OBJECTS) $(CONFIG_MK) $(BUILD_INFO_H) | check-config-date
 	@mkdir -p "$(dir $@)"
-	$(CC) $(TEST_INCLUDES) $(CPPFLAGS) $(FEATURE_CPPFLAGS) $(CFLAGS) $(LDFLAGS) "$<" $(TEST_SUPPORT_OBJECTS) -o "$@" $(LDLIBS)
+	$(CC) $(TEST_INCLUDES) $(CPPFLAGS) $(FEATURE_CPPFLAGS) $(CFLAGS) $(LDFLAGS) "$<" $(TEST_SUPPORT_OBJECTS) $(UTIL_OBJECTS) -o "$@" $(LDLIBS)
 endif
 
 ###############################################################################
