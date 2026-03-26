@@ -14,7 +14,7 @@ endif
 
 # Normalize user-supplied BUILD_DIR values so generated paths and test-runner
 # environment variables stay absolute even when callers pass `build/foo/`.
-BUILD_DIR := $(abspath $(BUILD_DIR))
+override BUILD_DIR := $(abspath $(BUILD_DIR))
 
 # Important build-directory-local paths.
 CONFIG_MK      := $(BUILD_DIR)/config.mk
@@ -22,17 +22,18 @@ WRAPPER_MKFILE := $(BUILD_DIR)/Makefile
 BIN_DIR        := $(BUILD_DIR)/bin
 OBJ_DIR        := $(BUILD_DIR)/obj
 GEN_DIR        := $(BUILD_DIR)/generated
-TEST_BIN_DIR   := $(BUILD_DIR)/test-bin
+TEST_BIN_DIR   := $(OBJ_DIR)/test-bin
 TEST_OUTPUT_DIR := $(BUILD_DIR)/test-outputs
-
-# When enabled, -MJ fragments are emitted alongside object files.
-MJ_DIR         := $(BUILD_DIR)/compile_commands.d
-COMPILE_DB     := $(BUILD_DIR)/compile_commands.json
 
 # Important targets.
 BIN_IMGNEKO     := $(BIN_DIR)/imgneko
 BIN_TEST_RUNNER := $(BIN_DIR)/test-runner
 BUILD_INFO_H    := $(GEN_DIR)/build_info.h
+
+# Additional targets.
+COMPILE_DB      := $(BUILD_DIR)/compile_commands.json
+STAGED_DEPFILE := $(BUILD_DIR)/dependencies.mk
+FINAL_DEPFILE := $(ROOT_DIR)/mk/dependencies.mk
 
 # Checked-in version file.
 VERSION_FILE := $(ROOT_DIR)/VERSION
@@ -56,6 +57,8 @@ TEST_RUNNER_OBJECT := $(OBJ_DIR)/$(TEST_RUNNER_SOURCE:.c=.o)
 TEST_SUPPORT_OBJECTS := $(addprefix $(OBJ_DIR)/,$(TEST_SUPPORT_SOURCES:.c=.o))
 TEST_TOOLS := $(BIN_TEST_RUNNER)
 TEST_C_BINS := $(patsubst testing/tests/%.c,$(TEST_BIN_DIR)/%.c.bin,$(TEST_C_SOURCES))
+ALL_OBJECTS_AND_BINS := \
+	$(OBJECTS) $(TEST_RUNNER_OBJECT) $(TEST_SUPPORT_OBJECTS) $(TEST_C_BINS)
 
 ###############################################################################
 # Fixed project metadata
@@ -132,18 +135,43 @@ TEST_RUNNER_DEFINES := \
 	-DTEST_RUNNER_ROOT_DIR=\"$(call c_escape,$(ROOT_DIR))\" \
 	-DTEST_RUNNER_BUILD_DIR=\"$(call c_escape,$(BUILD_DIR))\"
 
+# Helpers to convert *.bin and *.o targets to *.d depfile paths and *.json
+# compile database fragment paths.
+mj_fragment_for = $(patsubst %.bin,%.json,$(patsubst %.o,%.json,$(1)))
+depfile_input_for = $(patsubst %.bin,%.d,$(patsubst %.o,%.d,$(1)))
+
 # A command to combine the -MJ fragments into a complete compile_commands.json,
 # or a no-op when the feature is disabled.
 ifeq ($(COMP_DB_MJ),ON)
-COMPILE_DB_REFRESH = "$(ROOT_DIR)/tools/build-compile-db.sh" "$(MJ_DIR)" "$(COMPILE_DB)"
+MJ_COMPILE_FLAGS = -MJ "$(call mj_fragment_for,$@)"
+COMPILE_DB_REFRESH = "$(ROOT_DIR)/tools/build-compile-db.sh" "$(OBJ_DIR)" "$(COMPILE_DB)"
 else
+MJ_COMPILE_FLAGS =
 COMPILE_DB_REFRESH = :
 endif
 
+# When explicitly enabled by configure, also emit per-target depfiles that can
+# be normalized into the checked-in FINAL_DEPFILE.
+ifeq ($(DEPFILES),ON)
+DEPFILE_COMPILE_FLAGS = -MMD -MP -MT "$@" -MF "$(call depfile_input_for,$@)"
+else
+DEPFILE_COMPILE_FLAGS =
+endif
+
+# Flags that are common to every compile invocation.
+COMMON_COMPILE_FLAGS = \
+	$(CPPFLAGS) $(FEATURE_CPPFLAGS) $(CFLAGS) $(DEPFILE_COMPILE_FLAGS) \
+	$(MJ_COMPILE_FLAGS)
+
 # Emit one #define line per saved configuration variable.
 CONFIG_INFO_DEFINES := \
-	$(foreach var,PROFILE PREFIX CC CPPFLAGS CFLAGS LDFLAGS LDLIBS FEATURE_X COMP_DB_MJ, \
+	$(foreach var,PROFILE PREFIX CC CPPFLAGS CFLAGS LDFLAGS LDLIBS FEATURE_X COMP_DB_MJ DEPFILES, \
 		printf '%s\n' '#define BUILD_CONFIG_$(var) "$(call c_escape,$($(var)))"';)
+
+# Use a checked-in dependency file when it exists.
+ifneq ($(wildcard $(FINAL_DEPFILE)),)
+include $(FINAL_DEPFILE)
+endif
 
 # Check that config.mk exists and fail if it is older than configure.
 check-config-date:
@@ -196,36 +224,32 @@ $(BUILD_INFO_H): $(CONFIG_MK) $(VERSION_FILE) | check-config-date
 		printf '%s\n' '#endif'; \
 	} > "$@"
 
-ifeq ($(COMP_DB_MJ),ON)
-# When compile_commands.json is enabled, each compile emits its clang-style
-# -MJ fragment alongside the object file in the same compiler invocation.
 $(TEST_RUNNER_OBJECT): $(TEST_RUNNER_SOURCE) $(CONFIG_MK) $(BUILD_INFO_H) | check-config-date
-	@mkdir -p "$(dir $@)" "$(MJ_DIR)/$(dir $(TEST_RUNNER_SOURCE))"
-	$(CC) $(COMMON_INCLUDES) $(TEST_RUNNER_DEFINES) $(CPPFLAGS) $(FEATURE_CPPFLAGS) $(CFLAGS) -MJ "$(MJ_DIR)/$(TEST_RUNNER_SOURCE:.c=.json)" -c "$<" -o "$@"
+	@mkdir -p "$(dir $@)"
+	$(CC) $(COMMON_INCLUDES) $(TEST_RUNNER_DEFINES) $(COMMON_COMPILE_FLAGS) -c "$<" -o "$@"
 
 $(OBJ_DIR)/%.o: %.c $(CONFIG_MK) $(BUILD_INFO_H) | check-config-date
-	@mkdir -p "$(dir $@)" "$(MJ_DIR)/$(dir $*)"
-	$(CC) $(COMMON_INCLUDES) $(CPPFLAGS) $(FEATURE_CPPFLAGS) $(CFLAGS) -MJ "$(MJ_DIR)/$*.json" -c "$<" -o "$@"
+	@mkdir -p "$(dir $@)"
+	$(CC) $(COMMON_INCLUDES) $(COMMON_COMPILE_FLAGS) -c "$<" -o "$@"
 
 $(TEST_BIN_DIR)/%.c.bin: testing/tests/%.c $(TEST_SUPPORT_OBJECTS) $(UTIL_OBJECTS) $(CONFIG_MK) $(BUILD_INFO_H) | check-config-date
-	@mkdir -p "$(dir $@)" "$(MJ_DIR)/testing/tests/$(dir $*)"
-	$(CC) $(TEST_INCLUDES) $(CPPFLAGS) $(FEATURE_CPPFLAGS) $(CFLAGS) $(LDFLAGS) -MJ "$(MJ_DIR)/testing/tests/$*.json" "$<" $(TEST_SUPPORT_OBJECTS) $(UTIL_OBJECTS) -o "$@" $(LDLIBS)
+	@mkdir -p "$(dir $@)"
+	$(CC) $(TEST_INCLUDES) $(COMMON_COMPILE_FLAGS) $(LDFLAGS) "$<" $(TEST_SUPPORT_OBJECTS) $(UTIL_OBJECTS) -o "$@" $(LDLIBS)
+
+# Build a checked-in, normalized dependency file from per-target depfiles
+# generated by an explicit depfile-enabled configure run.
+ifeq ($(DEPFILES),ON)
+$(STAGED_DEPFILE): $(ALL_OBJECTS_AND_BINS) $(ROOT_DIR)/tools/build-depfile.sh | check-config-date
+	@"$(ROOT_DIR)/tools/build-depfile.sh" "$(ROOT_DIR)" "$(BUILD_DIR)" "$(OBJ_DIR)" "$@"
+
+depfile: check-config-date $(ALL_OBJECTS_AND_BINS) $(ROOT_DIR)/tools/build-depfile.sh
+	@"$(ROOT_DIR)/tools/build-depfile.sh" "$(ROOT_DIR)" "$(BUILD_DIR)" "$(OBJ_DIR)" "$(STAGED_DEPFILE)"
+	@mkdir -p "$(dir $(FINAL_DEPFILE))"
+	cp "$(STAGED_DEPFILE)" "$(FINAL_DEPFILE)"
 else
-# Compile one source file into one object file.
-#
-# Objects depend on config.mk and build_info.h so that configuration changes and
-# regenerated metadata trigger recompilation automatically.
-$(TEST_RUNNER_OBJECT): $(TEST_RUNNER_SOURCE) $(CONFIG_MK) $(BUILD_INFO_H) | check-config-date
-	@mkdir -p "$(dir $@)"
-	$(CC) $(COMMON_INCLUDES) $(TEST_RUNNER_DEFINES) $(CPPFLAGS) $(FEATURE_CPPFLAGS) $(CFLAGS) -c "$<" -o "$@"
-
-$(OBJ_DIR)/%.o: %.c $(CONFIG_MK) $(BUILD_INFO_H) | check-config-date
-	@mkdir -p "$(dir $@)"
-	$(CC) $(COMMON_INCLUDES) $(CPPFLAGS) $(FEATURE_CPPFLAGS) $(CFLAGS) -c "$<" -o "$@"
-
-$(TEST_BIN_DIR)/%.c.bin: testing/tests/%.c $(TEST_SUPPORT_OBJECTS) $(UTIL_OBJECTS) $(CONFIG_MK) $(BUILD_INFO_H) | check-config-date
-	@mkdir -p "$(dir $@)"
-	$(CC) $(TEST_INCLUDES) $(CPPFLAGS) $(FEATURE_CPPFLAGS) $(CFLAGS) $(LDFLAGS) "$<" $(TEST_SUPPORT_OBJECTS) $(UTIL_OBJECTS) -o "$@" $(LDLIBS)
+depfile: check-config-date
+	@echo "error: depfile generation is disabled in $(CONFIG_MK); rerun ./configure --build-dir='$(BUILD_DIR)' --depfiles"
+	@exit 1
 endif
 
 ###############################################################################
@@ -234,7 +258,7 @@ endif
 
 .DEFAULT_GOAL := all
 
-.PHONY: all install clean help check-config-date test test-list test-tools test-c-bins clean-test-output
+.PHONY: all install clean depfile help check-config-date test test-list test-tools test-c-bins clean-test-output
 
 # Targets to build things.
 all: check-config-date $(BIN_IMGNEKO)
@@ -267,7 +291,7 @@ clean-test-output: check-config-date
 
 # Remove build outputs but keep the saved configuration and wrapper Makefile.
 clean: clean-test-output
-	rm -rf "$(OBJ_DIR)" "$(BIN_DIR)" "$(GEN_DIR)" "$(TEST_BIN_DIR)" "$(MJ_DIR)" "$(COMPILE_DB)"
+	rm -rf "$(OBJ_DIR)" "$(BIN_DIR)" "$(GEN_DIR)" "$(STAGED_DEPFILE)" "$(COMPILE_DB)"
 
 # Brief user-facing help.
 help:
@@ -285,6 +309,10 @@ help:
 	@printf '%s\n' 'To also generate compile_commands.json during normal builds:'
 	@printf '%s\n' '  ./configure --profile=debug --comp-db-mj'
 	@printf '%s\n' '  make -C build/debug'
+	@printf '%s\n' ''
+	@printf '%s\n' 'To regenerate the checked-in dependency file:'
+	@printf '%s\n' '  ./configure --build-dir=build/depfiles --depfiles'
+	@printf '%s\n' '  make -C build/depfiles depfile'
 	@printf '%s\n' ''
 	@printf '%s\n' 'To run tests from a configured build directory:'
 	@printf '%s\n' '  make -C build/debug test'

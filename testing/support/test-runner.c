@@ -53,7 +53,7 @@ typedef struct TestFile {
 // id:            `integration/unit/util/string.c/empty_and_reserve`
 // file_id:       `integration/unit/util/string.c`
 // file_abs_path: `/repo/testing/tests/integration/unit/util/string.c`
-// c_exe_path:    `/repo/build/asan/test-bin/integration/unit/util/string.c.bin`
+// c_exe_path:    `/repo/build/release/obj/test-bin/.../util/string.c.bin`
 // c_subtest:     `empty_and_reserve`
 //
 // For an executable test file, id and file_id both equal the relative path, and
@@ -575,7 +575,7 @@ static bool test_matches_filters(const TestCase *test_case,
 // The caller owns the returned string and must free it with str_free.
 static String c_test_output_path(const char *rel_path) {
     String build_dir_abs = absolute_build_dir();
-    String base = path_join(build_dir_abs.cstr, "test-bin");
+    String base = path_join(build_dir_abs.cstr, "obj/test-bin");
     String final_path = path_join(base.cstr, rel_path);
 
     str_append_cstr(final_path, ".bin");

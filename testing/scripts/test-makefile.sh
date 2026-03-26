@@ -15,8 +15,11 @@ CUSTOM_BUILD=$ROOT_DIR/build/test-debug-custom-cc
 MISSING_CONFIG_BUILD=$ROOT_DIR/build/test-missing-config
 INVALID_FEATURE_BUILD=$ROOT_DIR/build/test-invalid-feature
 INVALID_COMPDB_BUILD=$ROOT_DIR/build/test-invalid-compdb
+INVALID_DEPFILES_BUILD=$ROOT_DIR/build/test-invalid-depfiles
 COMPDB_WITH_MESSAGE_BUILD=$ROOT_DIR/build/test-compdb-with-message
 COMPDB_WITHOUT_MESSAGE_BUILD=$ROOT_DIR/build/test-compdb-without-message
+DEPFILES_WITH_MESSAGE_BUILD=$ROOT_DIR/build/test-depfiles-with-message
+DEPFILES_WITHOUT_MESSAGE_BUILD=$ROOT_DIR/build/test-depfiles-without-message
 COMPDB_CLANG_BUILD=$ROOT_DIR/build/test-compdb-clang
 SPACE_BUILD="$ROOT_DIR/build/test bad dir"
 RECONFIGURE_BUILD=$ROOT_DIR/build/test-reconfigure-check
@@ -29,6 +32,7 @@ OUTSIDE_BUILD=$TMP_TEST_ROOT/outside-build
 INSTALL_ROOT=$TMP_TEST_ROOT/install-root
 STALE_REPO=$TMP_TEST_ROOT/stale-repo
 NO_VERSION_REPO=$TMP_TEST_ROOT/no-version-repo
+DEPFILES_REPO=$TMP_TEST_ROOT/depfiles-repo
 SPACE_ROOT_REPO="$TMP_TEST_ROOT/root with spaces"
 
 LAST_STATUS=0
@@ -170,8 +174,11 @@ assert_path_absent "$CUSTOM_BUILD"
 assert_path_absent "$MISSING_CONFIG_BUILD"
 assert_path_absent "$INVALID_FEATURE_BUILD"
 assert_path_absent "$INVALID_COMPDB_BUILD"
+assert_path_absent "$INVALID_DEPFILES_BUILD"
 assert_path_absent "$COMPDB_WITH_MESSAGE_BUILD"
 assert_path_absent "$COMPDB_WITHOUT_MESSAGE_BUILD"
+assert_path_absent "$DEPFILES_WITH_MESSAGE_BUILD"
+assert_path_absent "$DEPFILES_WITHOUT_MESSAGE_BUILD"
 assert_path_absent "$COMPDB_CLANG_BUILD"
 assert_path_absent "$SPACE_BUILD"
 assert_path_absent "$RECONFIGURE_BUILD"
@@ -221,6 +228,13 @@ say "Root make with explicit BUILD_DIR succeeds"
 run_capture "$LOG_DIR/root-make-explicit-default.out" make -C "$ROOT_DIR" BUILD_DIR="$DEFAULT_BUILD"
 assert_status_zero
 assert_file_exists "$DEFAULT_BUILD/bin/imgneko"
+
+# Reject `make depfile` unless configure explicitly enabled depfile generation
+# for that build directory.
+say "Makefile error when depfile generation is disabled"
+run_capture "$LOG_DIR/make-depfile-disabled.out" make -C "$DEFAULT_BUILD" depfile
+assert_status_nonzero
+assert_output_contains "error: depfile generation is disabled in $DEFAULT_BUILD/config.mk; rerun ./configure --build-dir='$DEFAULT_BUILD' --depfiles"
 
 # A relative BUILD_DIR with a trailing slash should normalize to the same
 # absolute build directory so test-runner env vars remain stable, and `make
@@ -302,6 +316,13 @@ run_capture "$LOG_DIR/cfg-bad-compdb.out" sh "$ROOT_DIR/configure" --build-dir="
 assert_status_nonzero
 assert_output_contains "error: COMP_DB_MJ must be ON or OFF (got: MAYBE)"
 
+# Pass an invalid depfile-generation toggle and verify the dedicated validation
+# error.
+say "configure error: invalid DEPFILES"
+run_capture "$LOG_DIR/cfg-bad-depfiles.out" sh "$ROOT_DIR/configure" --build-dir="$INVALID_DEPFILES_BUILD" DEPFILES=MAYBE
+assert_status_nonzero
+assert_output_contains "error: DEPFILES must be ON or OFF (got: MAYBE)"
+
 # Ask for --comp-db-mj with compiler flags that force the probe to fail and
 # print a first stderr line, which should be echoed in the custom error.
 say "configure error: --comp-db-mj with stderr output"
@@ -317,6 +338,21 @@ assert_status_nonzero
 assert_output_contains "error: --comp-db-mj requires a compiler that accepts -MJ"
 assert_output_not_contains "(got:"
 
+# Ask for --depfiles with compiler flags that force the probe to fail and print
+# a first stderr line, which should be echoed in the custom error.
+say "configure error: --depfiles with stderr output"
+run_capture "$LOG_DIR/cfg-depfiles-with-message.out" sh "$ROOT_DIR/configure" --build-dir="$DEPFILES_WITH_MESSAGE_BUILD" --depfiles --cc=gcc --cflags=--definitely-invalid-flag
+assert_status_nonzero
+assert_output_contains "error: --depfiles requires a compiler that accepts -MMD -MP -MT -MF (got:"
+
+# Ask for --depfiles with a command that fails without producing stderr so the
+# shorter fallback error path is tested too.
+say "configure error: --depfiles without stderr output"
+run_capture "$LOG_DIR/cfg-depfiles-without-message.out" sh "$ROOT_DIR/configure" --build-dir="$DEPFILES_WITHOUT_MESSAGE_BUILD" --depfiles --cc=false
+assert_status_nonzero
+assert_output_contains "error: --depfiles requires a compiler that accepts -MMD -MP -MT -MF"
+assert_output_not_contains "(got:"
+
 # Enable compile_commands.json generation with clang and verify that
 # non-test builds keep test entries out, while test-list brings them in.
 say "compile_commands.json excludes test runner after make all, includes it after test-list"
@@ -326,7 +362,7 @@ run_capture "$LOG_DIR/compdb-make-all.out" make -C "$COMPDB_CLANG_BUILD" all
 assert_status_zero
 assert_file_exists "$COMPDB_CLANG_BUILD/bin/imgneko"
 assert_path_absent "$COMPDB_CLANG_BUILD/bin/test-runner"
-assert_path_absent "$COMPDB_CLANG_BUILD/test-bin"
+assert_path_absent "$COMPDB_CLANG_BUILD/obj/test-bin"
 assert_file_exists "$COMPDB_CLANG_BUILD/compile_commands.json"
 assert_file_contains "$COMPDB_CLANG_BUILD/compile_commands.json" "src/main.c"
 assert_file_not_contains "$COMPDB_CLANG_BUILD/compile_commands.json" "test-runner.c"
@@ -336,6 +372,35 @@ run_capture "$LOG_DIR/compdb-test-list.out" make -C "$COMPDB_CLANG_BUILD" test-l
 assert_status_zero
 assert_file_exists "$COMPDB_CLANG_BUILD/compile_commands.json"
 assert_file_contains "$COMPDB_CLANG_BUILD/compile_commands.json" "test-runner.c"
+
+# Regenerate the checked-in dependency file in a copied repository so the real
+# checkout stays untouched, then confirm a normal build consumes it to rebuild
+# on header changes without configure's depfile mode.
+say "Regenerate checked-in dependency file and reuse it in a normal build"
+copy_repo "$DEPFILES_REPO"
+DEPFILES_BUILD=$DEPFILES_REPO/build/depfiles
+NORMAL_DEPS_BUILD=$DEPFILES_REPO/build/normal
+
+sh "$DEPFILES_REPO/configure" --build-dir="$DEPFILES_BUILD" --depfiles
+run_capture "$LOG_DIR/depfile-generate.out" make -C "$DEPFILES_BUILD" depfile
+assert_status_zero
+assert_file_exists "$DEPFILES_REPO/mk/dependencies.mk"
+assert_file_contains "$DEPFILES_REPO/mk/dependencies.mk" '$(BUILD_DIR)/obj/src/util/path.o:'
+assert_file_contains "$DEPFILES_REPO/mk/dependencies.mk" '$(BUILD_DIR)/generated/build_info.h'
+assert_file_contains "$DEPFILES_REPO/mk/dependencies.mk" '$(ROOT_DIR)/src/util/path.h'
+assert_file_not_contains "$DEPFILES_REPO/mk/dependencies.mk" "$DEPFILES_REPO"
+
+sh "$DEPFILES_REPO/configure" --build-dir="$NORMAL_DEPS_BUILD"
+run_capture "$LOG_DIR/depfile-normal-baseline.out" make -C "$NORMAL_DEPS_BUILD" test-list
+assert_status_zero
+
+touch "$DEPFILES_REPO/src/util/path.h"
+run_capture "$LOG_DIR/depfile-normal-rebuild.out" make -C "$NORMAL_DEPS_BUILD" test-list
+assert_status_zero
+assert_output_contains "src/util/path.c"
+assert_output_contains "testing/support/test-runner.c"
+assert_output_contains "testing/tests/unit/util/path.c"
+assert_output_not_contains "src/main.c"
 
 # Reject build directories whose path includes whitespace before any files are
 # written there.
