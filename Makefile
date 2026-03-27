@@ -269,18 +269,18 @@ test-c-bins: check-config-date $(TEST_C_BINS)
 	@$(COMPILE_DB_REFRESH)
 
 # Install the built binary.
-install: check-config-date $(BIN_IMGNEKO)
+install: check-config-date all
 	@mkdir -p "$(INSTALL_BINDIR)"
 	install -m 0755 "$(BIN_IMGNEKO)" "$(INSTALL_BINDIR)/imgneko"
 
 # Run tests.
-test: check-config-date $(BIN_IMGNEKO) test-tools test-c-bins clean-test-output
+test: check-config-date all test-tools test-c-bins clean-test-output
 	@set --; \
 	if [ -n "$(FILTER)" ]; then set -- --filter "$(FILTER)"; else set -- --all; fi; \
 	"$(BIN_TEST_RUNNER)" "$$@"
 
 # List tests.
-test-list: check-config-date $(BIN_IMGNEKO) test-tools test-c-bins
+test-list: check-config-date test-tools test-c-bins
 	@set -- --list; \
 	if [ -n "$(FILTER)" ]; then set -- "$$@" --filter "$(FILTER)"; fi; \
 	"$(BIN_TEST_RUNNER)" "$$@"
