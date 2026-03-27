@@ -191,6 +191,7 @@ say "Default configure/build/run"
 sh "$ROOT_DIR/configure"
 assert_file_exists "$DEFAULT_BUILD/config.mk"
 assert_file_exists "$DEFAULT_BUILD/Makefile"
+assert_file_exists "$DEFAULT_BUILD/configure.cmd"
 assert_path_absent "$DEFAULT_BUILD/bin/imgneko"
 
 make -C "$ROOT_DIR"
@@ -234,7 +235,7 @@ assert_file_exists "$DEFAULT_BUILD/bin/imgneko"
 say "Makefile error when depfile generation is disabled"
 run_capture "$LOG_DIR/make-depfile-disabled.out" make -C "$DEFAULT_BUILD" depfile
 assert_status_nonzero
-assert_output_contains "error: depfile generation is disabled in $DEFAULT_BUILD/config.mk; rerun ./configure --build-dir='$DEFAULT_BUILD' --depfiles"
+assert_output_contains "error: depfile generation is disabled in ./build/default/config.mk; rerun ./configure --build-dir='./build/default' --depfiles"
 
 # Build test prerequisites without running them.
 say "Build test dependencies without executing tests"
@@ -273,8 +274,8 @@ assert_file_exists "$INSTALL_ROOT/usr/local/bin/imgneko"
 say "Makefile error when config.mk is missing"
 run_capture "$LOG_DIR/make-missing-config.out" make -C "$ROOT_DIR" BUILD_DIR="$MISSING_CONFIG_BUILD"
 assert_status_nonzero
-assert_output_contains "error: $MISSING_CONFIG_BUILD/config.mk does not exist"
-assert_output_contains "run ./configure --build-dir='$MISSING_CONFIG_BUILD' first"
+assert_output_contains "error: ./build/test-missing-config/config.mk does not exist"
+assert_output_contains "run ./configure --build-dir='./build/test-missing-config' first"
 
 # Build from a copied repository after making configure newer than config.mk so
 # the staleness error path blocks the build.
@@ -286,7 +287,8 @@ touch "$STALE_REPO/configure"
 
 run_capture "$LOG_DIR/stale-build.out" make -C "$STALE_REPO/build/stale"
 assert_status_nonzero
-assert_output_contains "error: $STALE_REPO/build/stale/config.mk is older than $STALE_REPO/configure. Reconfigure or touch config.mk"
+assert_output_contains "error: ./build/stale/config.mk is older than ./configure. Reconfigure or touch config.mk"
+assert_output_contains "rerun: ./configure --build-dir=./build/stale --force"
 assert_path_absent "$STALE_REPO/build/stale/bin/imgneko"
 
 # Remove VERSION in a copied repository so the top-level Makefile parse-time

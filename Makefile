@@ -19,6 +19,7 @@ override BUILD_DIR := $(abspath $(BUILD_DIR))
 # Important build-directory-local paths.
 CONFIG_MK      := $(BUILD_DIR)/config.mk
 WRAPPER_MKFILE := $(BUILD_DIR)/Makefile
+CONFIGURE_CMD  := $(BUILD_DIR)/configure.cmd
 BIN_DIR        := $(BUILD_DIR)/bin
 OBJ_DIR        := $(BUILD_DIR)/obj
 GEN_DIR        := $(BUILD_DIR)/generated
@@ -131,6 +132,9 @@ INSTALL_BINDIR := $(DESTDIR)$(PREFIX)/bin
 # Escape values before embedding them into generated C string literals.
 c_escape = $(subst ",\",$(subst \,\\,$(1)))
 
+# A helper to display paths relative to the current directory when possible.
+display_path = $(if $(filter $(CURDIR),$(abspath $(1))),.,$(patsubst $(CURDIR)/%,./%,$(abspath $(1))))
+
 TEST_RUNNER_DEFINES := \
 	-DTEST_RUNNER_ROOT_DIR=\"$(call c_escape,$(ROOT_DIR))\" \
 	-DTEST_RUNNER_BUILD_DIR=\"$(call c_escape,$(BUILD_DIR))\"
@@ -183,13 +187,16 @@ endif
 # Check that config.mk exists and fail if it is older than configure.
 check-config-date:
 	@if [ ! -f "$(CONFIG_MK)" ]; then \
-		echo "error: $(CONFIG_MK) does not exist"; \
-		echo "       run ./configure --build-dir='$(BUILD_DIR)' first"; \
+		echo "error: $(call display_path,$(CONFIG_MK)) does not exist"; \
+		echo "       run $(call display_path,$(ROOT_DIR)/configure) --build-dir='$(call display_path,$(BUILD_DIR))' first"; \
 		exit 1; \
 	fi
 	@if [ -f "$(ROOT_DIR)/configure" ]; then \
 		if [ "$(CONFIG_MK)" -ot "$(ROOT_DIR)/configure" ]; then \
-			echo "error: $(CONFIG_MK) is older than $(ROOT_DIR)/configure. Reconfigure or touch config.mk"; \
+			echo "error: $(call display_path,$(CONFIG_MK)) is older than $(call display_path,$(ROOT_DIR)/configure). Reconfigure or touch config.mk"; \
+			if [ -f "$(CONFIGURE_CMD)" ]; then \
+				echo "       rerun: $$(sed 's#$(CURDIR)#.#g' "$(CONFIGURE_CMD)") --force"; \
+			fi; \
 			exit 1; \
 		fi \
 	fi
@@ -255,7 +262,7 @@ depfile: check-config-date $(ALL_OBJECTS_AND_BINS) $(ROOT_DIR)/tools/build-depfi
 	cp "$(STAGED_DEPFILE)" "$(FINAL_DEPFILE)"
 else
 depfile: check-config-date
-	@echo "error: depfile generation is disabled in $(CONFIG_MK); rerun ./configure --build-dir='$(BUILD_DIR)' --depfiles"
+	@echo "error: depfile generation is disabled in $(call display_path,$(CONFIG_MK)); rerun $(call display_path,$(ROOT_DIR)/configure) --build-dir='$(call display_path,$(BUILD_DIR))' --depfiles"
 	@exit 1
 endif
 
