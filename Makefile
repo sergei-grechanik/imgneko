@@ -5,16 +5,28 @@
 # Absolute path to the repository root.
 ROOT_DIR := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
 
-# BUILD_DIR is normally passed by the generated wrapper Makefile.
-# Keep a fallback for root-level invocations that do not pass BUILD_DIR.
+# A helper to display paths relative to the current directory when possible.
+display_path = $(if $(filter $(CURDIR),$(abspath $(1))),.,$(patsubst $(CURDIR)/%,./%,$(abspath $(1))))
+
+# BUILD_DIR is normally passed by the generated wrapper Makefile. For direct
+# root-level invocations without BUILD_DIR, reuse the only directory under
+# ./build/ when that choice is unambiguous.
+#
+# When there is no usable implicit choice, store an obvious sentinel in
+# BUILD_DIR itself. That keeps path expansion predictable for parse-time-only
+# targets like `make help` without pretending that build/default is special.
+BUILD_DIR_SENTINEL := $(ROOT_DIR)/build/.no-build-dir-selected
 BUILD_DIR_IMPLICIT := $(if $(filter undefined,$(origin BUILD_DIR)),1,0)
+BUILD_DIR_CANDIDATES := $(patsubst %/,%,$(sort $(wildcard $(ROOT_DIR)/build/*/)))
+MULTIPLE_BUILD_DIR_CANDIDATES := $(word 2,$(BUILD_DIR_CANDIDATES))
 ifeq ($(BUILD_DIR_IMPLICIT),1)
-BUILD_DIR := $(ROOT_DIR)/build/default
+BUILD_DIR := $(if $(MULTIPLE_BUILD_DIR_CANDIDATES),$(BUILD_DIR_SENTINEL),$(or $(BUILD_DIR_CANDIDATES),$(BUILD_DIR_SENTINEL)))
 endif
 
 # Normalize user-supplied BUILD_DIR values so generated paths and test-runner
 # environment variables stay absolute even when callers pass `build/foo/`.
 override BUILD_DIR := $(abspath $(BUILD_DIR))
+BUILD_DIR_UNSET := $(if $(filter $(BUILD_DIR_SENTINEL),$(BUILD_DIR)),1,)
 
 # Important build-directory-local paths.
 CONFIG_MK      := $(BUILD_DIR)/config.mk
@@ -89,14 +101,15 @@ REQUESTED_GOALS := $(if $(MAKECMDGOALS),$(MAKECMDGOALS),all)
 NEEDS_CONFIG := $(filter-out $(NO_CONFIG_TARGETS),$(REQUESTED_GOALS))
 
 # When BUILD_DIR was not set explicitly (for example plain `make` from the
-# repository root), only auto-select build/default if there are no other
-# configured build directories under ./build.
+# repository root), require users to disambiguate if ./build contains multiple
+# candidate build directories, and otherwise require configure to create one.
 ifneq ($(NEEDS_CONFIG),)
 ifeq ($(BUILD_DIR_IMPLICIT),1)
-CONFIGURED_BUILD_DIRS := $(patsubst %/,%,$(sort $(dir $(wildcard $(ROOT_DIR)/build/*/config.mk))))
-NONDEFAULT_CONFIGURED_BUILD_DIRS := $(filter-out $(ROOT_DIR)/build/default,$(CONFIGURED_BUILD_DIRS))
-ifneq ($(NONDEFAULT_CONFIGURED_BUILD_DIRS),)
-$(error error: found multiple configured build directories under $(ROOT_DIR)/build; pass BUILD_DIR=<path> explicitly)
+ifneq ($(MULTIPLE_BUILD_DIR_CANDIDATES),)
+$(error error: found multiple build directories under $(ROOT_DIR)/build; pass BUILD_DIR=<path> explicitly)
+endif
+ifeq ($(BUILD_DIR_UNSET),1)
+$(error error: no build directories found under $(ROOT_DIR)/build; run $(call display_path,$(ROOT_DIR)/configure) first)
 endif
 endif
 endif
@@ -131,9 +144,6 @@ INSTALL_BINDIR := $(DESTDIR)$(PREFIX)/bin
 
 # Escape values before embedding them into generated C string literals.
 c_escape = $(subst ",\",$(subst \,\\,$(1)))
-
-# A helper to display paths relative to the current directory when possible.
-display_path = $(if $(filter $(CURDIR),$(abspath $(1))),.,$(patsubst $(CURDIR)/%,./%,$(abspath $(1))))
 
 TEST_RUNNER_DEFINES := \
 	-DTEST_RUNNER_ROOT_DIR=\"$(call c_escape,$(ROOT_DIR))\" \

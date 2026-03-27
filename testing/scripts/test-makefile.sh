@@ -7,9 +7,6 @@ set -eu
 
 ROOT_DIR=$(CDPATH= cd "$(dirname "$0")/../.." && pwd)
 
-# Keep all repository-local artifacts directly under ./build so the script
-# exercises the same layout that regular users will hit.
-LOG_DIR=$ROOT_DIR/build/test-makefile-logs
 DEFAULT_BUILD=$ROOT_DIR/build/default
 CUSTOM_BUILD=$ROOT_DIR/build/test-debug-custom-cc
 MISSING_CONFIG_BUILD=$ROOT_DIR/build/test-missing-config
@@ -28,12 +25,16 @@ RELATIVE_BUILD_DIR_TEST=$ROOT_DIR/build/test-relative-builddir
 # Use one temporary root for scenarios that intentionally leave the project
 # tree, and clean it up on exit.
 TMP_TEST_ROOT=$(mktemp -d /tmp/imgneko-makefile-test-artifacts.XXXXXX)
+LOG_DIR=$TMP_TEST_ROOT/logs
 OUTSIDE_BUILD=$TMP_TEST_ROOT/outside-build
 INSTALL_ROOT=$TMP_TEST_ROOT/install-root
 STALE_REPO=$TMP_TEST_ROOT/stale-repo
 NO_VERSION_REPO=$TMP_TEST_ROOT/no-version-repo
 DEPFILES_REPO=$TMP_TEST_ROOT/depfiles-repo
 SPACE_ROOT_REPO="$TMP_TEST_ROOT/root with spaces"
+NO_BUILD_REPO=$TMP_TEST_ROOT/no-build-repo
+UNIQUE_BUILD_REPO=$TMP_TEST_ROOT/unique-build-repo
+AMBIGUOUS_BUILD_REPO=$TMP_TEST_ROOT/ambiguous-build-repo
 
 LAST_STATUS=0
 LAST_OUTPUT=
@@ -166,6 +167,15 @@ copy_repo() {
     chmod +x "$destination/configure"
 }
 
+# Copy the repository while clearing any existing build tree so tests can set up
+# an exact ./build layout without inheriting local artifacts from the checkout.
+copy_repo_without_build() {
+    destination=$1
+
+    copy_repo "$destination"
+    rm -rf "$destination/build"
+}
+
 trap cleanup EXIT
 
 assert_path_absent "$LOG_DIR"
@@ -217,10 +227,44 @@ assert_output_contains "profile: debug"
 assert_output_contains "cc: cc"
 assert_output_contains "-DFEATURE_X=1"
 
-# With multiple configured build directories, plain root-level make must ask
-# users to disambiguate instead of silently picking build/default.
+# In a fresh repository copy with no build directories yet, plain root-level
+# make should direct the user to configure first instead of inventing a default
+# build path on its own.
+say "Root make requires configure when no build directories exist"
+copy_repo_without_build "$NO_BUILD_REPO"
+
+run_capture "$LOG_DIR/root-make-no-builds.out" make -C "$NO_BUILD_REPO"
+assert_status_nonzero
+assert_output_contains "error: no build directories found under $NO_BUILD_REPO/build"
+assert_output_contains "run ./configure first"
+
+# In a fresh repository copy with only one build directory under ./build, plain
+# root-level make should select that directory even before it is configured.
+say "Root make auto-selects a unique non-default build directory"
+copy_repo_without_build "$UNIQUE_BUILD_REPO"
+UNIQUE_BUILD=$UNIQUE_BUILD_REPO/build/solo
+mkdir -p "$UNIQUE_BUILD"
+
+run_capture "$LOG_DIR/root-make-unique-missing-config.out" make -C "$UNIQUE_BUILD_REPO"
+assert_status_nonzero
+assert_output_contains "error: ./build/solo/config.mk does not exist"
+assert_output_contains "run ./configure --build-dir='./build/solo' first"
+assert_path_absent "$UNIQUE_BUILD_REPO/build/default"
+
+sh "$UNIQUE_BUILD_REPO/configure" --build-dir="$UNIQUE_BUILD" --profile=asan
+
+run_capture "$LOG_DIR/root-make-unique.out" make -C "$UNIQUE_BUILD_REPO"
+assert_status_zero
+assert_file_exists "$UNIQUE_BUILD/bin/imgneko"
+assert_path_absent "$UNIQUE_BUILD_REPO/build/default"
+
+# With multiple build directories under ./build, plain root-level make must ask
+# users to disambiguate even if neither directory is configured yet.
 say "Root make requires explicit disambiguation with multiple build directories"
-run_capture "$LOG_DIR/root-make-ambiguous.out" make -C "$ROOT_DIR"
+copy_repo_without_build "$AMBIGUOUS_BUILD_REPO"
+mkdir -p "$AMBIGUOUS_BUILD_REPO/build/one" "$AMBIGUOUS_BUILD_REPO/build/two"
+
+run_capture "$LOG_DIR/root-make-ambiguous.out" make -C "$AMBIGUOUS_BUILD_REPO"
 assert_status_nonzero
 assert_output_contains "pass BUILD_DIR=<path> explicitly"
 
