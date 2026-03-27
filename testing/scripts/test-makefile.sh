@@ -236,6 +236,14 @@ run_capture "$LOG_DIR/make-depfile-disabled.out" make -C "$DEFAULT_BUILD" depfil
 assert_status_nonzero
 assert_output_contains "error: depfile generation is disabled in $DEFAULT_BUILD/config.mk; rerun ./configure --build-dir='$DEFAULT_BUILD' --depfiles"
 
+# Build test prerequisites without running them.
+say "Build test dependencies without executing tests"
+run_capture "$LOG_DIR/make-test-deps.out" make -C "$DEFAULT_BUILD" test-deps
+assert_status_zero
+assert_file_exists "$DEFAULT_BUILD/bin/test-runner"
+assert_file_exists "$DEFAULT_BUILD/obj/test-bin/unit/util/path.c.bin"
+assert_output_not_contains "RUN:"
+
 # A relative BUILD_DIR with a trailing slash should normalize to the same
 # absolute build directory so test-runner env vars remain stable, and `make
 # test` should also clear the default output tree before running tests.

@@ -265,7 +265,7 @@ endif
 
 .DEFAULT_GOAL := all
 
-.PHONY: all install clean depfile help check-config-date test test-list test-tools test-c-bins clean-test-output
+.PHONY: all install clean depfile help check-config-date test test-deps test-list test-tools test-c-bins clean-test-output
 
 # Targets to build things.
 all: check-config-date $(BIN_IMGNEKO)
@@ -275,13 +275,16 @@ test-tools: check-config-date $(TEST_TOOLS)
 test-c-bins: check-config-date $(TEST_C_BINS)
 	@$(COMPILE_DB_REFRESH)
 
+# Build everything required to run tests without actually executing them.
+test-deps: check-config-date all test-tools test-c-bins
+
 # Install the built binary.
 install: check-config-date all
 	@mkdir -p "$(INSTALL_BINDIR)"
 	install -m 0755 "$(BIN_IMGNEKO)" "$(INSTALL_BINDIR)/imgneko"
 
 # Run tests.
-test: check-config-date all test-tools test-c-bins clean-test-output
+test: check-config-date test-deps clean-test-output
 	@set --; \
 	if [ -n "$(FILTER)" ]; then set -- --filter "$(FILTER)"; else set -- --all; fi; \
 	"$(BIN_TEST_RUNNER)" "$$@"
