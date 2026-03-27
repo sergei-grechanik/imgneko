@@ -139,6 +139,7 @@ TEST_RUNNER_DEFINES := \
 # compile database fragment paths.
 mj_fragment_for = $(patsubst %.bin,%.json,$(patsubst %.o,%.json,$(1)))
 depfile_input_for = $(patsubst %.bin,%.d,$(patsubst %.o,%.d,$(1)))
+GENERATED_DEPFILES := $(wildcard $(call depfile_input_for,$(ALL_OBJECTS_AND_BINS)))
 
 # A command to combine the -MJ fragments into a complete compile_commands.json,
 # or a no-op when the feature is disabled.
@@ -168,9 +169,15 @@ CONFIG_INFO_DEFINES := \
 	$(foreach var,PROFILE PREFIX CC CPPFLAGS CFLAGS LDFLAGS LDLIBS FEATURE_X COMP_DB_MJ DEPFILES, \
 		printf '%s\n' '#define BUILD_CONFIG_$(var) "$(call c_escape,$($(var)))"';)
 
-# Use a checked-in dependency file when it exists.
+# Use the checked-in dependency file everywhere, then add any generated
+# per-target depfiles that are already available in this build directory.
+# Repeated rules are fine here: make merges prerequisites from all included
+# depfiles as long as they do not define conflicting recipes.
 ifneq ($(wildcard $(FINAL_DEPFILE)),)
 include $(FINAL_DEPFILE)
+endif
+ifneq ($(GENERATED_DEPFILES),)
+include $(GENERATED_DEPFILES)
 endif
 
 # Check that config.mk exists and fail if it is older than configure.
