@@ -222,7 +222,7 @@ assert_output_contains "-DFEATURE_X=1"
 say "Root make requires explicit disambiguation with multiple build directories"
 run_capture "$LOG_DIR/root-make-ambiguous.out" make -C "$ROOT_DIR"
 assert_status_nonzero
-assert_output_contains "run make -C build/<name> or pass BUILD_DIR=<path> explicitly"
+assert_output_contains "pass BUILD_DIR=<path> explicitly"
 
 # Explicit BUILD_DIR from the repository root should still work.
 say "Root make with explicit BUILD_DIR succeeds"

@@ -96,7 +96,7 @@ ifeq ($(BUILD_DIR_IMPLICIT),1)
 CONFIGURED_BUILD_DIRS := $(patsubst %/,%,$(sort $(dir $(wildcard $(ROOT_DIR)/build/*/config.mk))))
 NONDEFAULT_CONFIGURED_BUILD_DIRS := $(filter-out $(ROOT_DIR)/build/default,$(CONFIGURED_BUILD_DIRS))
 ifneq ($(NONDEFAULT_CONFIGURED_BUILD_DIRS),)
-$(error error: found multiple configured build directories under $(ROOT_DIR)/build; run make -C build/<name> or pass BUILD_DIR=<path> explicitly)
+$(error error: found multiple configured build directories under $(ROOT_DIR)/build; pass BUILD_DIR=<path> explicitly)
 endif
 endif
 endif
@@ -317,21 +317,21 @@ help:
 	@printf '%s\n' ''
 	@printf '%s\n' 'To build in a non-default build directory:'
 	@printf '%s\n' '  ./configure --build-dir=build/mybuild'
-	@printf '%s\n' '  make -C build/mybuild'
+	@printf '%s\n' '  make BUILD_DIR=build/mybuild'
 	@printf '%s\n' ''
 	@printf '%s\n' 'To build with a non-default profile:'
 	@printf '%s\n' '  ./configure --profile=debug'
-	@printf '%s\n' '  make -C build/debug'
+	@printf '%s\n' '  make BUILD_DIR=build/debug'
 	@printf '%s\n' ''
 	@printf '%s\n' 'To also generate compile_commands.json during normal builds:'
 	@printf '%s\n' '  ./configure --profile=debug --comp-db-mj'
-	@printf '%s\n' '  make -C build/debug'
+	@printf '%s\n' '  make BUILD_DIR=build/debug'
 	@printf '%s\n' ''
 	@printf '%s\n' 'To regenerate the checked-in dependency file:'
 	@printf '%s\n' '  ./configure --build-dir=build/depfiles --depfiles'
-	@printf '%s\n' '  make -C build/depfiles depfile'
+	@printf '%s\n' '  make BUILD_DIR=build/depfiles depfile'
 	@printf '%s\n' ''
 	@printf '%s\n' 'To run tests from a configured build directory:'
-	@printf '%s\n' '  make -C build/debug test'
-	@printf '%s\n' '  make -C build/debug test FILTER='\''test-runner*|some_test.c/subtest'\'''
-	@printf '%s\n' '  make -C build/debug test-list FILTER='\''*.sh|*.test'\'''
+	@printf '%s\n' '  make BUILD_DIR=build/debug test'
+	@printf '%s\n' '  make BUILD_DIR=build/debug test FILTER='\''test-runner*|some_test.c/subtest'\'''
+	@printf '%s\n' '  make BUILD_DIR=build/debug test-list FILTER='\''*.sh|*.test'\'''
