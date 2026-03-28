@@ -614,10 +614,9 @@ static void print_output_tail(const char *output_path, size_t max_lines) {
     size_t lines = 0;
     int fd = open(output_path, O_RDONLY);
 
-    fprintf(stderr, "output: %s\n", output_path);
     if (fd < 0) {
-        fprintf(stderr, "error: failed to read captured output: %s\n",
-                strerror(errno));
+        fprintf(stderr, "error: failed to read captured output %s: %s\n\n",
+                output_path, strerror(errno));
         return;
     }
 
@@ -625,7 +624,7 @@ static void print_output_tail(const char *output_path, size_t max_lines) {
     close(fd);
 
     if (output_text.len == 0) {
-        fprintf(stderr, "(empty output)\n");
+        fprintf(stderr, "output is empty: %s\n", output_path);
         str_free(output_text);
         return;
     }
@@ -641,10 +640,12 @@ static void print_output_tail(const char *output_path, size_t max_lines) {
         }
     }
 
-    fprintf(stderr, "last %zu lines:\n", max_lines);
+    fprintf(stderr, "===== LAST %zu LINES OF TEST OUTPUT %s {{{ =====\n",
+            max_lines, output_path);
     fwrite(output_text.cstr + start, 1, output_text.len - start, stderr);
     if (output_text.cstr[output_text.len - 1] != '\n')
         fputc('\n', stderr);
+    fprintf(stderr, "===== }}} END TEST OUTPUT =====\n\n");
 
     str_free(output_text);
 }
@@ -907,7 +908,7 @@ static void print_named_test_list(const char *heading,
     if (tests->size == 0)
         return;
 
-    printf("%s:\n", heading);
+    printf("\n%s:\n", heading);
     for (size_t i = 0; i < tests->size; ++i)
         printf("  %s\n", tests->data[i].cstr);
 }
@@ -915,7 +916,7 @@ static void print_named_test_list(const char *heading,
 // Print one non-zero summary counter.
 static void print_summary_count(const char *label, size_t count) {
     if (count != 0)
-        printf("%s: %zu\n", label, count);
+        printf("  %s: %zu\n", label, count);
 }
 
 // Seed the debug-only pseudo-random exit-code perturbation once per process.
@@ -941,7 +942,7 @@ static int maybe_flip_exit_code(const TestCase *test_case, int test_exit_code,
             return test_exit_code;
     }
 
-    int flipped_exit_code = flipped_exit_code = test_exit_code == 0 ? 1 : 0;
+    int flipped_exit_code = test_exit_code == 0 ? 1 : 0;
     printf("DEBUG: flipped exit code for %s (%d -> %d)\n", test_case->id.cstr,
            test_exit_code, flipped_exit_code);
     return flipped_exit_code;
@@ -1025,10 +1026,10 @@ int main(int argc, char **argv) {
     size_t passed = 0;
     size_t xfailed = 0;
     size_t disabled = 0;
-    size_t unexpectedly_succeeded = 0;
+    size_t xpassed = 0;
     size_t failed = 0;
     StringArray failed_tests = arr_empty;
-    StringArray unexpectedly_succeeded_tests = arr_empty;
+    StringArray xpassed_tests = arr_empty;
 
     // Parse CLI arguments.
 
@@ -1192,9 +1193,8 @@ int main(int argc, char **argv) {
                                               debug_flip_exit_probability);
 
         if (test_exit_code == 0 && test_case->marker == TEST_MARKER_XFAIL) {
-            unexpectedly_succeeded++;
-            string_array_push_copy(&unexpectedly_succeeded_tests,
-                                   test_case->id.cstr);
+            xpassed++;
+            string_array_push_copy(&xpassed_tests, test_case->id.cstr);
             printf("XPASS: %s\n", test_case->id.cstr);
         } else if (test_exit_code == 0) {
             passed++;
@@ -1205,7 +1205,7 @@ int main(int argc, char **argv) {
         } else {
             failed++;
             string_array_push_copy(&failed_tests, test_case->id.cstr);
-            printf("FAIL: %s\n", test_case->id.cstr);
+            printf("\nFAIL: %s\n", test_case->id.cstr);
             print_output_tail(output_path.cstr, 20);
         }
         str_free(test_output_dir);
@@ -1223,20 +1223,21 @@ int main(int argc, char **argv) {
 
     if (!list_only) {
         print_named_test_list("failed tests", &failed_tests);
-        print_named_test_list("unexpectedly succeeded tests",
-                              &unexpectedly_succeeded_tests);
+        print_named_test_list("xpassed tests", &xpassed_tests);
+        printf("\nSummary:\n");
         print_summary_count("discovered", discovered);
         print_summary_count("passed", passed);
         print_summary_count("xfailed", xfailed);
         print_summary_count("disabled", disabled);
-        print_summary_count("unexpectedly succeeded", unexpectedly_succeeded);
+        print_summary_count("xpassed", xpassed);
         print_summary_count("failed", failed);
-        if (failed != 0 || unexpectedly_succeeded != 0)
+        if (failed != 0 || xpassed != 0)
             exit_code = 1;
+        printf("\nResult: %s\n", exit_code == 0 ? "SUCCESS" : "FAILURE");
     }
 
 cleanup:
-    string_array_free(&unexpectedly_succeeded_tests);
+    string_array_free(&xpassed_tests);
     string_array_free(&failed_tests);
     str_free(output_dir);
     str_free(tests_dir);

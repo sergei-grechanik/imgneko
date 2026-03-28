@@ -69,6 +69,7 @@ assert_file_contains "$EXEC_OUTPUT" "output script stdout marker"
 assert_file_contains "$EXEC_OUTPUT" "output script stderr marker"
 assert_file_contains "$SUCCESS_LOG" "discovered: 1"
 assert_file_contains "$SUCCESS_LOG" "passed: 1"
+assert_file_contains "$SUCCESS_LOG" "Result: SUCCESS"
 
 # C tests should get their own nested output files too, including tests under
 # testing/tests/runner/.
@@ -92,12 +93,14 @@ status=$?
 set -e
 
 [ "$status" -ne 0 ] || fail "nested failure run unexpectedly succeeded"
-assert_file_contains "$FAILURE_LOG" "output: $EXEC_OUTPUT"
-assert_file_contains "$FAILURE_LOG" "last 20 lines:"
+assert_file_contains "$FAILURE_LOG" "===== LAST 20 LINES OF TEST OUTPUT $EXEC_OUTPUT {{{ ====="
+assert_file_contains "$FAILURE_LOG" "===== }}} END TEST OUTPUT ====="
 assert_file_contains "$FAILURE_LOG" "failure line 6"
 assert_file_contains "$FAILURE_LOG" "failure line 25"
 assert_file_not_contains "$FAILURE_LOG" "failure line 5"
 assert_file_contains "$FAILURE_LOG" "failed tests:"
 assert_file_contains "$FAILURE_LOG" "  runner/output.sh"
+assert_file_contains "$FAILURE_LOG" "Summary:"
 assert_file_contains "$FAILURE_LOG" "discovered: 1"
 assert_file_contains "$FAILURE_LOG" "failed: 1"
+assert_file_contains "$FAILURE_LOG" "Result: FAILURE"

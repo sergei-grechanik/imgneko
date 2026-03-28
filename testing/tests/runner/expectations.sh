@@ -81,6 +81,7 @@ assert_file_contains "$SUMMARY_LOG" "DISABLED: runner/disabled.sh"
 assert_file_contains "$SUMMARY_LOG" "discovered: 4"
 assert_file_contains "$SUMMARY_LOG" "xfailed: 2"
 assert_file_contains "$SUMMARY_LOG" "disabled: 2"
+assert_file_contains "$SUMMARY_LOG" "Result: SUCCESS"
 assert_path_absent "$OUTPUT_ROOT/runner/markers.c/marked_disabled"
 assert_path_absent "$OUTPUT_ROOT/runner/disabled.sh"
 
@@ -95,11 +96,13 @@ set -e
 
 assert_file_contains "$XPASS_LOG" "XPASS: runner/markers.c/marked_xfail"
 assert_file_contains "$XPASS_LOG" "XPASS: runner/xfail.sh"
-assert_file_contains "$XPASS_LOG" "unexpectedly succeeded tests:"
+assert_file_contains "$XPASS_LOG" "xpassed tests:"
 assert_file_contains "$XPASS_LOG" "  runner/markers.c/marked_xfail"
 assert_file_contains "$XPASS_LOG" "  runner/xfail.sh"
+assert_file_contains "$XPASS_LOG" "Summary:"
 assert_file_contains "$XPASS_LOG" "discovered: 2"
-assert_file_contains "$XPASS_LOG" "unexpectedly succeeded: 2"
+assert_file_contains "$XPASS_LOG" "xpassed: 2"
+assert_file_contains "$XPASS_LOG" "Result: FAILURE"
 assert_file_not_contains "$XPASS_LOG" "failed:"
 
 set +e
@@ -112,7 +115,11 @@ set -e
 
 assert_file_contains "$FLIP_LOG" "DEBUG: flipped exit code for runner/output.sh (0 -> 1)"
 assert_file_contains "$FLIP_LOG" "FAIL: runner/output.sh"
+assert_file_contains "$FLIP_LOG" "===== LAST 20 LINES OF TEST OUTPUT $OUTPUT_ROOT/runner/output.sh/output {{{ ====="
+assert_file_contains "$FLIP_LOG" "===== }}} END TEST OUTPUT ====="
 assert_file_contains "$FLIP_LOG" "failed tests:"
 assert_file_contains "$FLIP_LOG" "  runner/output.sh"
+assert_file_contains "$FLIP_LOG" "Summary:"
 assert_file_contains "$FLIP_LOG" "discovered: 1"
 assert_file_contains "$FLIP_LOG" "failed: 1"
+assert_file_contains "$FLIP_LOG" "Result: FAILURE"
