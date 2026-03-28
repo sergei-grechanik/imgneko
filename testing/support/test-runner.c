@@ -14,6 +14,7 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <time.h>
 #include <unistd.h>
 
 #include "util/array.h"
@@ -436,6 +437,22 @@ static void validate_output_dir(const char *output_dir) {
     }
 
     str_free(build_dir_abs);
+}
+
+// Parse a probability in the inclusive range [0, 1].
+static bool parse_probability(const char *text, double *probability_out) {
+    char *end = NULL;
+    double probability;
+
+    errno = 0;
+    probability = strtod(text, &end);
+    if (errno != 0 || end == text || *end != '\0' || probability < 0.0 ||
+        probability > 1.0) {
+        return false;
+    }
+
+    *probability_out = probability;
+    return true;
 }
 
 // Build the per-test output directory path under output_root. Executable tests
@@ -901,6 +918,35 @@ static void print_summary_count(const char *label, size_t count) {
         printf("%s: %zu\n", label, count);
 }
 
+// Seed the debug-only pseudo-random exit-code perturbation once per process.
+static void seed_debug_random(void) {
+    static bool seeded = false;
+
+    if (seeded)
+        return;
+
+    srand((unsigned int)time(NULL) ^ (unsigned int)getpid());
+    seeded = true;
+}
+
+// Randomly flip a test's raw exit code according to the requested probability.
+static int maybe_flip_exit_code(const TestCase *test_case, int test_exit_code,
+                                double flip_probability) {
+    if (flip_probability <= 0.0)
+        return test_exit_code;
+
+    if (flip_probability < 1.0) {
+        double sample = (double)rand() / ((double)RAND_MAX + 1.0);
+        if (sample >= flip_probability)
+            return test_exit_code;
+    }
+
+    int flipped_exit_code = flipped_exit_code = test_exit_code == 0 ? 1 : 0;
+    printf("DEBUG: flipped exit code for %s (%d -> %d)\n", test_case->id.cstr,
+           test_exit_code, flipped_exit_code);
+    return flipped_exit_code;
+}
+
 // Prepend build/bin to PATH and export stable test-runner environment
 // variables.
 static void prepare_env_vars(void) {
@@ -964,6 +1010,7 @@ int main(int argc, char **argv) {
     bool list_only = false;
     bool run_all = false;
     String output_dir = str_empty;
+    double debug_flip_exit_probability = 0.0;
 
     // Collected files and test cases.
     TestFileArray files = arr_empty;
@@ -1027,6 +1074,38 @@ int main(int argc, char **argv) {
             string_array_push_copy(&filters, argv[i] + 9);
             continue;
         }
+        if (strcmp(argv[i], "--debug-flip-exit-probability") == 0) {
+            if (i + 1 >= argc) {
+                fprintf(
+                    stderr,
+                    "error: --debug-flip-exit-probability requires a value\n");
+                exit_code = 1;
+                goto cleanup;
+            }
+            if (!parse_probability(argv[++i], &debug_flip_exit_probability)) {
+                fprintf(stderr,
+                        "error: invalid --debug-flip-exit-probability value: "
+                        "%s\n",
+                        argv[i]);
+                usage(stderr);
+                exit_code = 1;
+                goto cleanup;
+            }
+            continue;
+        }
+        if (strncmp(argv[i], "--debug-flip-exit-probability=", 30) == 0) {
+            if (!parse_probability(argv[i] + 30,
+                                   &debug_flip_exit_probability)) {
+                fprintf(stderr,
+                        "error: invalid --debug-flip-exit-probability value: "
+                        "%s\n",
+                        argv[i] + 30);
+                usage(stderr);
+                exit_code = 1;
+                goto cleanup;
+            }
+            continue;
+        }
         if (argv[i][0] == '-') {
             fprintf(stderr, "error: unknown option: %s\n", argv[i]);
             usage(stderr);
@@ -1047,6 +1126,8 @@ int main(int argc, char **argv) {
     if (output_dir.len == 0)
         output_dir = default_test_output_dir();
     validate_output_dir(output_dir.cstr);
+    if (debug_flip_exit_probability > 0.0)
+        seed_debug_random();
 
     // Discover tests.
 
@@ -1107,6 +1188,8 @@ int main(int argc, char **argv) {
         } else {
             test_exit_code = 1;
         }
+        test_exit_code = maybe_flip_exit_code(test_case, test_exit_code,
+                                              debug_flip_exit_probability);
 
         if (test_exit_code == 0 && test_case->marker == TEST_MARKER_XFAIL) {
             unexpectedly_succeeded++;

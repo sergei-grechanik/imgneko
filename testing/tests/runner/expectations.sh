@@ -51,10 +51,11 @@ OUTPUT_ROOT=$IMGNEKO_TEST_OUTPUT_DIR/markers
 LIST_LOG=$(mktemp /tmp/imgneko-runner-list.XXXXXX)
 SUMMARY_LOG=$(mktemp /tmp/imgneko-runner-summary.XXXXXX)
 XPASS_LOG=$(mktemp /tmp/imgneko-runner-xpass.XXXXXX)
+FLIP_LOG=$(mktemp /tmp/imgneko-runner-flip.XXXXXX)
 FILTER=runner/markers.c\|runner/xfail.sh\|runner/disabled.sh
 
 cleanup() {
-    rm -f "$LIST_LOG" "$SUMMARY_LOG" "$XPASS_LOG"
+    rm -f "$LIST_LOG" "$SUMMARY_LOG" "$XPASS_LOG" "$FLIP_LOG"
 }
 
 trap cleanup EXIT
@@ -100,3 +101,18 @@ assert_file_contains "$XPASS_LOG" "  runner/xfail.sh"
 assert_file_contains "$XPASS_LOG" "discovered: 2"
 assert_file_contains "$XPASS_LOG" "unexpectedly succeeded: 2"
 assert_file_not_contains "$XPASS_LOG" "failed:"
+
+set +e
+"$RUNNER" --output-dir "$OUTPUT_ROOT" --debug-flip-exit-probability=1 \
+    --filter runner/output.sh >"$FLIP_LOG" 2>&1
+status=$?
+set -e
+
+[ "$status" -ne 0 ] || fail "flipped-exit run unexpectedly passed"
+
+assert_file_contains "$FLIP_LOG" "DEBUG: flipped exit code for runner/output.sh (0 -> 1)"
+assert_file_contains "$FLIP_LOG" "FAIL: runner/output.sh"
+assert_file_contains "$FLIP_LOG" "failed tests:"
+assert_file_contains "$FLIP_LOG" "  runner/output.sh"
+assert_file_contains "$FLIP_LOG" "discovered: 1"
+assert_file_contains "$FLIP_LOG" "failed: 1"
