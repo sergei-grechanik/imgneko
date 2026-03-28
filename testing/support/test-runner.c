@@ -264,30 +264,6 @@ static void discover_test_files(const char *tests_root_abs,
     qsort(files->data, files->size, sizeof(files->data[0]), compare_test_files);
 }
 
-// Create a directory and any missing parents. Existing directories are kept.
-static void mkdir_p(const char *path) {
-    String mutable_path = str_from_cstr(path);
-
-    for (size_t i = 1; i < mutable_path.len; ++i) {
-        if (mutable_path.cstr[i] != '/')
-            continue;
-
-        mutable_path.cstr[i] = '\0';
-        if (mkdir(mutable_path.cstr, 0755) != 0 && errno != EEXIST) {
-            str_free(mutable_path);
-            die_errno("failed to create a directory");
-        }
-        mutable_path.cstr[i] = '/';
-    }
-
-    if (mkdir(mutable_path.cstr, 0755) != 0 && errno != EEXIST) {
-        str_free(mutable_path);
-        die_errno("failed to create a directory");
-    }
-
-    str_free(mutable_path);
-}
-
 // Compute the default absolute directory that stores per-test output
 // directories. The caller owns the returned string and must free it with
 // str_free.
@@ -348,7 +324,8 @@ static int run_argv(char *const *argv, const char *test_output_dir,
     int status;
     int output_fd;
 
-    mkdir_p(test_output_dir);
+    if (!mkdir_p(test_output_dir))
+        die_errno("failed to create a directory");
     output_fd = open(output_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
     if (output_fd < 0)
         die_errno("failed to open a test output file");

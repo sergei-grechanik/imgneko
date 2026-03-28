@@ -19,6 +19,13 @@ void path_append(String *path, const char *segment);
 // returned String and frees it with str_free.
 String path_join(const char *left, const char *right);
 
+// Create `path` and any missing parent directories. Repeated separators are
+// treated like a single `/`.
+//
+// Returns true on success. On failure, it leaves errno from the failing
+// filesystem operation intact and returns false.
+bool mkdir_p(const char *path);
+
 // Resolve `path` to an absolute path, using the current working directory when
 // the input is relative.
 //
