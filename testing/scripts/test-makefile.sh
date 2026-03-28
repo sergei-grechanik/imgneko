@@ -298,7 +298,8 @@ mkdir -p "$RELATIVE_BUILD_DIR_TEST/test-outputs/stale"
 printf '%s\n' stale >"$RELATIVE_BUILD_DIR_TEST/test-outputs/stale/old-file"
 run_capture "$LOG_DIR/root-make-relative-builddir.out" make -C "$ROOT_DIR" test BUILD_DIR=build/test-relative-builddir/ FILTER=runner/environment.sh
 assert_status_zero
-assert_output_contains "1/1 tests passed"
+assert_output_contains "discovered: 1"
+assert_output_contains "passed: 1"
 assert_path_absent "$RELATIVE_BUILD_DIR_TEST/test-outputs/stale/old-file"
 
 # Exercise a build directory outside ./build and verify that install still puts

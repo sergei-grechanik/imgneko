@@ -15,6 +15,10 @@ $(BUILD_DIR)/obj/test-bin/runner/environment.c.bin: \
 	$(ROOT_DIR)/src/util/string.h \
 	$(ROOT_DIR)/testing/support/test_main.h \
 	$(ROOT_DIR)/testing/tests/runner/environment.c
+$(BUILD_DIR)/obj/test-bin/runner/markers.c.bin: \
+	$(ROOT_DIR)/src/util/common.h \
+	$(ROOT_DIR)/testing/support/test_main.h \
+	$(ROOT_DIR)/testing/tests/runner/markers.c
 $(BUILD_DIR)/obj/test-bin/runner/output.c.bin: \
 	$(ROOT_DIR)/src/util/common.h \
 	$(ROOT_DIR)/testing/support/test_main.h \

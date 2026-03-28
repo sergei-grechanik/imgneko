@@ -33,6 +33,12 @@ typedef enum TestKind {
     TEST_KIND_EXECUTABLE,
 } TestKind;
 
+typedef enum TestMarker {
+    TEST_MARKER_NONE,
+    TEST_MARKER_XFAIL,
+    TEST_MARKER_DISABLED,
+} TestMarker;
+
 // One discovered runnable file under `testing/tests/`.
 //
 // rel_path is the path relative to that test root, for example:
@@ -43,9 +49,16 @@ typedef enum TestKind {
 // `/repo/testing/tests/integration/unit/util/string.c`
 typedef struct TestFile {
     TestKind kind;
+    TestMarker marker;
     String rel_path;
     String abs_path;
 } TestFile;
+
+// One subtest reported by a compiled C test binary.
+typedef struct CSubtest {
+    String name;
+    TestMarker marker;
+} CSubtest;
 
 // One runnable test case expanded from a discovered file.
 //
@@ -60,6 +73,7 @@ typedef struct TestFile {
 // c_exe_path/c_subtest are empty.
 typedef struct TestCase {
     TestKind kind;
+    TestMarker marker;
     String id;
     String file_id;
     String file_abs_path;
@@ -68,6 +82,7 @@ typedef struct TestCase {
 } TestCase;
 
 DEFINE_ARRAY_TYPE(StringArray, String)
+DEFINE_ARRAY_TYPE(CSubtestArray, CSubtest)
 DEFINE_ARRAY_TYPE(TestFileArray, TestFile)
 DEFINE_ARRAY_TYPE(TestCaseArray, TestCase)
 
@@ -101,12 +116,32 @@ static void string_array_free(StringArray *array) {
     arr_free(*array);
 }
 
+static void c_subtest_array_free(CSubtestArray *array) {
+    for (size_t i = 0; i < array->size; ++i)
+        str_free(array->data[i].name);
+    arr_free(*array);
+}
+
 static void test_file_array_free(TestFileArray *array) {
     for (size_t i = 0; i < array->size; ++i) {
         str_free(array->data[i].rel_path);
         str_free(array->data[i].abs_path);
     }
     arr_free(*array);
+}
+
+// Return the user-facing name for a test marker, or NULL for an unmarked test.
+static const char *test_marker_name(TestMarker marker) {
+    switch (marker) {
+    case TEST_MARKER_NONE:
+        return NULL;
+    case TEST_MARKER_XFAIL:
+        return "XFAIL";
+    case TEST_MARKER_DISABLED:
+        return "DISABLED";
+    }
+
+    return NULL;
 }
 
 static void test_case_array_free(TestCaseArray *array) {
@@ -140,6 +175,106 @@ static void trim_in_place(char *line) {
         memmove(line, line + start, end - start);
     }
     line[end - start] = '\0';
+}
+
+// Return whether a character can be part of a marker word.
+static bool is_marker_word_char(char ch) { return isalnum(ch) || ch == '_'; }
+
+// Return whether `text` contains `word` delimited by non-word characters.
+static bool text_contains_word(const char *text, const char *word) {
+    size_t word_len = strlen(word);
+
+    for (const char *cursor = text; (cursor = strstr(cursor, word)) != NULL;
+         ++cursor) {
+        bool start_ok = cursor == text || !is_marker_word_char(cursor[-1]);
+        bool end_ok = !is_marker_word_char(cursor[word_len]);
+
+        if (start_ok && end_ok)
+            return true;
+    }
+
+    return false;
+}
+
+// Scan a free-form text line for supported executable-test markers.
+static TestMarker test_marker_from_text_line(const char *line) {
+    bool has_xfail = text_contains_word(line, "XFAIL");
+    bool has_disabled = text_contains_word(line, "DISABLED");
+
+    if (has_xfail && has_disabled) {
+        fprintf(stderr, "error: ambiguous test markers in line: %s\n", line);
+        exit(1);
+    }
+    if (has_xfail)
+        return TEST_MARKER_XFAIL;
+    if (has_disabled)
+        return TEST_MARKER_DISABLED;
+    return TEST_MARKER_NONE;
+}
+
+// Remove a trailing ` MARKER` suffix from a listed C subtest line and return
+// the parsed marker.
+static TestMarker strip_trailing_test_marker(char *line) {
+    size_t len = strlen(line);
+    const char *xfail_suffix = " XFAIL";
+    const char *disabled_suffix = " DISABLED";
+    size_t xfail_len = strlen(xfail_suffix);
+    size_t disabled_len = strlen(disabled_suffix);
+
+    if (len >= xfail_len && strcmp(line + len - xfail_len, xfail_suffix) == 0) {
+        line[len - xfail_len] = '\0';
+        trim_in_place(line);
+        return TEST_MARKER_XFAIL;
+    }
+
+    if (len >= disabled_len &&
+        strcmp(line + len - disabled_len, disabled_suffix) == 0) {
+        line[len - disabled_len] = '\0';
+        trim_in_place(line);
+        return TEST_MARKER_DISABLED;
+    }
+
+    return TEST_MARKER_NONE;
+}
+
+// Read the first five lines of an executable test file and return its marker.
+static TestMarker executable_test_marker(const char *path) {
+    FILE *stream = fopen(path, "r");
+    char *line = NULL;
+    size_t line_capacity = 0;
+    TestMarker marker = TEST_MARKER_NONE;
+    size_t line_number = 0;
+
+    if (stream == NULL)
+        die_errno("failed to open an executable test file");
+
+    while (line_number < 5 && getline(&line, &line_capacity, stream) >= 0) {
+        TestMarker line_marker;
+
+        line_number++;
+        line_marker = test_marker_from_text_line(line);
+        if (line_marker == TEST_MARKER_NONE)
+            continue;
+
+        if (marker != TEST_MARKER_NONE) {
+            fprintf(stderr, "error: multiple test markers found in %s\n", path);
+            free(line);
+            fclose(stream);
+            exit(1);
+        }
+
+        marker = line_marker;
+    }
+
+    if (ferror(stream)) {
+        free(line);
+        fclose(stream);
+        die_errno("failed to read an executable test file");
+    }
+
+    free(line);
+    fclose(stream);
+    return marker;
 }
 
 // Return whether `prefix` names the same path as `path`, or a parent directory
@@ -204,6 +339,7 @@ static void discover_test_files_rec(const char *tests_root_abs,
         String rel_path;
         String abs_path;
         TestKind kind;
+        TestMarker marker = TEST_MARKER_NONE;
 
         if (strcmp(entry->d_name, ".") == 0 ||
             strcmp(entry->d_name, "..") == 0) {
@@ -240,6 +376,7 @@ static void discover_test_files_rec(const char *tests_root_abs,
             kind = TEST_KIND_C;
         } else if (access(abs_path.cstr, X_OK) == 0) {
             kind = TEST_KIND_EXECUTABLE;
+            marker = executable_test_marker(abs_path.cstr);
         } else {
             str_free(rel_path);
             str_free(abs_path);
@@ -248,6 +385,7 @@ static void discover_test_files_rec(const char *tests_root_abs,
 
         arr_push(*files, ((TestFile){
                              .kind = kind,
+                             .marker = marker,
                              .rel_path = rel_path,
                              .abs_path = abs_path,
                          }));
@@ -590,7 +728,7 @@ static void require_c_test_binary(const TestFile *file, const char *exe_path) {
 // Collect subtests from a compiled C test binary by executing it with `--list`.
 // Writes the executable path to `*exe_path_out`; caller owns it and frees it
 // with str_free.
-static void c_test_subtests(const TestFile *file, StringArray *subtests,
+static void c_test_subtests(const TestFile *file, CSubtestArray *subtests,
                             String *exe_path_out) {
     String stdout_text = str_empty;
     String exe_path = c_test_output_path(file->rel_path.cstr);
@@ -624,7 +762,21 @@ static void c_test_subtests(const TestFile *file, StringArray *subtests,
 
         trim_in_place(line);
         if (line[0] != '\0') {
-            string_array_push_copy(subtests, line);
+            TestMarker marker = strip_trailing_test_marker(line);
+
+            if (line[0] == '\0') {
+                fprintf(stderr, "error: invalid empty subtest name in %s\n",
+                        file->rel_path.cstr);
+                str_free(stdout_text);
+                str_free(exe_path);
+                c_subtest_array_free(subtests);
+                exit(1);
+            }
+
+            arr_push(*subtests, ((CSubtest){
+                                    .name = str_from_cstr(line),
+                                    .marker = marker,
+                                }));
         }
     }
 
@@ -641,7 +793,7 @@ static void discover_test_cases(const TestFileArray *files,
         const TestFile *file = &files->data[i];
 
         if (file->kind == TEST_KIND_C) {
-            StringArray subtests = arr_empty;
+            CSubtestArray subtests = arr_empty;
             String exe_path = str_empty;
             size_t j;
 
@@ -650,6 +802,7 @@ static void discover_test_cases(const TestFileArray *files,
             if (subtests.size == 0) {
                 arr_push(*cases, ((TestCase){
                                      .kind = TEST_KIND_C,
+                                     .marker = file->marker,
                                      .id = copy_str(file->rel_path),
                                      .file_id = copy_str(file->rel_path),
                                      .file_abs_path = copy_str(file->abs_path),
@@ -661,26 +814,28 @@ static void discover_test_cases(const TestFileArray *files,
                     String id = copy_str(file->rel_path);
 
                     str_push(id, '/');
-                    str_append_str(id, subtests.data[j]);
+                    str_append_str(id, subtests.data[j].name);
                     arr_push(*cases,
                              ((TestCase){
                                  .kind = TEST_KIND_C,
+                                 .marker = subtests.data[j].marker,
                                  .id = id,
                                  .file_id = copy_str(file->rel_path),
                                  .file_abs_path = copy_str(file->abs_path),
                                  .c_exe_path = copy_str(exe_path),
-                                 .c_subtest = copy_str(subtests.data[j]),
+                                 .c_subtest = copy_str(subtests.data[j].name),
                              }));
                 }
             }
 
             str_free(exe_path);
-            string_array_free(&subtests);
+            c_subtest_array_free(&subtests);
             continue;
         }
 
         arr_push(*cases, ((TestCase){
                              .kind = file->kind,
+                             .marker = file->marker,
                              .id = copy_str(file->rel_path),
                              .file_id = copy_str(file->rel_path),
                              .file_abs_path = copy_str(file->abs_path),
@@ -717,6 +872,33 @@ static int run_c_test(const TestCase *test_case, const char *test_output_dir,
     };
 
     return run_argv(argv, test_output_dir, output_path);
+}
+
+// Print one discovered test id, appending its marker when present.
+static void print_listed_test(const TestCase *test_case) {
+    const char *marker_name = test_marker_name(test_case->marker);
+
+    if (marker_name == NULL)
+        puts(test_case->id.cstr);
+    else
+        printf("%s %s\n", test_case->id.cstr, marker_name);
+}
+
+// Print a named list of tests with a heading, skipping the list if empty.
+static void print_named_test_list(const char *heading,
+                                  const StringArray *tests) {
+    if (tests->size == 0)
+        return;
+
+    printf("%s:\n", heading);
+    for (size_t i = 0; i < tests->size; ++i)
+        printf("  %s\n", tests->data[i].cstr);
+}
+
+// Print one non-zero summary counter.
+static void print_summary_count(const char *label, size_t count) {
+    if (count != 0)
+        printf("%s: %zu\n", label, count);
 }
 
 // Prepend build/bin to PATH and export stable test-runner environment
@@ -792,8 +974,14 @@ int main(int argc, char **argv) {
 
     // Results
     int exit_code = 0;
-    size_t selected = 0;
+    size_t discovered = 0;
     size_t passed = 0;
+    size_t xfailed = 0;
+    size_t disabled = 0;
+    size_t unexpectedly_succeeded = 0;
+    size_t failed = 0;
+    StringArray failed_tests = arr_empty;
+    StringArray unexpectedly_succeeded_tests = arr_empty;
 
     // Parse CLI arguments.
 
@@ -890,9 +1078,16 @@ int main(int argc, char **argv) {
         if (!test_matches_filters(test_case, &filters))
             continue;
 
-        selected++;
+        discovered++;
         if (list_only) {
-            puts(test_case->id.cstr);
+            print_listed_test(test_case);
+            continue;
+        }
+
+        if (test_case->marker == TEST_MARKER_DISABLED) {
+            disabled++;
+            printf("DISABLED: %s\n", test_case->id.cstr);
+            fflush(stdout);
             continue;
         }
 
@@ -913,22 +1108,29 @@ int main(int argc, char **argv) {
             test_exit_code = 1;
         }
 
-        if (test_exit_code == 0) {
+        if (test_exit_code == 0 && test_case->marker == TEST_MARKER_XFAIL) {
+            unexpectedly_succeeded++;
+            string_array_push_copy(&unexpectedly_succeeded_tests,
+                                   test_case->id.cstr);
+            printf("XPASS: %s\n", test_case->id.cstr);
+        } else if (test_exit_code == 0) {
             passed++;
             printf("PASS: %s\n", test_case->id.cstr);
+        } else if (test_case->marker == TEST_MARKER_XFAIL) {
+            xfailed++;
+            printf("XFAIL: %s\n", test_case->id.cstr);
         } else {
+            failed++;
+            string_array_push_copy(&failed_tests, test_case->id.cstr);
             printf("FAIL: %s\n", test_case->id.cstr);
             print_output_tail(output_path.cstr, 20);
-            str_free(test_output_dir);
-            str_free(output_path);
-            break;
         }
         str_free(test_output_dir);
         str_free(output_path);
         fflush(stdout);
     }
 
-    if (selected == 0) {
+    if (discovered == 0) {
         if (!list_only) {
             fprintf(stderr, "error: no tests matched the requested filters\n");
             exit_code = 1;
@@ -937,12 +1139,22 @@ int main(int argc, char **argv) {
     }
 
     if (!list_only) {
-        printf("%zu/%zu tests passed\n", passed, selected);
-        if (passed != selected)
+        print_named_test_list("failed tests", &failed_tests);
+        print_named_test_list("unexpectedly succeeded tests",
+                              &unexpectedly_succeeded_tests);
+        print_summary_count("discovered", discovered);
+        print_summary_count("passed", passed);
+        print_summary_count("xfailed", xfailed);
+        print_summary_count("disabled", disabled);
+        print_summary_count("unexpectedly succeeded", unexpectedly_succeeded);
+        print_summary_count("failed", failed);
+        if (failed != 0 || unexpectedly_succeeded != 0)
             exit_code = 1;
     }
 
 cleanup:
+    string_array_free(&unexpectedly_succeeded_tests);
+    string_array_free(&failed_tests);
     str_free(output_dir);
     str_free(tests_dir);
     string_array_free(&filters);

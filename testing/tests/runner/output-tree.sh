@@ -67,6 +67,8 @@ rm -rf "$OUTPUT_ROOT"
 assert_file_exists "$EXEC_OUTPUT"
 assert_file_contains "$EXEC_OUTPUT" "output script stdout marker"
 assert_file_contains "$EXEC_OUTPUT" "output script stderr marker"
+assert_file_contains "$SUCCESS_LOG" "discovered: 1"
+assert_file_contains "$SUCCESS_LOG" "passed: 1"
 
 # C tests should get their own nested output files too, including tests under
 # testing/tests/runner/.
@@ -95,3 +97,7 @@ assert_file_contains "$FAILURE_LOG" "last 20 lines:"
 assert_file_contains "$FAILURE_LOG" "failure line 6"
 assert_file_contains "$FAILURE_LOG" "failure line 25"
 assert_file_not_contains "$FAILURE_LOG" "failure line 5"
+assert_file_contains "$FAILURE_LOG" "failed tests:"
+assert_file_contains "$FAILURE_LOG" "  runner/output.sh"
+assert_file_contains "$FAILURE_LOG" "discovered: 1"
+assert_file_contains "$FAILURE_LOG" "failed: 1"

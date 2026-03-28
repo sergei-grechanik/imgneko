@@ -9,9 +9,17 @@ typedef struct TestContext {
     const char *test_name;
 } TestContext;
 
+// Optional execution expectation attached to a discovered test.
+typedef enum TestMarker {
+    TEST_MARKER_NONE,
+    TEST_MARKER_XFAIL,
+    TEST_MARKER_DISABLED,
+} TestMarker;
+
 typedef struct Subtest {
     const char *name;
     int (*func)(TestContext *ctx);
+    TestMarker marker;
 } Subtest;
 
 // Verify that test_func starts with "test_" and produce the displayed subtest
@@ -26,7 +34,26 @@ typedef struct Subtest {
 
 // Build a Subtest entry from a function named with the required test_ prefix.
 #define PREFIXED_TEST(test_func)                                               \
-    { .name = TEST__SUBTEST_NAME(test_func), .func = (test_func), }
+    {                                                                          \
+        .name = TEST__SUBTEST_NAME(test_func), .func = (test_func),            \
+        .marker = TEST_MARKER_NONE,                                            \
+    }
+
+// Build an expected-failure Subtest entry from a function with the required
+// test_ prefix.
+#define PREFIXED_XFAIL_TEST(test_func)                                         \
+    {                                                                          \
+        .name = TEST__SUBTEST_NAME(test_func), .func = (test_func),            \
+        .marker = TEST_MARKER_XFAIL,                                           \
+    }
+
+// Build a disabled Subtest entry from a function with the required test_
+// prefix.
+#define PREFIXED_DISABLED_TEST(test_func)                                      \
+    {                                                                          \
+        .name = TEST__SUBTEST_NAME(test_func), .func = (test_func),            \
+        .marker = TEST_MARKER_DISABLED,                                        \
+    }
 
 // Run named subtests selected by argv and return the combined status code.
 int run_subtests(int argc, char **argv, const Subtest *subtests,

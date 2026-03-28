@@ -3,6 +3,21 @@
 
 #include "test_main.h"
 
+// Map a subtest marker to the suffix printed by `--list`, or NULL for normal
+// tests.
+static const char *test_marker_name(TestMarker marker) {
+    switch (marker) {
+    case TEST_MARKER_NONE:
+        return NULL;
+    case TEST_MARKER_XFAIL:
+        return "XFAIL";
+    case TEST_MARKER_DISABLED:
+        return "DISABLED";
+    }
+
+    return NULL;
+}
+
 // Run named subtests selected by argv and return the combined status code.
 int run_subtests(int argc, char **argv, const Subtest *subtests,
                  size_t subtest_count) {
@@ -10,8 +25,14 @@ int run_subtests(int argc, char **argv, const Subtest *subtests,
     int status = 0;
 
     if (argc > 1 && strcmp(argv[1], "--list") == 0) {
-        for (size_t i = 0; i < subtest_count; ++i)
-            puts(subtests[i].name);
+        for (size_t i = 0; i < subtest_count; ++i) {
+            const char *marker_name = test_marker_name(subtests[i].marker);
+
+            if (marker_name == NULL)
+                puts(subtests[i].name);
+            else
+                printf("%s %s\n", subtests[i].name, marker_name);
+        }
         return 0;
     }
 
