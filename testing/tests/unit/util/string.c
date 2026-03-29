@@ -365,6 +365,29 @@ static int test_predicates(TestContext *ctx) {
     return 0;
 }
 
+static int test_escape_bytes(TestContext *ctx) {
+    const char *name = ctx->test_name;
+    const char escaped_input[] = {'A',  '\n',       '\t',
+                                  '\\', (char)0x01, (char)0xff};
+    String escaped = str_empty;
+    String empty = str_empty;
+    int status = 0;
+
+    escaped = str_from_escaped_bytes(escaped_input, sizeof(escaped_input));
+    status = expect_string_eq(name, escaped.cstr, escaped.len,
+                              STR("A\\n\\t\\\\\\x01\\xff"));
+    if (status != 0)
+        goto cleanup;
+
+    empty = str_from_escaped_bytes("", 0);
+    status = expect_empty_string(name, empty, false);
+
+cleanup:
+    str_free(empty);
+    str_free(escaped);
+    return status;
+}
+
 int main(int argc, char **argv) {
     const Subtest subtests[] = {
         PREFIXED_TEST(test_from_cstr_and_copy),
@@ -374,6 +397,7 @@ int main(int argc, char **argv) {
         PREFIXED_TEST(test_truncate_and_push),
         PREFIXED_TEST(test_append_and_insert),
         PREFIXED_TEST(test_predicates),
+        PREFIXED_TEST(test_escape_bytes),
     };
 
     return run_subtests(argc, argv, subtests, ARRAY_SIZE(subtests));

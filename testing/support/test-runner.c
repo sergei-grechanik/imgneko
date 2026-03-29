@@ -1,7 +1,6 @@
 // Enable POSIX APIs used in this file (getline, strdup/strndup, setenv, etc.).
 #define _POSIX_C_SOURCE 200809L
 
-#include <ctype.h>
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -173,13 +172,13 @@ static void trim_in_place(char *line) {
     size_t start = 0;
     size_t end;
 
-    while (isspace((unsigned char)line[start])) {
+    while (str_char_is_ascii_space(line[start])) {
         start++;
     }
 
     len = strlen(line);
     end = len;
-    while (end > start && isspace((unsigned char)line[end - 1])) {
+    while (end > start && str_char_is_ascii_space(line[end - 1])) {
         end--;
     }
 
@@ -190,7 +189,9 @@ static void trim_in_place(char *line) {
 }
 
 // Return whether a character can be part of a marker word.
-static bool is_marker_word_char(char ch) { return isalnum(ch) || ch == '_'; }
+static bool is_marker_word_char(char ch) {
+    return str_char_is_ascii_alnum(ch) || ch == '_';
+}
 
 // Return whether `text` contains `word` delimited by non-word characters.
 static bool text_contains_word(const char *text, const char *word) {
@@ -854,9 +855,19 @@ static void print_output_tail(const char *output_path, size_t max_lines) {
 
     fprintf(stderr, "===== LAST %zu LINES OF TEST OUTPUT %s {{{ =====\n",
             max_lines, output_path);
-    fwrite(output_text.cstr + start, 1, output_text.len - start, stderr);
-    if (output_text.cstr[output_text.len - 1] != '\n')
-        fputc('\n', stderr);
+    for (size_t i = start; i < output_text.len;) {
+        size_t line_end = i;
+
+        while (line_end < output_text.len && output_text.cstr[line_end] != '\n')
+            line_end++;
+
+        String escaped =
+            str_from_escaped_bytes(output_text.cstr + i, line_end - i);
+        fprintf(stderr, "%s\n", escaped.cstr);
+        str_free(escaped);
+
+        i = line_end + (line_end < output_text.len ? 1 : 0);
+    }
     fprintf(stderr, "===== }}} END TEST OUTPUT =====\n\n");
 
     str_free(output_text);

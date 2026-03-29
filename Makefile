@@ -41,6 +41,7 @@ TEST_OUTPUT_DIR := $(BUILD_DIR)/test-outputs
 # Important targets.
 BIN_IMGNEKO     := $(BIN_DIR)/imgneko
 BIN_TEST_RUNNER := $(BIN_DIR)/test-runner
+BIN_RUN_AND_CHECK := $(BIN_DIR)/run-and-check
 BUILD_INFO_H    := $(GEN_DIR)/build_info.h
 
 # Additional targets.
@@ -58,7 +59,8 @@ VERSION_FILE := $(ROOT_DIR)/VERSION
 APP_SOURCES := src/main.c
 UTIL_SOURCES := $(shell if [ -d "$(ROOT_DIR)/src/util" ]; then cd "$(ROOT_DIR)" && find src/util -type f -name '*.c' -print | LC_ALL=C sort; fi)
 TEST_RUNNER_SOURCE := testing/support/test-runner.c
-TEST_SUPPORT_SOURCES := $(shell if [ -d "$(ROOT_DIR)/testing/support" ]; then cd "$(ROOT_DIR)" && find testing/support -type f -name '*.c' ! -name 'test-runner.c' -print | LC_ALL=C sort; fi)
+RUN_AND_CHECK_SOURCE := testing/support/run-and-check.c
+TEST_SUPPORT_SOURCES := $(shell if [ -d "$(ROOT_DIR)/testing/support" ]; then cd "$(ROOT_DIR)" && find testing/support -type f -name '*.c' ! -name 'test-runner.c' ! -name 'run-and-check.c' -print | LC_ALL=C sort; fi)
 TEST_C_SOURCES := $(shell if [ -d "$(ROOT_DIR)/testing/tests" ]; then cd "$(ROOT_DIR)" && find testing/tests -type f -name '*.c' -print | LC_ALL=C sort; fi)
 
 # Preserve the source tree under $(OBJ_DIR), so:
@@ -67,11 +69,13 @@ APP_OBJECTS := $(addprefix $(OBJ_DIR)/,$(APP_SOURCES:.c=.o))
 UTIL_OBJECTS := $(addprefix $(OBJ_DIR)/,$(UTIL_SOURCES:.c=.o))
 OBJECTS := $(APP_OBJECTS) $(UTIL_OBJECTS)
 TEST_RUNNER_OBJECT := $(OBJ_DIR)/$(TEST_RUNNER_SOURCE:.c=.o)
+RUN_AND_CHECK_OBJECT := $(OBJ_DIR)/$(RUN_AND_CHECK_SOURCE:.c=.o)
 TEST_SUPPORT_OBJECTS := $(addprefix $(OBJ_DIR)/,$(TEST_SUPPORT_SOURCES:.c=.o))
-TEST_TOOLS := $(BIN_TEST_RUNNER)
+TEST_TOOLS := $(BIN_TEST_RUNNER) $(BIN_RUN_AND_CHECK)
 TEST_C_BINS := $(patsubst testing/tests/%.c,$(TEST_BIN_DIR)/%.c.bin,$(TEST_C_SOURCES))
 ALL_OBJECTS_AND_BINS := \
-	$(OBJECTS) $(TEST_RUNNER_OBJECT) $(TEST_SUPPORT_OBJECTS) $(TEST_C_BINS)
+	$(OBJECTS) $(TEST_RUNNER_OBJECT) $(RUN_AND_CHECK_OBJECT) \
+	$(TEST_SUPPORT_OBJECTS) $(TEST_C_BINS)
 
 ###############################################################################
 # Fixed project metadata
@@ -230,6 +234,10 @@ $(BIN_IMGNEKO): $(OBJECTS) $(CONFIG_MK) $(BUILD_INFO_H) | check-config-date
 $(BIN_TEST_RUNNER): $(TEST_RUNNER_OBJECT) $(UTIL_OBJECTS) $(CONFIG_MK) $(BUILD_INFO_H) | check-config-date
 	@mkdir -p "$(dir $@)"
 	$(CC) $(LDFLAGS) -o "$@" $(TEST_RUNNER_OBJECT) $(UTIL_OBJECTS) $(LDLIBS)
+
+$(BIN_RUN_AND_CHECK): $(RUN_AND_CHECK_OBJECT) $(UTIL_OBJECTS) $(CONFIG_MK) $(BUILD_INFO_H) | check-config-date
+	@mkdir -p "$(dir $@)"
+	$(CC) $(LDFLAGS) -o "$@" $(RUN_AND_CHECK_OBJECT) $(UTIL_OBJECTS) $(LDLIBS)
 
 # Generate a header used by `--version` to print all build information.
 $(BUILD_INFO_H): $(CONFIG_MK) $(VERSION_FILE) | check-config-date

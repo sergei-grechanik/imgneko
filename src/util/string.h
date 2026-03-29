@@ -33,6 +33,32 @@ typedef struct String {
 #define str_empty                                                              \
     { "", 0, 0 }
 
+// ASCII-only character predicates used in parser code that must not depend on
+// locale-sensitive ctype behavior or signed-char promotion rules.
+ARRLIB_INLINE bool str_char_is_ascii_lower(char ch) {
+    return 'a' <= ch && ch <= 'z';
+}
+
+ARRLIB_INLINE bool str_char_is_ascii_upper(char ch) {
+    return 'A' <= ch && ch <= 'Z';
+}
+
+ARRLIB_INLINE bool str_char_is_ascii_alpha(char ch) {
+    return str_char_is_ascii_lower(ch) || str_char_is_ascii_upper(ch);
+}
+
+ARRLIB_INLINE bool str_char_is_ascii_digit(char ch) {
+    return '0' <= ch && ch <= '9';
+}
+
+ARRLIB_INLINE bool str_char_is_ascii_alnum(char ch) {
+    return str_char_is_ascii_alpha(ch) || str_char_is_ascii_digit(ch);
+}
+
+ARRLIB_INLINE bool str_char_is_ascii_space(char ch) {
+    return ch == ' ' || ('\t' <= ch && ch <= '\r');
+}
+
 // Get a pointer to the string's dynamically allocated null-terminated data, or
 // NULL when the string is empty and no data is dynamically allocated.
 ARRLIB_INLINE char *str__get_cstr_or_null(char *str, size_t len,
@@ -109,6 +135,12 @@ ARRLIB_INLINE String str_from_data(char const *data, size_t len) {
 ARRLIB_INLINE String str_from_cstr(char const *cstr) {
     return str_from_data(cstr, strlen(cstr));
 }
+
+// Copy raw bytes into a new owning String while escaping non-printable bytes
+// for diagnostics. Printable ASCII bytes are copied as-is, backslash and
+// common control bytes use short C-style escapes, and other bytes use `\xHH`.
+// The caller frees the result with str_free.
+String str_from_escaped_bytes(char const *data, size_t len);
 
 // Copy an owning String into a new owning String. The caller frees the result
 // with str_free.

@@ -40,6 +40,11 @@ and what the expected behavior is.
 - Declare variables as close as possible to their first use, unless they
   participate in cleaning up (goto cleanup idiom), in which case declare them at
   the top of the function and initialize them (likely to NULL) right away.
+- When there are too many arguments being passed to a function, and the passed
+  values are not descriptive enough, annotate the arguments with comments in the
+  call site, e.g. `foo(arg1, arg2, /*buffer=*/arg3);`. If the values are
+  descriptive enough, this is not necessary, e.g.
+  `foo(num_items, item_size, buffer);`.
 
 ### Strings
 
