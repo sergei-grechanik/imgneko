@@ -52,10 +52,13 @@ LIST_LOG=$(mktemp /tmp/imgneko-runner-list.XXXXXX)
 SUMMARY_LOG=$(mktemp /tmp/imgneko-runner-summary.XXXXXX)
 XPASS_LOG=$(mktemp /tmp/imgneko-runner-xpass.XXXXXX)
 FLIP_LOG=$(mktemp /tmp/imgneko-runner-flip.XXXXXX)
+TIMEOUT_LOG=$(mktemp /tmp/imgneko-runner-timeout.XXXXXX)
+TIMEOUT_DISABLED_LOG=$(mktemp /tmp/imgneko-runner-timeout-disabled.XXXXXX)
 FILTER=runner/markers.c\|runner/xfail.sh\|runner/disabled.sh
 
 cleanup() {
-    rm -f "$LIST_LOG" "$SUMMARY_LOG" "$XPASS_LOG" "$FLIP_LOG"
+    rm -f "$LIST_LOG" "$SUMMARY_LOG" "$XPASS_LOG" "$FLIP_LOG" \
+        "$TIMEOUT_LOG" "$TIMEOUT_DISABLED_LOG"
 }
 
 trap cleanup EXIT
@@ -81,6 +84,7 @@ assert_file_contains "$SUMMARY_LOG" "DISABLED: runner/disabled.sh"
 assert_file_contains "$SUMMARY_LOG" "discovered: 4"
 assert_file_contains "$SUMMARY_LOG" "xfailed: 2"
 assert_file_contains "$SUMMARY_LOG" "disabled: 2"
+assert_file_contains "$SUMMARY_LOG" "Time:"
 assert_file_contains "$SUMMARY_LOG" "Result: SUCCESS"
 assert_path_absent "$OUTPUT_ROOT/runner/markers.c/marked_disabled"
 assert_path_absent "$OUTPUT_ROOT/runner/disabled.sh"
@@ -102,6 +106,7 @@ assert_file_contains "$XPASS_LOG" "  runner/xfail.sh"
 assert_file_contains "$XPASS_LOG" "Summary:"
 assert_file_contains "$XPASS_LOG" "discovered: 2"
 assert_file_contains "$XPASS_LOG" "xpassed: 2"
+assert_file_contains "$XPASS_LOG" "Time:"
 assert_file_contains "$XPASS_LOG" "Result: FAILURE"
 assert_file_not_contains "$XPASS_LOG" "failed:"
 
@@ -122,4 +127,34 @@ assert_file_contains "$FLIP_LOG" "  runner/output.sh"
 assert_file_contains "$FLIP_LOG" "Summary:"
 assert_file_contains "$FLIP_LOG" "discovered: 1"
 assert_file_contains "$FLIP_LOG" "failed: 1"
+assert_file_contains "$FLIP_LOG" "Time:"
 assert_file_contains "$FLIP_LOG" "Result: FAILURE"
+
+set +e
+"$RUNNER" --output-dir "$OUTPUT_ROOT" --timeout 1 \
+    --filter runner/timeout.sh >"$TIMEOUT_LOG" 2>&1
+status=$?
+set -e
+
+[ "$status" -ne 0 ] || fail "timeout run unexpectedly passed"
+
+assert_file_contains "$TIMEOUT_LOG" "TIMEOUT: runner/timeout.sh"
+assert_file_contains "$TIMEOUT_LOG" "timed out tests:"
+assert_file_contains "$TIMEOUT_LOG" "  runner/timeout.sh"
+assert_file_contains "$TIMEOUT_LOG" "Summary:"
+assert_file_contains "$TIMEOUT_LOG" "discovered: 1"
+assert_file_contains "$TIMEOUT_LOG" "timeout: 1"
+assert_file_contains "$TIMEOUT_LOG" "Time:"
+assert_file_contains "$TIMEOUT_LOG" "Result: FAILURE"
+
+"$RUNNER" --output-dir "$OUTPUT_ROOT" --timeout 0 \
+    --filter runner/timeout.sh >"$TIMEOUT_DISABLED_LOG" 2>&1 ||
+    fail "timeout-disabled run unexpectedly failed"
+
+assert_file_contains "$TIMEOUT_DISABLED_LOG" "PASS: runner/timeout.sh"
+assert_file_not_contains "$TIMEOUT_DISABLED_LOG" "TIMEOUT: runner/timeout.sh"
+assert_file_contains "$TIMEOUT_DISABLED_LOG" "Summary:"
+assert_file_contains "$TIMEOUT_DISABLED_LOG" "discovered: 1"
+assert_file_contains "$TIMEOUT_DISABLED_LOG" "passed: 1"
+assert_file_contains "$TIMEOUT_DISABLED_LOG" "Time:"
+assert_file_contains "$TIMEOUT_DISABLED_LOG" "Result: SUCCESS"

@@ -7,10 +7,12 @@
 #include <fcntl.h>
 #include <fnmatch.h>
 #include <limits.h>
+#include <signal.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/select.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/wait.h>
@@ -82,6 +84,13 @@ typedef struct TestCase {
     String c_subtest;
 } TestCase;
 
+// Result of running one test case in a child process.
+typedef struct TestRunResult {
+    int exit_code;
+    bool timed_out;
+    double elapsed_seconds;
+} TestRunResult;
+
 DEFINE_ARRAY_TYPE(StringArray, String)
 DEFINE_ARRAY_TYPE(CSubtestArray, CSubtest)
 DEFINE_ARRAY_TYPE(TestFileArray, TestFile)
@@ -97,6 +106,8 @@ static const char *const build_dir = TEST_RUNNER_BUILD_DIR;
 static const char *const tests_root_rel = "testing/tests";
 // Default directory under the build tree for per-test captured output.
 static const char *const default_test_output_dir_rel = "test-outputs";
+// Default per-test timeout in seconds.
+static const double default_test_timeout_seconds = 180.0;
 
 // Per-test environment variable that points tests at their own output
 // directory.
@@ -455,6 +466,20 @@ static bool parse_probability(const char *text, double *probability_out) {
     return true;
 }
 
+// Parse a timeout in seconds. Zero disables the timeout.
+static bool parse_timeout_seconds(const char *text, double *timeout_out) {
+    char *end = NULL;
+    double timeout_seconds;
+
+    errno = 0;
+    timeout_seconds = strtod(text, &end);
+    if (errno != 0 || end == text || *end != '\0' || timeout_seconds < 0.0)
+        return false;
+
+    *timeout_out = timeout_seconds;
+    return true;
+}
+
 // Build the per-test output directory path under output_root. Executable tests
 // map to `<root>/<test-id>/`; C subtests map to
 // `<root>/<file-id>/<subtest>/`. The caller owns the returned string and must
@@ -471,19 +496,93 @@ static String test_output_file_path(const char *test_output_dir) {
     return path_join(test_output_dir, "output");
 }
 
+// Return the current monotonic time in seconds.
+static double monotonic_seconds(void) {
+    struct timespec ts;
+
+    if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0)
+        die_errno("clock_gettime failed");
+
+    return (double)ts.tv_sec + (double)ts.tv_nsec / 1000000000.0;
+}
+
+// pselect() only wakes for signals that are actually caught, so install a
+// no-op SIGCHLD handler purely to interrupt the sleep when the child changes
+// state. The main loop still does the real reap via waitpid().
+static void run_argv_sigchld_handler(int signum) { (void)signum; }
+
+// Return the relative timeout until the next monotonic deadline. Zero means
+// the deadline already expired.
+static struct timespec timeout_until_next_deadline(double deadline_seconds) {
+    struct timespec timeout = {0};
+    double remaining_seconds = deadline_seconds - monotonic_seconds();
+
+    if (remaining_seconds <= 0.0)
+        return timeout;
+
+    timeout.tv_sec = (time_t)remaining_seconds;
+    timeout.tv_nsec =
+        (long)((remaining_seconds - (double)timeout.tv_sec) * 1000000000.0);
+    if (timeout.tv_nsec >= 1000000000L) {
+        timeout.tv_sec += timeout.tv_nsec / 1000000000L;
+        timeout.tv_nsec %= 1000000000L;
+    }
+    if (timeout.tv_sec == 0 && timeout.tv_nsec == 0)
+        timeout.tv_nsec = 1;
+
+    return timeout;
+}
+
 // Run argv in a child process with stdout/stderr redirected into output_path.
 // The child also receives its per-test output directory and runs from it.
-static int run_argv(char *const *argv, const char *test_output_dir,
-                    const char *output_path) {
-    pid_t pid = fork();
-    int status;
-    int output_fd;
+//
+// When a timeout is enabled, place the child in its own process group so a
+// timeout can terminate the whole test subtree, not just the direct exec'd
+// process.
+static TestRunResult run_argv(char *const *argv, const char *test_output_dir,
+                              const char *output_path, double timeout_seconds) {
+    TestRunResult result = {.exit_code = 1, .timed_out = false};
+    bool timeout_enabled = timeout_seconds > 0.0;
+    bool deadline_expired = false;
+    struct sigaction old_sigchld_action = {0};
+    sigset_t old_sigchld_mask;
+    sigset_t wait_mask;
+
+    if (timeout_enabled) {
+        struct sigaction sigchld_action = {0};
+        sigset_t sigchld_mask;
+
+        // Install a temporary SIGCHLD handler so pselect() can wake when this
+        // child exits. Save the old action so the runner does not leak its
+        // internal signal setup into later code.
+        sigemptyset(&sigchld_action.sa_mask);
+        sigchld_action.sa_handler = run_argv_sigchld_handler;
+        if (sigaction(SIGCHLD, &sigchld_action, &old_sigchld_action) != 0)
+            die_errno("sigaction failed");
+
+        // Block SIGCHLD in normal execution so a child exit cannot land in the
+        // tiny window between waitpid(WNOHANG) and pselect(). If that happens,
+        // the signal stays pending until pselect() temporarily unblocks it.
+        sigemptyset(&sigchld_mask);
+        sigaddset(&sigchld_mask, SIGCHLD);
+        if (sigprocmask(SIG_BLOCK, &sigchld_mask, &old_sigchld_mask) != 0)
+            die_errno("sigprocmask failed");
+
+        // pselect() takes a full replacement mask, not a "signals to unblock"
+        // set, so start from the caller's original mask and only make SIGCHLD
+        // unblocked while sleeping.
+        wait_mask = old_sigchld_mask;
+        sigdelset(&wait_mask, SIGCHLD);
+    }
 
     if (!mkdir_p(test_output_dir))
         die_errno("failed to create a directory");
-    output_fd = open(output_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    int output_fd = open(output_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+
     if (output_fd < 0)
         die_errno("failed to open a test output file");
+
+    pid_t pid = fork();
 
     if (pid < 0) {
         close(output_fd);
@@ -491,6 +590,22 @@ static int run_argv(char *const *argv, const char *test_output_dir,
     }
 
     if (pid == 0) {
+        // The parent blocks SIGCHLD around its wait loop. Undo that in the
+        // child before running the test so the test process inherits the
+        // caller's original signal mask, not the runner's internal one.
+        if (timeout_enabled &&
+            sigprocmask(SIG_SETMASK, &old_sigchld_mask, NULL) != 0) {
+            fprintf(stderr, "error: sigprocmask failed: %s\n", strerror(errno));
+            _exit(127);
+        }
+        // Make the child the leader of its own process group so timeout
+        // cleanup can signal the whole test subtree with kill(-pid, ...).
+        // The first 0 means current pid, the second 0 means new group leader is
+        // the same as the pid.
+        if (setpgid(0, 0) != 0) {
+            fprintf(stderr, "error: setpgid failed: %s\n", strerror(errno));
+            _exit(127);
+        }
         if (dup2(output_fd, STDOUT_FILENO) < 0 ||
             dup2(output_fd, STDERR_FILENO) < 0) {
             fprintf(stderr, "error: dup2 failed: %s\n", strerror(errno));
@@ -515,19 +630,116 @@ static int run_argv(char *const *argv, const char *test_output_dir,
 
     close(output_fd);
 
-    if (waitpid(pid, &status, 0) < 0) {
-        die_errno("waitpid failed");
+    // Repeat setpgid in the parent to close the small race where timeout
+    // cleanup might need to signal the process group before the child runs its
+    // own setpgid call.
+    // EACCES means the child already exec'd after its own setpgid(), so the
+    // parent lost the race but the process-group setup step is already done.
+    // ESRCH means the child exited before the parent got here, so there is no
+    // remaining process to move into a group.
+    if (setpgid(pid, pid) != 0 && errno != EACCES && errno != ESRCH)
+        die_errno("setpgid failed");
+
+    double start_time = monotonic_seconds();
+    double deadline_seconds =
+        timeout_enabled ? start_time + timeout_seconds : 0.0;
+    int status = 0;
+
+    // Loop until waitpid() reports the child changed state, or the deadline
+    // expires.
+    for (;;) {
+        // WNOHANG turns waitpid() into a non-blocking probe: pid means the
+        // child already changed state, 0 means it is still running.
+        pid_t waited = waitpid(pid, &status, timeout_enabled ? WNOHANG : 0);
+
+        if (waited < 0) {
+            // A caught signal can interrupt the probe; just retry.
+            if (errno == EINTR)
+                continue;
+            die_errno("waitpid failed");
+        }
+
+        if (waited == pid)
+            break;
+
+        if (!timeout_enabled)
+            continue;
+
+        struct timespec wait_timeout =
+            timeout_until_next_deadline(deadline_seconds);
+
+        if (wait_timeout.tv_sec == 0 && wait_timeout.tv_nsec == 0) {
+            deadline_expired = true;
+            break;
+        }
+
+        // Sleep until either the deadline expires or SIGCHLD arrives. nfds=0
+        // is intentional here: we are only using pselect() as an interruptible
+        // timed wait, not for file-descriptor readiness.
+        int rc = pselect(0, NULL, NULL, NULL, &wait_timeout, &wait_mask);
+
+        if (rc == 0) {
+            // The timeout expired before any SIGCHLD woke the wait.
+            deadline_expired = true;
+            break;
+        }
+        // EINTR is the normal wakeup path after SIGCHLD (or another caught
+        // signal); loop back and probe waitpid() again.
+        if (rc < 0 && errno != EINTR)
+            die_errno("pselect failed");
+
+        // Keep SIGCHLD blocked between the WNOHANG probe and pselect(). That
+        // way a child exit in that window becomes a pending SIGCHLD, and
+        // pselect() wakes immediately when it temporarily unblocks SIGCHLD via
+        // wait_mask.
+    }
+
+    // Restore the caller's signal state now that this child is no longer being
+    // supervised by the pselect()/SIGCHLD timeout machinery.
+    if (timeout_enabled &&
+        sigprocmask(SIG_SETMASK, &old_sigchld_mask, NULL) != 0) {
+        die_errno("sigprocmask restore failed");
+    }
+    if (timeout_enabled && sigaction(SIGCHLD, &old_sigchld_action, NULL) != 0) {
+        die_errno("sigaction restore failed");
+    }
+
+    result.elapsed_seconds = monotonic_seconds() - start_time;
+    if (deadline_expired) {
+        result.timed_out = true;
+        // Use 124 as the synthetic timeout status. This matches the common
+        // shell convention used by tools like `timeout`.
+        result.exit_code = 124;
+        // Kill the whole process group in case the test spawned children that
+        // would otherwise outlive the direct runner child.
+        if (kill(-pid, SIGTERM) != 0 && errno != ESRCH)
+            die_errno("kill failed");
+        // Give the test subtree a brief chance to exit cleanly on SIGTERM
+        // before forcing it down with SIGKILL.
+        struct timespec grace = {.tv_sec = 0, .tv_nsec = 100000000};
+        nanosleep(&grace, NULL);
+        if (kill(-pid, SIGKILL) != 0 && errno != ESRCH)
+            die_errno("kill failed");
+        // Reap the direct child so we do not leave a zombie behind after the
+        // timeout path finishes. ECHILD means it was already reaped elsewhere
+        // in the timeout race, which is fine.
+        if (waitpid(pid, &status, 0) < 0 && errno != ECHILD)
+            die_errno("waitpid failed after timeout");
+        result.elapsed_seconds = monotonic_seconds() - start_time;
+        return result;
     }
 
     if (WIFEXITED(status)) {
-        return WEXITSTATUS(status);
+        result.exit_code = WEXITSTATUS(status);
+        return result;
     }
 
     if (WIFSIGNALED(status)) {
-        return 128 + WTERMSIG(status);
+        result.exit_code = 128 + WTERMSIG(status);
+        return result;
     }
 
-    return 1;
+    return result;
 }
 
 // Read the entire stream from `fd` into a NUL-terminated buffer.
@@ -866,30 +1078,33 @@ static void discover_test_cases(const TestFileArray *files,
 }
 
 // Run one executable test file directly.
-static int run_executable_test(const TestCase *test_case,
-                               const char *test_output_dir,
-                               const char *output_path) {
+static TestRunResult run_executable_test(const TestCase *test_case,
+                                         const char *test_output_dir,
+                                         const char *output_path,
+                                         double timeout_seconds) {
     char *argv[] = {test_case->file_abs_path.cstr, NULL};
 
     if (access(test_case->file_abs_path.cstr, X_OK) != 0) {
         fprintf(stderr, "error: test file is not executable: %s\n",
                 test_case->file_abs_path.cstr);
-        return 1;
+        return (TestRunResult){.exit_code = 1};
     }
 
-    return run_argv(argv, test_output_dir, output_path);
+    return run_argv(argv, test_output_dir, output_path, timeout_seconds);
 }
 
 // Run one compiled C test, either a selected subtest or all subtests.
-static int run_c_test(const TestCase *test_case, const char *test_output_dir,
-                      const char *output_path) {
+static TestRunResult run_c_test(const TestCase *test_case,
+                                const char *test_output_dir,
+                                const char *output_path,
+                                double timeout_seconds) {
     char *argv[] = {
         test_case->c_exe_path.cstr,
         test_case->c_subtest.len != 0 ? test_case->c_subtest.cstr : "--all",
         NULL,
     };
 
-    return run_argv(argv, test_output_dir, output_path);
+    return run_argv(argv, test_output_dir, output_path, timeout_seconds);
 }
 
 // Print one discovered test id, appending its marker when present.
@@ -994,13 +1209,17 @@ static void usage(FILE *stream) {
 
     fprintf(stream,
             "Usage: %s [--list] [--all] [--output-dir DIR] [--filter PATTERN]\n"
+            "       [--timeout SECONDS]\n"
+            "       [--debug-flip-exit-probability P]\n"
             "       [PATTERN ...]\n"
             "\n"
             "Discover tests under %s/ relative to %s.\n"
             "\n"
             "Patterns use shell-style wildcards and may be joined with '|'.\n"
-            "Default output dir: %s\n",
-            "test-runner", tests_root_rel, root_dir, default_output_dir.cstr);
+            "Default output dir: %s\n"
+            "Default timeout: %.0f seconds\n",
+            "test-runner", tests_root_rel, root_dir, default_output_dir.cstr,
+            default_test_timeout_seconds);
 
     str_free(default_output_dir);
 }
@@ -1011,6 +1230,7 @@ int main(int argc, char **argv) {
     bool list_only = false;
     bool run_all = false;
     String output_dir = str_empty;
+    double timeout_seconds = default_test_timeout_seconds;
     double debug_flip_exit_probability = 0.0;
 
     // Collected files and test cases.
@@ -1021,15 +1241,18 @@ int main(int argc, char **argv) {
     String tests_dir = str_empty;
 
     // Results
+    double run_start_seconds = monotonic_seconds();
     int exit_code = 0;
     size_t discovered = 0;
     size_t passed = 0;
     size_t xfailed = 0;
     size_t disabled = 0;
     size_t xpassed = 0;
+    size_t timed_out = 0;
     size_t failed = 0;
     StringArray failed_tests = arr_empty;
     StringArray xpassed_tests = arr_empty;
+    StringArray timed_out_tests = arr_empty;
 
     // Parse CLI arguments.
 
@@ -1073,6 +1296,32 @@ int main(int argc, char **argv) {
         }
         if (strncmp(argv[i], "--filter=", 9) == 0) {
             string_array_push_copy(&filters, argv[i] + 9);
+            continue;
+        }
+        if (strcmp(argv[i], "--timeout") == 0) {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "error: --timeout requires a value\n");
+                usage(stderr);
+                exit_code = 1;
+                goto cleanup;
+            }
+            if (!parse_timeout_seconds(argv[++i], &timeout_seconds)) {
+                fprintf(stderr, "error: invalid --timeout value: %s\n",
+                        argv[i]);
+                usage(stderr);
+                exit_code = 1;
+                goto cleanup;
+            }
+            continue;
+        }
+        if (strncmp(argv[i], "--timeout=", 10) == 0) {
+            if (!parse_timeout_seconds(argv[i] + 10, &timeout_seconds)) {
+                fprintf(stderr, "error: invalid --timeout value: %s\n",
+                        argv[i] + 10);
+                usage(stderr);
+                exit_code = 1;
+                goto cleanup;
+            }
             continue;
         }
         if (strcmp(argv[i], "--debug-flip-exit-probability") == 0) {
@@ -1176,27 +1425,35 @@ int main(int argc, char **argv) {
         printf("RUN: %s\n", test_case->id.cstr);
         fflush(stdout);
 
-        int test_exit_code = -1;
+        TestRunResult run_result = {.exit_code = 1};
         String test_output_dir =
             test_output_dir_path(test_case, output_dir.cstr);
         String output_path = test_output_file_path(test_output_dir.cstr);
         if (test_case->kind == TEST_KIND_C) {
-            test_exit_code =
-                run_c_test(test_case, test_output_dir.cstr, output_path.cstr);
+            run_result = run_c_test(test_case, test_output_dir.cstr,
+                                    output_path.cstr, timeout_seconds);
         } else if (test_case->kind == TEST_KIND_EXECUTABLE) {
-            test_exit_code = run_executable_test(
-                test_case, test_output_dir.cstr, output_path.cstr);
+            run_result = run_executable_test(test_case, test_output_dir.cstr,
+                                             output_path.cstr, timeout_seconds);
         } else {
-            test_exit_code = 1;
+            run_result.exit_code = 1;
         }
-        test_exit_code = maybe_flip_exit_code(test_case, test_exit_code,
-                                              debug_flip_exit_probability);
+        if (!run_result.timed_out) {
+            run_result.exit_code = maybe_flip_exit_code(
+                test_case, run_result.exit_code, debug_flip_exit_probability);
+        }
 
-        if (test_exit_code == 0 && test_case->marker == TEST_MARKER_XFAIL) {
+        if (run_result.timed_out) {
+            timed_out++;
+            string_array_push_copy(&timed_out_tests, test_case->id.cstr);
+            printf("\nTIMEOUT: %s\n", test_case->id.cstr);
+            print_output_tail(output_path.cstr, 20);
+        } else if (run_result.exit_code == 0 &&
+                   test_case->marker == TEST_MARKER_XFAIL) {
             xpassed++;
             string_array_push_copy(&xpassed_tests, test_case->id.cstr);
             printf("XPASS: %s\n", test_case->id.cstr);
-        } else if (test_exit_code == 0) {
+        } else if (run_result.exit_code == 0) {
             passed++;
             printf("PASS: %s\n", test_case->id.cstr);
         } else if (test_case->marker == TEST_MARKER_XFAIL) {
@@ -1222,6 +1479,9 @@ int main(int argc, char **argv) {
     }
 
     if (!list_only) {
+        double total_run_seconds = monotonic_seconds() - run_start_seconds;
+
+        print_named_test_list("timed out tests", &timed_out_tests);
         print_named_test_list("failed tests", &failed_tests);
         print_named_test_list("xpassed tests", &xpassed_tests);
         printf("\nSummary:\n");
@@ -1230,13 +1490,17 @@ int main(int argc, char **argv) {
         print_summary_count("xfailed", xfailed);
         print_summary_count("disabled", disabled);
         print_summary_count("xpassed", xpassed);
+        print_summary_count("timeout", timed_out);
         print_summary_count("failed", failed);
-        if (failed != 0 || xpassed != 0)
+        if (failed != 0 || xpassed != 0 || timed_out != 0)
             exit_code = 1;
-        printf("\nResult: %s\n", exit_code == 0 ? "SUCCESS" : "FAILURE");
+        printf("\n");
+        printf("Time: %.3f s\n", total_run_seconds);
+        printf("Result: %s\n", exit_code == 0 ? "SUCCESS" : "FAILURE");
     }
 
 cleanup:
+    string_array_free(&timed_out_tests);
     string_array_free(&xpassed_tests);
     string_array_free(&failed_tests);
     str_free(output_dir);
