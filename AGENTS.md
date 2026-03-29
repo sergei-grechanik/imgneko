@@ -60,3 +60,9 @@ For owned dynamically allocated strings, use the `String` type from
 
 If the user asks you to address review comments, search for the comments
 containing `REVIEW:` or `FIXME:` in the files you are working on.
+
+## Don't assume the code changes for no reason
+
+Sometimes the user will modify or delete code that you have written. Usually
+it's for a good reason, so don't try to restore it, unless you are absolutely
+certain that this was by mistake.
