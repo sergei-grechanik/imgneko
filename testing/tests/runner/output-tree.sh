@@ -79,7 +79,7 @@ assert_file_contains "$SUCCESS_LOG" "Result: SUCCESS"
 # while still writing the combined output file.
 rm -rf "$OUTPUT_ROOT"
 IMGNEKO_TEST_PASSTHROUGH_DELAY=1 "$RUNNER" --output-dir "$OUTPUT_ROOT" \
-    --output-passthrough --filter runner/output.sh \
+    -p --filter runner/output.sh \
     >"$PASSTHROUGH_LOG" 2>&1 &
 passthrough_pid=$!
 sleep 1
@@ -134,7 +134,7 @@ assert_file_contains "$FAILURE_LOG" "Result: FAILURE"
 # should not print a duplicate tail after failure.
 set +e
 IMGNEKO_TEST_SHOULD_FAIL=1 "$RUNNER" --output-dir "$OUTPUT_ROOT" \
-    --output-passthrough --filter runner/output.sh \
+    -p --filter runner/output.sh \
     >"$PASSTHROUGH_FAILURE_LOG" 2>&1
 status=$?
 set -e

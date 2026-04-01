@@ -1300,13 +1300,13 @@ static void usage(FILE *stream) {
 
     fprintf(stream,
             "Usage: %s [--list] [--all] [--output-dir DIR] [--filter PATTERN]\n"
-            "       [--timeout SECONDS] [--output-passthrough]\n"
+            "       [--timeout SECONDS] [-p|--output-passthrough]\n"
             "       [--debug-flip-exit-probability P]\n"
             "       [PATTERN ...]\n"
             "\n"
             "Discover tests under %s/ relative to %s.\n"
             "\n"
-            "Use --output-passthrough to mirror test stdout/stderr live.\n"
+            "Use -p/--output-passthrough to mirror test stdout/stderr live.\n"
             "Patterns use shell-style wildcards and may be joined with '|'.\n"
             "Default output dir: %s\n"
             "Default timeout: %.0f seconds\n",
@@ -1363,7 +1363,8 @@ int main(int argc, char **argv) {
             exit_code = 0;
             goto cleanup;
         }
-        if (strcmp(argv[i], "--output-passthrough") == 0) {
+        if (strcmp(argv[i], "-p") == 0 ||
+            strcmp(argv[i], "--output-passthrough") == 0) {
             output_passthrough = true;
             continue;
         }
