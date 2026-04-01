@@ -327,4 +327,17 @@ ARRLIB_INLINE bool ends_with_cstr(char const *cstr, char const *suffix) {
     return strcmp(cstr + cstr_len - suffix_len, suffix) == 0;
 }
 
+// Trim trailing characters from a mutable C string while any suffix byte is
+// present in `trim_chars`.
+void str_trim_trailing_chars_cstr(char *text, const char *trim_chars);
+
+// Trim trailing characters from an owned String while any suffix byte is
+// present in `trim_chars`.
+void str_trim_trailing_chars(String *text, const char *trim_chars);
+
+DEFINE_ARRAY_TYPE(StringArray, String)
+
+// Free a StringArray and each owned string it contains.
+void str_array_free(StringArray *strings);
+
 #endif

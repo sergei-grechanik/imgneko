@@ -13,6 +13,7 @@
 #include <unistd.h>
 
 #include "util/array.h"
+#include "util/file.h"
 #include "util/klib/khash.h"
 #include "util/path.h"
 #include "util/string.h"
@@ -120,16 +121,6 @@ static void die_errno(const char *message) {
 static void die_usage(const char *argv0) {
     fprintf(stderr, "usage: %s TEST_FILE\n", argv0);
     exit(2);
-}
-
-// Trim the trailing newline and optional CR from a getline() buffer.
-static void trim_line_ending(char *line) {
-    size_t len = strlen(line);
-
-    while (len > 0 && (line[len - 1] == '\n' || line[len - 1] == '\r')) {
-        line[len - 1] = '\0';
-        len--;
-    }
 }
 
 // Return whether `name` is a valid named variable identifier.
@@ -475,7 +466,7 @@ static bool parse_test_file(const char *path, ParsedTest *parsed) {
         const char *payload = NULL;
 
         line_number++;
-        trim_line_ending(line);
+        str_trim_trailing_chars_cstr(line, "\r\n");
         if (!parse_directive_prefix(line, &directive_name, &payload))
             continue;
 
@@ -760,31 +751,21 @@ static bool regex_search_segment(const CompiledPattern *pattern,
 // CHECK, CHECK-SAME, and CHECK-NEXT semantics without holding the raw file
 // contents in one large string.
 static void read_output_lines(const char *path, OutputLineArray *lines) {
-    FILE *stream = fopen(path, "r");
-    char *line = NULL;
-    size_t line_capacity = 0;
+    StringArray file_lines = arr_empty;
 
-    if (stream == NULL) {
-        fprintf(stderr, "error: failed to open output file %s: %s\n", path,
-                strerror(errno));
-        exit(1);
-    }
-
-    while (getline(&line, &line_capacity, stream) >= 0) {
-        trim_line_ending(line);
-        arr_push(*lines, ((OutputLine){.text = str_from_cstr(line)}));
-    }
-
-    if (ferror(stream)) {
-        free(line);
-        fclose(stream);
+    if (!file_read_lines(&file_lines, path, -1)) {
         fprintf(stderr, "error: failed to read output file %s: %s\n", path,
                 strerror(errno));
         exit(1);
     }
 
-    free(line);
-    fclose(stream);
+    for (size_t i = 0; i < file_lines.size; ++i) {
+        str_trim_trailing_chars(&file_lines.data[i], "\r\n");
+        arr_push(*lines, ((OutputLine){.text = file_lines.data[i]}));
+        file_lines.data[i] = (String)str_empty;
+    }
+
+    str_array_free(&file_lines);
 }
 
 // Return the logical EOF position for the captured output.
@@ -1260,58 +1241,29 @@ static void print_run_exit_code(const char *path, int exit_code) {
 // diagnosis without dumping the entire file.
 static void print_file_tail(const char *path, const char *label,
                             const char *file_path, size_t max_lines) {
-    FILE *stream = fopen(file_path, "r");
-    char *line = NULL;
-    size_t line_capacity = 0;
-    String tail_lines[10] = {str_empty};
-    size_t tail_start = 0;
-    size_t tail_count = 0;
+    StringArray lines = arr_empty;
 
-    assert(max_lines <= 10);
-
-    if (stream == NULL) {
+    if (!file_read_lines(&lines, file_path, (ptrdiff_t)max_lines)) {
         fprintf(stderr, "%s: note: failed to open %s file %s: %s\n", path,
                 label, file_path, strerror(errno));
         return;
     }
 
-    while (getline(&line, &line_capacity, stream) >= 0) {
-        trim_line_ending(line);
-        if (tail_count < max_lines) {
-            tail_lines[tail_count] = str_from_escaped_bytes(line, strlen(line));
-            tail_count++;
-            continue;
-        }
-
-        str_free(tail_lines[tail_start]);
-        tail_lines[tail_start] = str_from_escaped_bytes(line, strlen(line));
-        tail_start = (tail_start + 1) % max_lines;
-    }
-
-    if (ferror(stream)) {
-        fprintf(stderr, "%s: note: failed while reading %s file %s: %s\n", path,
-                label, file_path, strerror(errno));
-        goto cleanup;
-    }
-
-    if (tail_count == 0) {
+    if (lines.size == 0) {
         fprintf(stderr, "%s: note: %s file is empty: %s\n", path, label,
                 file_path);
-        goto cleanup;
+        str_array_free(&lines);
+        return;
     }
 
-    fprintf(stderr, "%s: note: last %zu lines of %s (%s):\n", path, tail_count,
+    fprintf(stderr, "%s: note: last %zu lines of %s (%s):\n", path, lines.size,
             label, file_path);
-    for (size_t i = 0; i < tail_count; ++i) {
-        size_t line_index = (tail_start + i) % max_lines;
-        fprintf(stderr, "%s\n", tail_lines[line_index].cstr);
+    for (size_t i = 0; i < lines.size; ++i) {
+        str_trim_trailing_chars(&lines.data[i], "\r\n");
+        print_escaped_line(stderr, lines.data[i].cstr, lines.data[i].len);
+        fputc('\n', stderr);
     }
-
-cleanup:
-    for (size_t i = 0; i < max_lines; ++i)
-        str_free(tail_lines[i]);
-    free(line);
-    fclose(stream);
+    str_array_free(&lines);
 }
 
 // Print redirected output tails after any failure so the recent stdout/stderr

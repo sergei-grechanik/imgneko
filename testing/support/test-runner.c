@@ -19,6 +19,7 @@
 #include <unistd.h>
 
 #include "util/array.h"
+#include "util/file.h"
 #include "util/path.h"
 #include "util/string.h"
 
@@ -90,7 +91,6 @@ typedef struct TestRunResult {
     double elapsed_seconds;
 } TestRunResult;
 
-DEFINE_ARRAY_TYPE(StringArray, String)
 DEFINE_ARRAY_TYPE(CSubtestArray, CSubtest)
 DEFINE_ARRAY_TYPE(TestFileArray, TestFile)
 DEFINE_ARRAY_TYPE(TestCaseArray, TestCase)
@@ -119,12 +119,6 @@ static void die_errno(const char *message) {
 
 static void string_array_push_copy(StringArray *array, const char *item) {
     arr_push(*array, str_from_cstr(item));
-}
-
-static void string_array_free(StringArray *array) {
-    for (size_t i = 0; i < array->size; ++i)
-        str_free(array->data[i]);
-    arr_free(*array);
 }
 
 static void c_subtest_array_free(CSubtestArray *array) {
@@ -743,39 +737,17 @@ static TestRunResult run_argv(char *const *argv, const char *test_output_dir,
     return result;
 }
 
-// Read the entire stream from `fd` into a NUL-terminated buffer.
-// The caller owns the returned string and must free it with str_free.
-static String read_all_from_fd(int fd) {
-    String buffer = str_empty;
-
-    for (;;) {
-        char chunk[4096];
-        ssize_t nread;
-
-        nread = read(fd, chunk, sizeof(chunk));
-        if (nread < 0) {
-            str_free(buffer);
-            die_errno("read failed");
-        }
-        if (nread == 0)
-            break;
-
-        str_append_data(buffer, chunk, (size_t)nread);
-    }
-
-    return buffer;
-}
-
-// Run argv, capture the child's stdout text, and return an exit-like status.
-// The caller owns `*stdout_text` and must free it with str_free.
-static int run_argv_capture_stdout(char *const *argv, String *stdout_text) {
+// Run argv, capture the child's stdout lines, and return an exit-like status.
+// On success, this frees the previous contents of `*stdout_lines`.
+static int run_argv_capture_stdout_lines(char *const *argv,
+                                         StringArray *stdout_lines) {
     int pipe_fds[2];
+    FILE *stream = NULL;
     pid_t pid;
     int status;
 
-    if (pipe(pipe_fds) != 0) {
+    if (pipe(pipe_fds) != 0)
         die_errno("pipe failed");
-    }
 
     pid = fork();
     if (pid < 0) {
@@ -799,12 +771,24 @@ static int run_argv_capture_stdout(char *const *argv, String *stdout_text) {
     }
 
     close(pipe_fds[1]);
-    str_free(*stdout_text);
-    *stdout_text = read_all_from_fd(pipe_fds[0]);
-    close(pipe_fds[0]);
+    stream = fdopen(pipe_fds[0], "r");
+    if (stream == NULL) {
+        close(pipe_fds[0]);
+        die_errno("fdopen failed");
+    }
+
+    if (!file_read_stream_lines(stdout_lines, stream, -1)) {
+        int read_errno = errno;
+
+        fclose(stream);
+        if (waitpid(pid, &status, 0) < 0)
+            die_errno("waitpid failed");
+        errno = read_errno;
+        die_errno("failed to read child stdout");
+    }
+    fclose(stream);
 
     if (waitpid(pid, &status, 0) < 0) {
-        str_free(*stdout_text);
         die_errno("waitpid failed");
     }
 
@@ -822,55 +806,32 @@ static int run_argv_capture_stdout(char *const *argv, String *stdout_text) {
 // Print the failing output path and the last max_lines lines so users do not
 // need to open the full file just to see the failure context.
 static void print_output_tail(const char *output_path, size_t max_lines) {
-    String output_text = str_empty;
-    size_t start = 0;
-    size_t lines = 0;
-    int fd = open(output_path, O_RDONLY);
+    StringArray lines = arr_empty;
 
-    if (fd < 0) {
+    if (!file_read_lines(&lines, output_path, (ptrdiff_t)max_lines)) {
         fprintf(stderr, "error: failed to read captured output %s: %s\n\n",
                 output_path, strerror(errno));
         return;
     }
 
-    output_text = read_all_from_fd(fd);
-    close(fd);
-
-    if (output_text.len == 0) {
+    if (lines.size == 0) {
         fprintf(stderr, "output is empty: %s\n", output_path);
-        str_free(output_text);
+        str_array_free(&lines);
         return;
-    }
-
-    for (size_t i = output_text.len; i > 0; --i) {
-        if (output_text.cstr[i - 1] != '\n')
-            continue;
-
-        lines++;
-        if (lines > max_lines) {
-            start = i;
-            break;
-        }
     }
 
     fprintf(stderr, "===== LAST %zu LINES OF TEST OUTPUT %s {{{ =====\n",
             max_lines, output_path);
-    for (size_t i = start; i < output_text.len;) {
-        size_t line_end = i;
-
-        while (line_end < output_text.len && output_text.cstr[line_end] != '\n')
-            line_end++;
-
+    for (size_t i = 0; i < lines.size; ++i) {
+        str_trim_trailing_chars(&lines.data[i], "\r\n");
         String escaped =
-            str_from_escaped_bytes(output_text.cstr + i, line_end - i);
+            str_from_escaped_bytes(lines.data[i].cstr, lines.data[i].len);
         fprintf(stderr, "%s\n", escaped.cstr);
         str_free(escaped);
-
-        i = line_end + (line_end < output_text.len ? 1 : 0);
     }
     fprintf(stderr, "===== }}} END TEST OUTPUT =====\n\n");
 
-    str_free(output_text);
+    str_array_free(&lines);
 }
 
 // Check whether a test case matches a pattern.
@@ -971,35 +932,25 @@ static void require_c_test_binary(const TestFile *file, const char *exe_path) {
 // with str_free.
 static void c_test_subtests(const TestFile *file, CSubtestArray *subtests,
                             String *exe_path_out) {
-    String stdout_text = str_empty;
+    StringArray stdout_lines = arr_empty;
     String exe_path = c_test_output_path(file->rel_path.cstr);
     int status;
     char *argv[] = {exe_path.cstr, "--list", NULL};
 
     require_c_test_binary(file, exe_path.cstr);
 
-    status = run_argv_capture_stdout(argv, &stdout_text);
+    status = run_argv_capture_stdout_lines(argv, &stdout_lines);
     if (status != 0) {
         fprintf(stderr, "error: %s --list failed with status %d\n",
                 file->rel_path.cstr, status);
-        str_free(stdout_text);
+        str_array_free(&stdout_lines);
         str_free(exe_path);
         exit(status);
     }
 
-    char *cursor = stdout_text.cstr;
-    while (cursor != NULL && *cursor != '\0') {
-        char *next = strchr(cursor, '\n');
-        char *line;
-
-        if (next != NULL) {
-            *next = '\0';
-            line = cursor;
-            cursor = next + 1;
-        } else {
-            line = cursor;
-            cursor = NULL;
-        }
+    for (size_t i = 0; i < stdout_lines.size; ++i) {
+        str_trim_trailing_chars(&stdout_lines.data[i], "\r\n");
+        char *line = stdout_lines.data[i].cstr;
 
         trim_in_place(line);
         if (line[0] != '\0') {
@@ -1008,7 +959,7 @@ static void c_test_subtests(const TestFile *file, CSubtestArray *subtests,
             if (line[0] == '\0') {
                 fprintf(stderr, "error: invalid empty subtest name in %s\n",
                         file->rel_path.cstr);
-                str_free(stdout_text);
+                str_array_free(&stdout_lines);
                 str_free(exe_path);
                 c_subtest_array_free(subtests);
                 exit(1);
@@ -1021,7 +972,7 @@ static void c_test_subtests(const TestFile *file, CSubtestArray *subtests,
         }
     }
 
-    str_free(stdout_text);
+    str_array_free(&stdout_lines);
     *exe_path_out = exe_path;
 }
 
@@ -1511,12 +1462,12 @@ int main(int argc, char **argv) {
     }
 
 cleanup:
-    string_array_free(&timed_out_tests);
-    string_array_free(&xpassed_tests);
-    string_array_free(&failed_tests);
+    str_array_free(&timed_out_tests);
+    str_array_free(&xpassed_tests);
+    str_array_free(&failed_tests);
     str_free(output_dir);
     str_free(tests_dir);
-    string_array_free(&filters);
+    str_array_free(&filters);
     test_case_array_free(&cases);
     test_file_array_free(&files);
     return exit_code;

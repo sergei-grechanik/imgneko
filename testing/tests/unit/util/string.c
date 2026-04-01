@@ -388,6 +388,49 @@ cleanup:
     return status;
 }
 
+static int test_trim_trailing_chars(TestContext *ctx) {
+    const char *name = ctx->test_name;
+    char cstr_line[] = "alpha\r\n";
+    char cstr_custom[] = "beta!!!";
+    String string_line = str_from_cstr("beta\n");
+    String string_custom = str_from_cstr("gammaxyz");
+    String untouched = str_from_cstr("delta");
+    int status = 0;
+
+    str_trim_trailing_chars_cstr(cstr_line, "\r\n");
+    status = expect_string_eq(name, cstr_line, strlen(cstr_line), STR("alpha"));
+    if (status != 0)
+        goto cleanup;
+
+    str_trim_trailing_chars_cstr(cstr_custom, "!");
+    status =
+        expect_string_eq(name, cstr_custom, strlen(cstr_custom), STR("beta"));
+    if (status != 0)
+        goto cleanup;
+
+    str_trim_trailing_chars(&string_line, "\r\n");
+    status =
+        expect_string_eq(name, string_line.cstr, string_line.len, STR("beta"));
+    if (status != 0)
+        goto cleanup;
+
+    str_trim_trailing_chars(&string_custom, "zyx");
+    status = expect_string_eq(name, string_custom.cstr, string_custom.len,
+                              STR("gamma"));
+    if (status != 0)
+        goto cleanup;
+
+    str_trim_trailing_chars(&untouched, "\r\n");
+    status =
+        expect_string_eq(name, untouched.cstr, untouched.len, STR("delta"));
+
+cleanup:
+    str_free(untouched);
+    str_free(string_custom);
+    str_free(string_line);
+    return status;
+}
+
 int main(int argc, char **argv) {
     const Subtest subtests[] = {
         PREFIXED_TEST(test_from_cstr_and_copy),
@@ -398,6 +441,7 @@ int main(int argc, char **argv) {
         PREFIXED_TEST(test_append_and_insert),
         PREFIXED_TEST(test_predicates),
         PREFIXED_TEST(test_escape_bytes),
+        PREFIXED_TEST(test_trim_trailing_chars),
     };
 
     return run_subtests(argc, argv, subtests, ARRAY_SIZE(subtests));

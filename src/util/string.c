@@ -74,3 +74,25 @@ String str_from_escaped_bytes(char const *data, size_t len) {
 
     return str;
 }
+
+void str_trim_trailing_chars_cstr(char *text, const char *trim_chars) {
+    size_t len = strlen(text);
+
+    while (len > 0 && strchr(trim_chars, text[len - 1]) != NULL) {
+        text[len - 1] = '\0';
+        len--;
+    }
+}
+
+void str_trim_trailing_chars(String *text, const char *trim_chars) {
+    while (text->len > 0 &&
+           strchr(trim_chars, text->cstr[text->len - 1]) != NULL) {
+        str_truncate(*text, text->len - 1);
+    }
+}
+
+void str_array_free(StringArray *strings) {
+    for (size_t i = 0; i < strings->size; ++i)
+        str_free(strings->data[i]);
+    arr_free(*strings);
+}
