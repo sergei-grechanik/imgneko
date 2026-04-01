@@ -11,9 +11,12 @@ Options:
   --profile=NAME       Select profile: default, release, debug, asan
   --build-dir=DIR      Build directory (default: build/<profile>)
   --comp-db-mj         Generate compile_commands.json via compiler -MJ output
+  --coverage-report    Enable Clang source-based coverage and `make coverage`
   --depfiles           Generate compiler depfiles for `make depfile`
   --prefix=PATH        Install prefix
   --cc=CC              C compiler
+  --llvm-profdata=TOOL llvm-profdata executable for coverage reports
+  --llvm-cov=TOOL      llvm-cov executable for coverage reports
   --cppflags=FLAGS     Preprocessor flags
   --cflags=FLAGS       C compiler flags
   --ldflags=FLAGS      Linker flags
@@ -29,6 +32,7 @@ Examples:
   ./configure --profile=release
   ./configure PROFILE=debug BUILD_DIR=build/debug
   ./configure --profile=asan --cc=clang
+  ./configure --profile=debug --cc=clang --coverage-report
 EOF
 }
 
@@ -173,6 +177,82 @@ probe_depfiles() {
     rm -rf "$probe_dir"
 }
 
+# Try to infer a matching LLVM tool major version from the configured compiler.
+detect_clang_major_version() {
+    cc_version=$(
+        CC=$CC sh -ec 'eval "set -- $CC"; "$1" --version' 2>/dev/null |
+        sed -n 's/.*clang version \([0-9][0-9]*\).*/\1/p' | sed -n '1p'
+    )
+
+    if [ -n "$cc_version" ]; then
+        printf '%s' "$cc_version"
+    fi
+}
+
+# Resolve an llvm-* tool path, preferring a versioned binary that matches the
+# configured Clang major version when one is available.
+resolve_llvm_tool() {
+    tool_name=$1
+    configured_tool=$2
+    clang_major=$(detect_clang_major_version)
+
+    if [ -n "$configured_tool" ]; then
+        if ! command -v "$configured_tool" >/dev/null 2>&1; then
+            die "$tool_name executable not found: $configured_tool"
+        fi
+        printf '%s' "$configured_tool"
+        return
+    fi
+
+    if [ -n "$clang_major" ] &&
+       command -v "$tool_name-$clang_major" >/dev/null 2>&1; then
+        printf '%s' "$tool_name-$clang_major"
+        return
+    fi
+
+    if command -v "$tool_name" >/dev/null 2>&1; then
+        printf '%s' "$tool_name"
+        return
+    fi
+
+    if [ -n "$clang_major" ]; then
+        die "--coverage-report requires $tool_name-$clang_major (or $tool_name) in PATH"
+    fi
+    die "--coverage-report requires $tool_name in PATH"
+}
+
+# Test whether the current compiler and linker support Clang source-based
+# coverage, and resolve the llvm-profdata/llvm-cov tools required to report it.
+probe_coverage() {
+    probe_dir="$(mktemp -d)"
+    probe_src="$probe_dir/probe.c"
+    probe_bin="$probe_dir/probe.bin"
+    probe_err="$probe_dir/stderr"
+
+    printf '%s\n' 'int main(void) { return 0; }' >"$probe_src"
+
+    if ! CC=$CC CPPFLAGS=$CPPFLAGS CFLAGS=$CFLAGS LDFLAGS=$LDFLAGS LDLIBS=$LDLIBS PROBE_SRC=$probe_src PROBE_BIN=$probe_bin \
+        sh -ec 'eval "set -- $CC $CPPFLAGS $CFLAGS -fprofile-instr-generate -fcoverage-mapping $PROBE_SRC -o $PROBE_BIN $LDFLAGS -fprofile-instr-generate $LDLIBS"; exec "$@"' \
+        > /dev/null 2>"$probe_err"; then
+        probe_msg=$(sed -n '1p' "$probe_err")
+        rm -rf "$probe_dir"
+        if [ -n "$probe_msg" ]; then
+            die "--coverage-report requires a Clang-compatible compiler and linker that accept -fprofile-instr-generate -fcoverage-mapping (got: $probe_msg)"
+        fi
+        die "--coverage-report requires a Clang-compatible compiler and linker that accept -fprofile-instr-generate -fcoverage-mapping"
+    fi
+
+    if ! command -v python3 >/dev/null 2>&1; then
+        rm -rf "$probe_dir"
+        die "--coverage-report requires python3 in PATH"
+    fi
+
+    LLVM_PROFDATA=$(resolve_llvm_tool llvm-profdata "$LLVM_PROFDATA")
+    LLVM_COV=$(resolve_llvm_tool llvm-cov "$LLVM_COV")
+
+    rm -rf "$probe_dir"
+}
+
 # Absolute repository root, assuming this script lives in the project root.
 ROOT_DIR=$(CDPATH= cd "$(dirname "$0")" && pwd)
 require_no_whitespace ROOT_DIR "$ROOT_DIR"
@@ -189,8 +269,11 @@ ARG_CPPFLAGS_SET=0
 ARG_CFLAGS_SET=0
 ARG_LDFLAGS_SET=0
 ARG_LDLIBS_SET=0
+ARG_LLVM_PROFDATA_SET=0
+ARG_LLVM_COV_SET=0
 ARG_FEATURE_X_SET=0
 ARG_COMP_DB_MJ_SET=0
+ARG_COVERAGE_REPORT_SET=0
 ARG_DEPFILES_SET=0
 
 ARG_PROFILE=
@@ -201,8 +284,11 @@ ARG_CPPFLAGS=
 ARG_CFLAGS=
 ARG_LDFLAGS=
 ARG_LDLIBS=
+ARG_LLVM_PROFDATA=
+ARG_LLVM_COV=
 ARG_FEATURE_X=
 ARG_COMP_DB_MJ=
+ARG_COVERAGE_REPORT=
 ARG_DEPFILES=
 
 while [ "$#" -gt 0 ]; do
@@ -226,6 +312,10 @@ while [ "$#" -gt 0 ]; do
             ARG_COMP_DB_MJ_SET=1
             ARG_COMP_DB_MJ=ON
             ;;
+        --coverage-report)
+            ARG_COVERAGE_REPORT_SET=1
+            ARG_COVERAGE_REPORT=ON
+            ;;
         --depfiles)
             ARG_DEPFILES_SET=1
             ARG_DEPFILES=ON
@@ -237,6 +327,14 @@ while [ "$#" -gt 0 ]; do
         --cc=*)
             ARG_CC_SET=1
             ARG_CC=${1#*=}
+            ;;
+        --llvm-profdata=*)
+            ARG_LLVM_PROFDATA_SET=1
+            ARG_LLVM_PROFDATA=${1#*=}
+            ;;
+        --llvm-cov=*)
+            ARG_LLVM_COV_SET=1
+            ARG_LLVM_COV=${1#*=}
             ;;
         --cppflags=*)
             ARG_CPPFLAGS_SET=1
@@ -290,6 +388,14 @@ while [ "$#" -gt 0 ]; do
             ARG_LDLIBS_SET=1
             ARG_LDLIBS=${1#*=}
             ;;
+        LLVM_PROFDATA=*)
+            ARG_LLVM_PROFDATA_SET=1
+            ARG_LLVM_PROFDATA=${1#*=}
+            ;;
+        LLVM_COV=*)
+            ARG_LLVM_COV_SET=1
+            ARG_LLVM_COV=${1#*=}
+            ;;
         FEATURE_X=*)
             ARG_FEATURE_X_SET=1
             ARG_FEATURE_X=${1#*=}
@@ -297,6 +403,10 @@ while [ "$#" -gt 0 ]; do
         COMP_DB_MJ=*)
             ARG_COMP_DB_MJ_SET=1
             ARG_COMP_DB_MJ=${1#*=}
+            ;;
+        COVERAGE_REPORT=*)
+            ARG_COVERAGE_REPORT_SET=1
+            ARG_COVERAGE_REPORT=${1#*=}
             ;;
         DEPFILES=*)
             ARG_DEPFILES_SET=1
@@ -330,8 +440,11 @@ case $PROFILE in
         : "${CFLAGS:=--std=c99 -O2 -g -Wall -Wextra -Wpedantic}"
         : "${LDFLAGS:=}"
         : "${LDLIBS:=}"
+        : "${LLVM_PROFDATA:=}"
+        : "${LLVM_COV:=}"
         : "${FEATURE_X:=OFF}"
         : "${COMP_DB_MJ:=OFF}"
+        : "${COVERAGE_REPORT:=OFF}"
         : "${DEPFILES:=OFF}"
         ;;
     release)
@@ -341,8 +454,11 @@ case $PROFILE in
         : "${CFLAGS:=--std=c99 -O2 -DNDEBUG -Wall -Wextra -Wpedantic}"
         : "${LDFLAGS:=}"
         : "${LDLIBS:=}"
+        : "${LLVM_PROFDATA:=}"
+        : "${LLVM_COV:=}"
         : "${FEATURE_X:=OFF}"
         : "${COMP_DB_MJ:=OFF}"
+        : "${COVERAGE_REPORT:=OFF}"
         : "${DEPFILES:=OFF}"
         ;;
     debug)
@@ -352,8 +468,11 @@ case $PROFILE in
         : "${CFLAGS:=--std=c99 -O0 -g3 -Wall -Wextra -Wpedantic}"
         : "${LDFLAGS:=}"
         : "${LDLIBS:=}"
+        : "${LLVM_PROFDATA:=}"
+        : "${LLVM_COV:=}"
         : "${FEATURE_X:=OFF}"
         : "${COMP_DB_MJ:=OFF}"
+        : "${COVERAGE_REPORT:=OFF}"
         : "${DEPFILES:=OFF}"
         ;;
     asan)
@@ -363,8 +482,11 @@ case $PROFILE in
         : "${CFLAGS:=--std=c99 -O0 -g3 -Wall -Wextra -Wpedantic -fsanitize=address,undefined}"
         : "${LDFLAGS:=-fsanitize=address,undefined}"
         : "${LDLIBS:=}"
+        : "${LLVM_PROFDATA:=}"
+        : "${LLVM_COV:=}"
         : "${FEATURE_X:=OFF}"
         : "${COMP_DB_MJ:=OFF}"
+        : "${COVERAGE_REPORT:=OFF}"
         : "${DEPFILES:=OFF}"
         ;;
     *)
@@ -375,12 +497,15 @@ esac
 # Command-line options/assignments override both environment and profile defaults.
 if [ "$ARG_PREFIX_SET" -eq 1 ]; then PREFIX=$ARG_PREFIX; fi
 if [ "$ARG_CC_SET" -eq 1 ]; then CC=$ARG_CC; fi
+if [ "$ARG_LLVM_PROFDATA_SET" -eq 1 ]; then LLVM_PROFDATA=$ARG_LLVM_PROFDATA; fi
+if [ "$ARG_LLVM_COV_SET" -eq 1 ]; then LLVM_COV=$ARG_LLVM_COV; fi
 if [ "$ARG_CPPFLAGS_SET" -eq 1 ]; then CPPFLAGS=$ARG_CPPFLAGS; fi
 if [ "$ARG_CFLAGS_SET" -eq 1 ]; then CFLAGS=$ARG_CFLAGS; fi
 if [ "$ARG_LDFLAGS_SET" -eq 1 ]; then LDFLAGS=$ARG_LDFLAGS; fi
 if [ "$ARG_LDLIBS_SET" -eq 1 ]; then LDLIBS=$ARG_LDLIBS; fi
 if [ "$ARG_FEATURE_X_SET" -eq 1 ]; then FEATURE_X=$ARG_FEATURE_X; fi
 if [ "$ARG_COMP_DB_MJ_SET" -eq 1 ]; then COMP_DB_MJ=$ARG_COMP_DB_MJ; fi
+if [ "$ARG_COVERAGE_REPORT_SET" -eq 1 ]; then COVERAGE_REPORT=$ARG_COVERAGE_REPORT; fi
 if [ "$ARG_DEPFILES_SET" -eq 1 ]; then DEPFILES=$ARG_DEPFILES; fi
 
 case $FEATURE_X in
@@ -397,6 +522,13 @@ case $COMP_DB_MJ in
         ;;
 esac
 
+case $COVERAGE_REPORT in
+    ON|OFF) ;;
+    *)
+        die "COVERAGE_REPORT must be ON or OFF (got: $COVERAGE_REPORT)"
+        ;;
+esac
+
 case $DEPFILES in
     ON|OFF) ;;
     *)
@@ -406,6 +538,10 @@ esac
 
 if [ "$COMP_DB_MJ" = "ON" ]; then
     probe_comp_db_mj
+fi
+
+if [ "$COVERAGE_REPORT" = "ON" ]; then
+    probe_coverage
 fi
 
 if [ "$DEPFILES" = "ON" ]; then
@@ -452,6 +588,9 @@ override LDLIBS = $(escape_make "$LDLIBS")
 override FEATURE_X = $(escape_make "$FEATURE_X")
 override COMP_DB_MJ = $(escape_make "$COMP_DB_MJ")
 override DEPFILES = $(escape_make "$DEPFILES")
+override COVERAGE_REPORT = $(escape_make "$COVERAGE_REPORT")
+override LLVM_PROFDATA = $(escape_make "$LLVM_PROFDATA")
+override LLVM_COV = $(escape_make "$LLVM_COV")
 EOF
 
 printf '%s\n' "$ORIGINAL_CONFIGURE_CMD" >"$tmp_configure_cmd"
@@ -494,6 +633,9 @@ printf '%s\n' "  LDLIBS=$LDLIBS"
 printf '%s\n' "  FEATURE_X=$FEATURE_X"
 printf '%s\n' "  COMP_DB_MJ=$COMP_DB_MJ"
 printf '%s\n' "  DEPFILES=$DEPFILES"
+printf '%s\n' "  COVERAGE_REPORT=$COVERAGE_REPORT"
+printf '%s\n' "  LLVM_PROFDATA=$LLVM_PROFDATA"
+printf '%s\n' "  LLVM_COV=$LLVM_COV"
 printf '%s\n' ""
 printf '%s\n' "Wrote:"
 printf '%s\n' "  $(pretty_path "$CONFIG_MK")"

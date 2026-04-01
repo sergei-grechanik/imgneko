@@ -12,12 +12,16 @@ CUSTOM_BUILD=$ROOT_DIR/build/test-debug-custom-cc
 MISSING_CONFIG_BUILD=$ROOT_DIR/build/test-missing-config
 INVALID_FEATURE_BUILD=$ROOT_DIR/build/test-invalid-feature
 INVALID_COMPDB_BUILD=$ROOT_DIR/build/test-invalid-compdb
+INVALID_COVERAGE_BUILD=$ROOT_DIR/build/test-invalid-coverage
 INVALID_DEPFILES_BUILD=$ROOT_DIR/build/test-invalid-depfiles
 COMPDB_WITH_MESSAGE_BUILD=$ROOT_DIR/build/test-compdb-with-message
 COMPDB_WITHOUT_MESSAGE_BUILD=$ROOT_DIR/build/test-compdb-without-message
+COVERAGE_WITH_MESSAGE_BUILD=$ROOT_DIR/build/test-coverage-with-message
+COVERAGE_WITHOUT_MESSAGE_BUILD=$ROOT_DIR/build/test-coverage-without-message
 DEPFILES_WITH_MESSAGE_BUILD=$ROOT_DIR/build/test-depfiles-with-message
 DEPFILES_WITHOUT_MESSAGE_BUILD=$ROOT_DIR/build/test-depfiles-without-message
 COMPDB_CLANG_BUILD=$ROOT_DIR/build/test-compdb-clang
+COVERAGE_BUILD=$ROOT_DIR/build/test-coverage
 SPACE_BUILD="$ROOT_DIR/build/test bad dir"
 RECONFIGURE_BUILD=$ROOT_DIR/build/test-reconfigure-check
 RELATIVE_BUILD_DIR_TEST=$ROOT_DIR/build/test-relative-builddir
@@ -184,12 +188,16 @@ assert_path_absent "$CUSTOM_BUILD"
 assert_path_absent "$MISSING_CONFIG_BUILD"
 assert_path_absent "$INVALID_FEATURE_BUILD"
 assert_path_absent "$INVALID_COMPDB_BUILD"
+assert_path_absent "$INVALID_COVERAGE_BUILD"
 assert_path_absent "$INVALID_DEPFILES_BUILD"
 assert_path_absent "$COMPDB_WITH_MESSAGE_BUILD"
 assert_path_absent "$COMPDB_WITHOUT_MESSAGE_BUILD"
+assert_path_absent "$COVERAGE_WITH_MESSAGE_BUILD"
+assert_path_absent "$COVERAGE_WITHOUT_MESSAGE_BUILD"
 assert_path_absent "$DEPFILES_WITH_MESSAGE_BUILD"
 assert_path_absent "$DEPFILES_WITHOUT_MESSAGE_BUILD"
 assert_path_absent "$COMPDB_CLANG_BUILD"
+assert_path_absent "$COVERAGE_BUILD"
 assert_path_absent "$SPACE_BUILD"
 assert_path_absent "$RECONFIGURE_BUILD"
 assert_path_absent "$RELATIVE_BUILD_DIR_TEST"
@@ -281,6 +289,13 @@ run_capture "$LOG_DIR/make-depfile-disabled.out" make -C "$DEFAULT_BUILD" depfil
 assert_status_nonzero
 assert_output_contains "error: depfile generation is disabled in ./build/default/config.mk; rerun ./configure --build-dir='./build/default' --depfiles"
 
+# Reject `make coverage` unless configure explicitly enabled coverage
+# instrumentation for that build directory.
+say "Makefile error when coverage report generation is disabled"
+run_capture "$LOG_DIR/make-coverage-disabled.out" make -C "$DEFAULT_BUILD" coverage
+assert_status_nonzero
+assert_output_contains "error: coverage report generation is disabled in ./build/default/config.mk; rerun ./configure --build-dir='./build/default' --coverage-report"
+
 # Build test prerequisites without running them.
 say "Build test dependencies without executing tests"
 run_capture "$LOG_DIR/make-test-deps.out" make -C "$DEFAULT_BUILD" test-deps
@@ -371,6 +386,13 @@ run_capture "$LOG_DIR/cfg-bad-compdb.out" sh "$ROOT_DIR/configure" --build-dir="
 assert_status_nonzero
 assert_output_contains "error: COMP_DB_MJ must be ON or OFF (got: MAYBE)"
 
+# Pass an invalid coverage-report toggle and verify the dedicated validation
+# error.
+say "configure error: invalid COVERAGE_REPORT"
+run_capture "$LOG_DIR/cfg-bad-coverage.out" sh "$ROOT_DIR/configure" --build-dir="$INVALID_COVERAGE_BUILD" COVERAGE_REPORT=MAYBE
+assert_status_nonzero
+assert_output_contains "error: COVERAGE_REPORT must be ON or OFF (got: MAYBE)"
+
 # Pass an invalid depfile-generation toggle and verify the dedicated validation
 # error.
 say "configure error: invalid DEPFILES"
@@ -391,6 +413,22 @@ say "configure error: --comp-db-mj without stderr output"
 run_capture "$LOG_DIR/cfg-compdb-without-message.out" sh "$ROOT_DIR/configure" --build-dir="$COMPDB_WITHOUT_MESSAGE_BUILD" --comp-db-mj --cc=false
 assert_status_nonzero
 assert_output_contains "error: --comp-db-mj requires a compiler that accepts -MJ"
+assert_output_not_contains "(got:"
+
+# Ask for --coverage-report with compiler flags that force the coverage probe
+# to fail and print a first stderr line, which should be echoed in the custom
+# error.
+say "configure error: --coverage-report with stderr output"
+run_capture "$LOG_DIR/cfg-coverage-with-message.out" sh "$ROOT_DIR/configure" --build-dir="$COVERAGE_WITH_MESSAGE_BUILD" --coverage-report --cc=clang --cflags=--definitely-invalid-flag
+assert_status_nonzero
+assert_output_contains "error: --coverage-report requires a Clang-compatible compiler and linker that accept -fprofile-instr-generate -fcoverage-mapping (got:"
+
+# Ask for --coverage-report with a command that fails without producing stderr
+# so the shorter fallback error path is tested too.
+say "configure error: --coverage-report without stderr output"
+run_capture "$LOG_DIR/cfg-coverage-without-message.out" sh "$ROOT_DIR/configure" --build-dir="$COVERAGE_WITHOUT_MESSAGE_BUILD" --coverage-report --cc=false
+assert_status_nonzero
+assert_output_contains "error: --coverage-report requires a Clang-compatible compiler and linker that accept -fprofile-instr-generate -fcoverage-mapping"
 assert_output_not_contains "(got:"
 
 # Ask for --depfiles with compiler flags that force the probe to fail and print
@@ -427,6 +465,36 @@ run_capture "$LOG_DIR/compdb-test-list.out" make -C "$COMPDB_CLANG_BUILD" test-l
 assert_status_zero
 assert_file_exists "$COMPDB_CLANG_BUILD/compile_commands.json"
 assert_file_contains "$COMPDB_CLANG_BUILD/compile_commands.json" "test-runner.c"
+
+# Enable coverage reporting, run one targeted test through `make coverage`, and
+# confirm the build metadata and summary file reflect the configured mode.
+say "Coverage report generation writes a summary for instrumented source files"
+sh "$ROOT_DIR/configure" --build-dir="$COVERAGE_BUILD" --profile=debug --cc=clang --coverage-report
+
+run_capture "$LOG_DIR/coverage-build.out" make -C "$COVERAGE_BUILD" coverage FILTER=unit/util/path.c/append_segment
+assert_status_zero
+assert_output_contains "Wrote ./build/test-coverage/coverage/summary.txt"
+assert_output_contains "Wrote ./build/test-coverage/coverage/uncovered.qf"
+assert_file_exists "$COVERAGE_BUILD/coverage/summary.txt"
+assert_file_exists "$COVERAGE_BUILD/coverage/coverage.profdata"
+assert_file_exists "$COVERAGE_BUILD/coverage/uncovered.qf"
+assert_file_contains "$COVERAGE_BUILD/coverage/summary.txt" "File 'src/main.c'"
+assert_file_contains "$COVERAGE_BUILD/coverage/summary.txt" "File 'src/util/path.c'"
+assert_file_contains "$COVERAGE_BUILD/coverage/summary.txt" "File 'testing/support/test-runner.c'"
+assert_file_contains "$COVERAGE_BUILD/coverage/summary.txt" "File 'testing/tests/unit/util/path.c'"
+assert_file_contains "$COVERAGE_BUILD/coverage/summary.txt" "Lines executed:"
+assert_file_contains "$COVERAGE_BUILD/coverage/summary.txt" "Branches covered:"
+assert_file_contains "$COVERAGE_BUILD/coverage/summary.txt" "Uncovered locations:"
+assert_file_contains "$COVERAGE_BUILD/coverage/uncovered.qf" "src/main.c:"
+assert_file_contains "$COVERAGE_BUILD/coverage/uncovered.qf" "src/util/path.c:"
+assert_file_contains "$COVERAGE_BUILD/coverage/uncovered.qf" "testing/tests/unit/util/path.c:"
+assert_file_contains "$COVERAGE_BUILD/coverage/uncovered.qf" "uncovered line"
+assert_file_contains "$COVERAGE_BUILD/coverage/uncovered.qf" "branch not fully covered"
+assert_file_contains "$COVERAGE_BUILD/coverage/uncovered.qf" "function never executed:"
+
+run_capture "$LOG_DIR/coverage-version.out" "$COVERAGE_BUILD/bin/imgneko" --version
+assert_status_zero
+assert_output_contains "coverage_report: ON"
 
 # Regenerate the checked-in dependency file in a copied repository so the real
 # checkout stays untouched, then confirm a normal build consumes it to rebuild

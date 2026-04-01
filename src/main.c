@@ -18,6 +18,7 @@ static int print_version_if_requested(int argc, char **argv) {
             printf("ldflags: %s\n", BUILD_CONFIG_LDFLAGS);
             printf("ldlibs: %s\n", BUILD_CONFIG_LDLIBS);
             printf("feature_x: %s\n", BUILD_CONFIG_FEATURE_X);
+            printf("coverage_report: %s\n", BUILD_CONFIG_COVERAGE_REPORT);
             return 1;
         }
     }
