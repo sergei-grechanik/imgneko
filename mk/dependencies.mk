@@ -3,10 +3,19 @@
 $(BUILD_DIR)/obj/src/main.o: \
 	$(BUILD_DIR)/generated/build_info.h \
 	$(ROOT_DIR)/src/main.c
+$(BUILD_DIR)/obj/src/util/file.o: \
+	$(ROOT_DIR)/src/util/array.h \
+	$(ROOT_DIR)/src/util/file.c \
+	$(ROOT_DIR)/src/util/file.h \
+	$(ROOT_DIR)/src/util/string.h
 $(BUILD_DIR)/obj/src/util/path.o: \
 	$(ROOT_DIR)/src/util/array.h \
 	$(ROOT_DIR)/src/util/path.c \
 	$(ROOT_DIR)/src/util/path.h \
+	$(ROOT_DIR)/src/util/string.h
+$(BUILD_DIR)/obj/src/util/string.o: \
+	$(ROOT_DIR)/src/util/array.h \
+	$(ROOT_DIR)/src/util/string.c \
 	$(ROOT_DIR)/src/util/string.h
 $(BUILD_DIR)/obj/test-bin/runner/environment.c.bin: \
 	$(ROOT_DIR)/src/util/array.h \
@@ -28,6 +37,13 @@ $(BUILD_DIR)/obj/test-bin/unit/util/array.c.bin: \
 	$(ROOT_DIR)/src/util/common.h \
 	$(ROOT_DIR)/testing/support/test_main.h \
 	$(ROOT_DIR)/testing/tests/unit/util/array.c
+$(BUILD_DIR)/obj/test-bin/unit/util/file.c.bin: \
+	$(ROOT_DIR)/src/util/array.h \
+	$(ROOT_DIR)/src/util/common.h \
+	$(ROOT_DIR)/src/util/file.h \
+	$(ROOT_DIR)/src/util/string.h \
+	$(ROOT_DIR)/testing/support/test_main.h \
+	$(ROOT_DIR)/testing/tests/unit/util/file.c
 $(BUILD_DIR)/obj/test-bin/unit/util/path.c.bin: \
 	$(ROOT_DIR)/src/util/array.h \
 	$(ROOT_DIR)/src/util/common.h \
@@ -41,8 +57,16 @@ $(BUILD_DIR)/obj/test-bin/unit/util/string.c.bin: \
 	$(ROOT_DIR)/src/util/string.h \
 	$(ROOT_DIR)/testing/support/test_main.h \
 	$(ROOT_DIR)/testing/tests/unit/util/string.c
+$(BUILD_DIR)/obj/testing/support/run-and-check.o: \
+	$(ROOT_DIR)/src/util/array.h \
+	$(ROOT_DIR)/src/util/file.h \
+	$(ROOT_DIR)/src/util/klib/khash.h \
+	$(ROOT_DIR)/src/util/path.h \
+	$(ROOT_DIR)/src/util/string.h \
+	$(ROOT_DIR)/testing/support/run-and-check.c
 $(BUILD_DIR)/obj/testing/support/test-runner.o: \
 	$(ROOT_DIR)/src/util/array.h \
+	$(ROOT_DIR)/src/util/file.h \
 	$(ROOT_DIR)/src/util/path.h \
 	$(ROOT_DIR)/src/util/string.h \
 	$(ROOT_DIR)/testing/support/test-runner.c
