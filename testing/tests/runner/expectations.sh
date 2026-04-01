@@ -53,12 +53,14 @@ SUMMARY_LOG=$(mktemp /tmp/imgneko-runner-summary.XXXXXX)
 XPASS_LOG=$(mktemp /tmp/imgneko-runner-xpass.XXXXXX)
 FLIP_LOG=$(mktemp /tmp/imgneko-runner-flip.XXXXXX)
 TIMEOUT_LOG=$(mktemp /tmp/imgneko-runner-timeout.XXXXXX)
+TIMEOUT_CLOSED_FDS_LOG=$(mktemp /tmp/imgneko-runner-timeout-closed-fds.XXXXXX)
 TIMEOUT_DISABLED_LOG=$(mktemp /tmp/imgneko-runner-timeout-disabled.XXXXXX)
+TIMEOUT_CLOSED_FDS_OUTPUT=$OUTPUT_ROOT/runner/timeout-closed-fds.sh/output
 FILTER=runner/markers.c\|runner/xfail.sh\|runner/disabled.sh
 
 cleanup() {
     rm -f "$LIST_LOG" "$SUMMARY_LOG" "$XPASS_LOG" "$FLIP_LOG" \
-        "$TIMEOUT_LOG" "$TIMEOUT_DISABLED_LOG"
+        "$TIMEOUT_LOG" "$TIMEOUT_CLOSED_FDS_LOG" "$TIMEOUT_DISABLED_LOG"
 }
 
 trap cleanup EXIT
@@ -146,6 +148,27 @@ assert_file_contains "$TIMEOUT_LOG" "discovered: 1"
 assert_file_contains "$TIMEOUT_LOG" "timeout: 1"
 assert_file_contains "$TIMEOUT_LOG" "Time:"
 assert_file_contains "$TIMEOUT_LOG" "Result: FAILURE"
+
+set +e
+IMGNEKO_TEST_TIMEOUT_CLOSED_FDS_SLEEP_SECONDS=30 \
+    "$RUNNER" --output-dir "$OUTPUT_ROOT" --timeout 2 \
+    --filter runner/timeout-closed-fds.sh >"$TIMEOUT_CLOSED_FDS_LOG" 2>&1
+status=$?
+set -e
+
+[ "$status" -ne 0 ] || fail "closed-fds timeout run unexpectedly passed"
+
+assert_file_contains "$TIMEOUT_CLOSED_FDS_LOG" "TIMEOUT: runner/timeout-closed-fds.sh"
+assert_file_contains "$TIMEOUT_CLOSED_FDS_LOG" "timed out tests:"
+assert_file_contains "$TIMEOUT_CLOSED_FDS_LOG" "  runner/timeout-closed-fds.sh"
+assert_file_contains "$TIMEOUT_CLOSED_FDS_LOG" "Summary:"
+assert_file_contains "$TIMEOUT_CLOSED_FDS_LOG" "discovered: 1"
+assert_file_contains "$TIMEOUT_CLOSED_FDS_LOG" "timeout: 1"
+assert_file_contains "$TIMEOUT_CLOSED_FDS_LOG" "Time:"
+assert_file_contains "$TIMEOUT_CLOSED_FDS_LOG" "Result: FAILURE"
+assert_file_exists "$TIMEOUT_CLOSED_FDS_OUTPUT"
+[ ! -s "$TIMEOUT_CLOSED_FDS_OUTPUT" ] ||
+    fail "expected closed-fds timeout output to be empty"
 
 "$RUNNER" --output-dir "$OUTPUT_ROOT" --timeout 0 \
     --filter runner/timeout.sh >"$TIMEOUT_DISABLED_LOG" 2>&1 ||

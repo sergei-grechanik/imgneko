@@ -528,20 +528,90 @@ static struct timespec timeout_until_next_deadline(double deadline_seconds) {
     return timeout;
 }
 
-// Run argv in a child process with stdout/stderr redirected into output_path.
+// Write the full byte range to fd, retrying short writes and EINTR. Fatal on
+// failure because the runner cannot recover from losing captured output.
+static void write_all_or_die(int fd, const char *data, size_t len,
+                             const char *message) {
+    while (len != 0) {
+        ssize_t written = write(fd, data, len);
+
+        if (written < 0) {
+            if (errno == EINTR)
+                continue;
+            die_errno(message);
+        }
+
+        data += written;
+        len -= (size_t)written;
+    }
+}
+
+// Read one chunk from the merged child-output pipe, append it to the captured
+// output file, and optionally mirror it to the user's terminal.
+static void pump_child_output(int output_pipe_fd, int output_fd,
+                              bool output_passthrough,
+                              bool *output_pipe_closed) {
+    char buffer[4096];
+    ssize_t count = read(output_pipe_fd, buffer, sizeof(buffer));
+
+    if (count < 0) {
+        if (errno == EINTR)
+            return;
+        die_errno("failed to read child output");
+    }
+
+    if (count == 0) {
+        close(output_pipe_fd);
+        *output_pipe_closed = true;
+        return;
+    }
+
+    write_all_or_die(output_fd, buffer, (size_t)count,
+                     "failed to write captured output");
+    if (output_passthrough) {
+        write_all_or_die(STDOUT_FILENO, buffer, (size_t)count,
+                         "failed to pass test output through");
+    }
+}
+
+// Drain any remaining child output after the child has already been terminated
+// and reaped, so the output file still contains the full captured log.
+static void drain_child_output_pipe(int output_pipe_fd, int output_fd,
+                                    bool output_passthrough) {
+    bool output_pipe_closed = false;
+
+    while (!output_pipe_closed) {
+        pump_child_output(output_pipe_fd, output_fd, output_passthrough,
+                          &output_pipe_closed);
+    }
+}
+
+// Run argv in a child process with stdout/stderr captured into output_path.
 // The child also receives its per-test output directory and runs from it.
+//
+// When output_passthrough is enabled, mirror the merged child output to the
+// user while still writing the same bytes into output_path.
 //
 // When a timeout is enabled, place the child in its own process group so a
 // timeout can terminate the whole test subtree, not just the direct exec'd
 // process.
 static TestRunResult run_argv(char *const *argv, const char *test_output_dir,
-                              const char *output_path, double timeout_seconds) {
+                              const char *output_path, double timeout_seconds,
+                              bool output_passthrough) {
     TestRunResult result = {.exit_code = 1, .timed_out = false};
     bool timeout_enabled = timeout_seconds > 0.0;
     bool deadline_expired = false;
+    bool child_reaped = false;
+    bool output_pipe_closed = false;
     struct sigaction old_sigchld_action = {0};
     sigset_t old_sigchld_mask;
     sigset_t wait_mask;
+    int output_fd = -1;
+    int output_pipe_fds[2] = {-1, -1};
+    pid_t pid;
+    double start_time;
+    double deadline_seconds = 0.0;
+    int status = 0;
 
     if (timeout_enabled) {
         struct sigaction sigchld_action = {0};
@@ -572,14 +642,24 @@ static TestRunResult run_argv(char *const *argv, const char *test_output_dir,
 
     if (!mkdir_p(test_output_dir))
         die_errno("failed to create a directory");
-    int output_fd = open(output_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    output_fd = open(output_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
 
     if (output_fd < 0)
         die_errno("failed to open a test output file");
 
-    pid_t pid = fork();
+    // Route both stdout and stderr through one pipe so the parent can always
+    // capture the full merged output stream into output_path, and optionally
+    // mirror the same bytes to the user's terminal in passthrough mode.
+    if (pipe(output_pipe_fds) != 0) {
+        close(output_fd);
+        die_errno("pipe failed");
+    }
+
+    pid = fork();
 
     if (pid < 0) {
+        close(output_pipe_fds[0]);
+        close(output_pipe_fds[1]);
         close(output_fd);
         die_errno("fork failed");
     }
@@ -601,11 +681,14 @@ static TestRunResult run_argv(char *const *argv, const char *test_output_dir,
             fprintf(stderr, "error: setpgid failed: %s\n", strerror(errno));
             _exit(127);
         }
-        if (dup2(output_fd, STDOUT_FILENO) < 0 ||
-            dup2(output_fd, STDERR_FILENO) < 0) {
+        // Send both output streams into the same pipe.
+        if (dup2(output_pipe_fds[1], STDOUT_FILENO) < 0 ||
+            dup2(output_pipe_fds[1], STDERR_FILENO) < 0) {
             fprintf(stderr, "error: dup2 failed: %s\n", strerror(errno));
             _exit(127);
         }
+        close(output_pipe_fds[0]);
+        close(output_pipe_fds[1]);
         close(output_fd);
         if (setenv(test_output_dir_env, test_output_dir, 1) != 0) {
             fprintf(stderr, "error: failed to update test output env: %s\n",
@@ -623,7 +706,7 @@ static TestRunResult run_argv(char *const *argv, const char *test_output_dir,
         _exit(127);
     }
 
-    close(output_fd);
+    close(output_pipe_fds[1]);
 
     // Repeat setpgid in the parent to close the small race where timeout
     // cleanup might need to signal the process group before the child runs its
@@ -635,53 +718,82 @@ static TestRunResult run_argv(char *const *argv, const char *test_output_dir,
     if (setpgid(pid, pid) != 0 && errno != EACCES && errno != ESRCH)
         die_errno("setpgid failed");
 
-    double start_time = monotonic_seconds();
-    double deadline_seconds =
-        timeout_enabled ? start_time + timeout_seconds : 0.0;
-    int status = 0;
+    start_time = monotonic_seconds();
+    if (timeout_enabled)
+        deadline_seconds = start_time + timeout_seconds;
 
-    // Loop until waitpid() reports the child changed state, or the deadline
-    // expires.
+    // Loop until the child is reaped and the output pipe reaches EOF, or the
+    // deadline expires. The child can exit before the parent consumes the last
+    // buffered output bytes, so both conditions matter.
     for (;;) {
-        // WNOHANG turns waitpid() into a non-blocking probe: pid means the
-        // child already changed state, 0 means it is still running.
-        pid_t waited = waitpid(pid, &status, timeout_enabled ? WNOHANG : 0);
+        if (!child_reaped) {
+            // WNOHANG turns waitpid() into a non-blocking probe: pid means the
+            // child already changed state, 0 means it is still running.
+            pid_t waited = waitpid(pid, &status, WNOHANG);
 
-        if (waited < 0) {
-            // A caught signal can interrupt the probe; just retry.
-            if (errno == EINTR)
-                continue;
-            die_errno("waitpid failed");
+            if (waited < 0) {
+                // A caught signal can interrupt the probe; just retry.
+                if (errno == EINTR)
+                    continue;
+                die_errno("waitpid failed");
+            }
+
+            if (waited == pid)
+                child_reaped = true;
         }
 
-        if (waited == pid)
+        if (child_reaped && output_pipe_closed)
             break;
 
-        if (!timeout_enabled)
-            continue;
+        fd_set read_fds;
+        struct timespec wait_timeout = {0};
+        struct timespec *wait_timeout_ptr = NULL;
+        int nfds = 0;
+        int rc;
 
-        struct timespec wait_timeout =
-            timeout_until_next_deadline(deadline_seconds);
-
-        if (wait_timeout.tv_sec == 0 && wait_timeout.tv_nsec == 0) {
-            deadline_expired = true;
-            break;
+        FD_ZERO(&read_fds);
+        if (!output_pipe_closed) {
+            FD_SET(output_pipe_fds[0], &read_fds);
+            nfds = output_pipe_fds[0] + 1;
         }
 
-        // Sleep until either the deadline expires or SIGCHLD arrives. nfds=0
-        // is intentional here: we are only using pselect() as an interruptible
-        // timed wait, not for file-descriptor readiness.
-        int rc = pselect(0, NULL, NULL, NULL, &wait_timeout, &wait_mask);
+        if (timeout_enabled && !child_reaped) {
+            wait_timeout = timeout_until_next_deadline(deadline_seconds);
+
+            if (wait_timeout.tv_sec == 0 && wait_timeout.tv_nsec == 0) {
+                deadline_expired = true;
+                break;
+            }
+
+            wait_timeout_ptr = &wait_timeout;
+        }
+
+        // Sleep until either output becomes readable, the deadline expires, or
+        // SIGCHLD arrives. When nfds is 0, this intentionally degenerates into
+        // an interruptible timed wait after the child has closed the pipe but
+        // before waitpid() has reported the exit yet.
+        rc = pselect(nfds, nfds == 0 ? NULL : &read_fds, NULL, NULL,
+                     wait_timeout_ptr, timeout_enabled ? &wait_mask : NULL);
 
         if (rc == 0) {
-            // The timeout expired before any SIGCHLD woke the wait.
+            // The timeout expired before any output readiness or SIGCHLD wakeup
             deadline_expired = true;
             break;
         }
-        // EINTR is the normal wakeup path after SIGCHLD (or another caught
-        // signal); loop back and probe waitpid() again.
-        if (rc < 0 && errno != EINTR)
+        if (rc < 0) {
+            // EINTR is the normal wakeup path after SIGCHLD (or another caught
+            // signal); loop back and probe waitpid() again.
+            if (errno == EINTR)
+                continue;
             die_errno("pselect failed");
+        }
+
+        if (!output_pipe_closed && FD_ISSET(output_pipe_fds[0], &read_fds)) {
+            // Consume one available chunk, append it to the per-test output
+            // file, and optionally pass it through to the user immediately.
+            pump_child_output(output_pipe_fds[0], output_fd, output_passthrough,
+                              &output_pipe_closed);
+        }
 
         // Keep SIGCHLD blocked between the WNOHANG probe and pselect(). That
         // way a child exit in that window becomes a pending SIGCHLD, and
@@ -718,11 +830,25 @@ static TestRunResult run_argv(char *const *argv, const char *test_output_dir,
         // Reap the direct child so we do not leave a zombie behind after the
         // timeout path finishes. ECHILD means it was already reaped elsewhere
         // in the timeout race, which is fine.
-        if (waitpid(pid, &status, 0) < 0 && errno != ECHILD)
+        if (!child_reaped && waitpid(pid, &status, 0) < 0 && errno != ECHILD)
             die_errno("waitpid failed after timeout");
+        // A timeout can kill the child before the parent has drained all bytes
+        // already buffered in the pipe, so finish draining them before closing
+        // the output file.
+        if (!output_pipe_closed) {
+            // REVIEW: What if the child launches a process that just produces
+            // an output but cannot be killed via killing that child? We will
+            // get stuck here forever, maybe we need to add a timeout or
+            // something to this drainage procedure itself?
+            drain_child_output_pipe(output_pipe_fds[0], output_fd,
+                                    output_passthrough);
+        }
+        close(output_fd);
         result.elapsed_seconds = monotonic_seconds() - start_time;
         return result;
     }
+
+    close(output_fd);
 
     if (WIFEXITED(status)) {
         result.exit_code = WEXITSTATUS(status);
@@ -1043,7 +1169,8 @@ static void discover_test_cases(const TestFileArray *files,
 static TestRunResult run_executable_test(const TestCase *test_case,
                                          const char *test_output_dir,
                                          const char *output_path,
-                                         double timeout_seconds) {
+                                         double timeout_seconds,
+                                         bool output_passthrough) {
     char *argv[] = {test_case->file_abs_path.cstr, NULL};
 
     if (access(test_case->file_abs_path.cstr, X_OK) != 0) {
@@ -1052,21 +1179,23 @@ static TestRunResult run_executable_test(const TestCase *test_case,
         return (TestRunResult){.exit_code = 1};
     }
 
-    return run_argv(argv, test_output_dir, output_path, timeout_seconds);
+    return run_argv(argv, test_output_dir, output_path, timeout_seconds,
+                    output_passthrough);
 }
 
 // Run one compiled C test, either a selected subtest or all subtests.
 static TestRunResult run_c_test(const TestCase *test_case,
                                 const char *test_output_dir,
-                                const char *output_path,
-                                double timeout_seconds) {
+                                const char *output_path, double timeout_seconds,
+                                bool output_passthrough) {
     char *argv[] = {
         test_case->c_exe_path.cstr,
         test_case->c_subtest.len != 0 ? test_case->c_subtest.cstr : "--all",
         NULL,
     };
 
-    return run_argv(argv, test_output_dir, output_path, timeout_seconds);
+    return run_argv(argv, test_output_dir, output_path, timeout_seconds,
+                    output_passthrough);
 }
 
 // Print one discovered test id, appending its marker when present.
@@ -1171,12 +1300,13 @@ static void usage(FILE *stream) {
 
     fprintf(stream,
             "Usage: %s [--list] [--all] [--output-dir DIR] [--filter PATTERN]\n"
-            "       [--timeout SECONDS]\n"
+            "       [--timeout SECONDS] [--output-passthrough]\n"
             "       [--debug-flip-exit-probability P]\n"
             "       [PATTERN ...]\n"
             "\n"
             "Discover tests under %s/ relative to %s.\n"
             "\n"
+            "Use --output-passthrough to mirror test stdout/stderr live.\n"
             "Patterns use shell-style wildcards and may be joined with '|'.\n"
             "Default output dir: %s\n"
             "Default timeout: %.0f seconds\n",
@@ -1191,6 +1321,7 @@ int main(int argc, char **argv) {
     StringArray filters = arr_empty;
     bool list_only = false;
     bool run_all = false;
+    bool output_passthrough = false;
     String output_dir = str_empty;
     double timeout_seconds = default_test_timeout_seconds;
     double debug_flip_exit_probability = 0.0;
@@ -1231,6 +1362,10 @@ int main(int argc, char **argv) {
             usage(stdout);
             exit_code = 0;
             goto cleanup;
+        }
+        if (strcmp(argv[i], "--output-passthrough") == 0) {
+            output_passthrough = true;
+            continue;
         }
         if (strcmp(argv[i], "--output-dir") == 0) {
             if (i + 1 >= argc) {
@@ -1392,11 +1527,13 @@ int main(int argc, char **argv) {
             test_output_dir_path(test_case, output_dir.cstr);
         String output_path = test_output_file_path(test_output_dir.cstr);
         if (test_case->kind == TEST_KIND_C) {
-            run_result = run_c_test(test_case, test_output_dir.cstr,
-                                    output_path.cstr, timeout_seconds);
+            run_result =
+                run_c_test(test_case, test_output_dir.cstr, output_path.cstr,
+                           timeout_seconds, output_passthrough);
         } else if (test_case->kind == TEST_KIND_EXECUTABLE) {
             run_result = run_executable_test(test_case, test_output_dir.cstr,
-                                             output_path.cstr, timeout_seconds);
+                                             output_path.cstr, timeout_seconds,
+                                             output_passthrough);
         } else {
             run_result.exit_code = 1;
         }
@@ -1409,7 +1546,8 @@ int main(int argc, char **argv) {
             timed_out++;
             string_array_push_copy(&timed_out_tests, test_case->id.cstr);
             printf("\nTIMEOUT: %s\n", test_case->id.cstr);
-            print_output_tail(output_path.cstr, 20);
+            if (!output_passthrough)
+                print_output_tail(output_path.cstr, 20);
         } else if (run_result.exit_code == 0 &&
                    test_case->marker == TEST_MARKER_XFAIL) {
             xpassed++;
@@ -1425,7 +1563,8 @@ int main(int argc, char **argv) {
             failed++;
             string_array_push_copy(&failed_tests, test_case->id.cstr);
             printf("\nFAIL: %s\n", test_case->id.cstr);
-            print_output_tail(output_path.cstr, 20);
+            if (!output_passthrough)
+                print_output_tail(output_path.cstr, 20);
         }
         str_free(test_output_dir);
         str_free(output_path);

@@ -51,9 +51,12 @@ UNIT_C_OUTPUT=$UNIT_C_OUTPUT_DIR/output
 SUCCESS_LOG=$(mktemp /tmp/imgneko-runner-success.XXXXXX)
 FAILURE_LOG=$(mktemp /tmp/imgneko-runner-failure.XXXXXX)
 C_LOG=$(mktemp /tmp/imgneko-runner-c.XXXXXX)
+PASSTHROUGH_LOG=$(mktemp /tmp/imgneko-runner-passthrough.XXXXXX)
+PASSTHROUGH_FAILURE_LOG=$(mktemp /tmp/imgneko-runner-passthrough-failure.XXXXXX)
 
 cleanup() {
-    rm -f "$SUCCESS_LOG" "$FAILURE_LOG" "$C_LOG"
+    rm -f "$SUCCESS_LOG" "$FAILURE_LOG" "$C_LOG" "$PASSTHROUGH_LOG" \
+        "$PASSTHROUGH_FAILURE_LOG"
 }
 
 trap cleanup EXIT
@@ -71,6 +74,26 @@ assert_file_contains "$SUCCESS_LOG" "discovered: 1"
 assert_file_contains "$SUCCESS_LOG" "passed: 1"
 assert_file_contains "$SUCCESS_LOG" "Time:"
 assert_file_contains "$SUCCESS_LOG" "Result: SUCCESS"
+
+# Output passthrough should surface child output before the nested run exits,
+# while still writing the combined output file.
+rm -rf "$OUTPUT_ROOT"
+IMGNEKO_TEST_PASSTHROUGH_DELAY=1 "$RUNNER" --output-dir "$OUTPUT_ROOT" \
+    --output-passthrough --filter runner/output.sh \
+    >"$PASSTHROUGH_LOG" 2>&1 &
+passthrough_pid=$!
+sleep 1
+assert_file_contains "$PASSTHROUGH_LOG" "output script stdout marker"
+kill -0 "$passthrough_pid" >/dev/null 2>&1 ||
+    fail "passthrough run exited before live-output check"
+wait "$passthrough_pid" || fail "nested passthrough run failed"
+
+assert_file_exists "$EXEC_OUTPUT"
+assert_file_contains "$EXEC_OUTPUT" "output script stdout marker"
+assert_file_contains "$EXEC_OUTPUT" "output script stderr marker"
+assert_file_contains "$PASSTHROUGH_LOG" "output script stderr marker"
+assert_file_contains "$PASSTHROUGH_LOG" "PASS: runner/output.sh"
+assert_file_contains "$PASSTHROUGH_LOG" "Result: SUCCESS"
 
 # C tests should get their own nested output files too, including tests under
 # testing/tests/runner/.
@@ -106,3 +129,22 @@ assert_file_contains "$FAILURE_LOG" "discovered: 1"
 assert_file_contains "$FAILURE_LOG" "failed: 1"
 assert_file_contains "$FAILURE_LOG" "Time:"
 assert_file_contains "$FAILURE_LOG" "Result: FAILURE"
+
+# In passthrough mode, the live test output is already visible so the runner
+# should not print a duplicate tail after failure.
+set +e
+IMGNEKO_TEST_SHOULD_FAIL=1 "$RUNNER" --output-dir "$OUTPUT_ROOT" \
+    --output-passthrough --filter runner/output.sh \
+    >"$PASSTHROUGH_FAILURE_LOG" 2>&1
+status=$?
+set -e
+
+[ "$status" -ne 0 ] || fail "nested passthrough failure run unexpectedly succeeded"
+assert_file_exists "$EXEC_OUTPUT"
+assert_file_contains "$EXEC_OUTPUT" "failure line 25"
+assert_file_contains "$PASSTHROUGH_FAILURE_LOG" "failure line 1"
+assert_file_contains "$PASSTHROUGH_FAILURE_LOG" "failure line 25"
+assert_file_contains "$PASSTHROUGH_FAILURE_LOG" "FAIL: runner/output.sh"
+assert_file_contains "$PASSTHROUGH_FAILURE_LOG" "failed tests:"
+assert_file_contains "$PASSTHROUGH_FAILURE_LOG" "Result: FAILURE"
+assert_file_not_contains "$PASSTHROUGH_FAILURE_LOG" "===== LAST"
