@@ -107,6 +107,9 @@ static const char *const tests_root_rel = "testing/tests";
 static const char *const default_test_output_dir_rel = "test-outputs";
 // Default per-test timeout in seconds.
 static const double default_test_timeout_seconds = 180.0;
+// After killing a timed-out test, keep draining buffered output only briefly so
+// a detached descendant that inherited the pipe cannot hang the runner forever.
+static const double timeout_output_drain_grace_seconds = 0.25;
 
 // Per-test environment variable that points tests at their own output
 // directory.
@@ -574,16 +577,46 @@ static void pump_child_output(int output_pipe_fd, int output_fd,
     }
 }
 
-// Drain any remaining child output after the child has already been terminated
-// and reaped, so the output file still contains the full captured log.
-static void drain_child_output_pipe(int output_pipe_fd, int output_fd,
-                                    bool output_passthrough) {
+// After a timeout, a detached descendant may keep the inherited output pipe
+// open even though the timed-out process group has already been killed. Drain
+// anything that becomes readable before the deadline, then stop waiting so the
+// runner cannot hang forever on that still-open pipe.
+static void drain_child_output_pipe_until_deadline(int output_pipe_fd,
+                                                   int output_fd,
+                                                   bool output_passthrough,
+                                                   double deadline_seconds) {
     bool output_pipe_closed = false;
 
     while (!output_pipe_closed) {
-        pump_child_output(output_pipe_fd, output_fd, output_passthrough,
-                          &output_pipe_closed);
+        fd_set read_fds;
+        struct timespec wait_timeout =
+            timeout_until_next_deadline(deadline_seconds);
+        int rc;
+
+        if (wait_timeout.tv_sec == 0 && wait_timeout.tv_nsec == 0)
+            break;
+
+        FD_ZERO(&read_fds);
+        FD_SET(output_pipe_fd, &read_fds);
+        rc = pselect(output_pipe_fd + 1, &read_fds, NULL, NULL, &wait_timeout,
+                     NULL);
+
+        if (rc == 0)
+            break;
+        if (rc < 0) {
+            if (errno == EINTR)
+                continue;
+            die_errno("pselect failed while draining timed-out child output");
+        }
+
+        if (FD_ISSET(output_pipe_fd, &read_fds)) {
+            pump_child_output(output_pipe_fd, output_fd, output_passthrough,
+                              &output_pipe_closed);
+        }
     }
+
+    if (!output_pipe_closed)
+        close(output_pipe_fd);
 }
 
 // Run argv in a child process with stdout/stderr captured into output_path.
@@ -834,14 +867,12 @@ static TestRunResult run_argv(char *const *argv, const char *test_output_dir,
             die_errno("waitpid failed after timeout");
         // A timeout can kill the child before the parent has drained all bytes
         // already buffered in the pipe, so finish draining them before closing
-        // the output file.
+        // the output file. Bound that drain in case a detached descendant kept
+        // the inherited pipe open after escaping the timed-out process group.
         if (!output_pipe_closed) {
-            // REVIEW: What if the child launches a process that just produces
-            // an output but cannot be killed via killing that child? We will
-            // get stuck here forever, maybe we need to add a timeout or
-            // something to this drainage procedure itself?
-            drain_child_output_pipe(output_pipe_fds[0], output_fd,
-                                    output_passthrough);
+            drain_child_output_pipe_until_deadline(
+                output_pipe_fds[0], output_fd, output_passthrough,
+                monotonic_seconds() + timeout_output_drain_grace_seconds);
         }
         close(output_fd);
         result.elapsed_seconds = monotonic_seconds() - start_time;

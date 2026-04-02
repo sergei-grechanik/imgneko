@@ -54,13 +54,16 @@ XPASS_LOG=$(mktemp /tmp/imgneko-runner-xpass.XXXXXX)
 FLIP_LOG=$(mktemp /tmp/imgneko-runner-flip.XXXXXX)
 TIMEOUT_LOG=$(mktemp /tmp/imgneko-runner-timeout.XXXXXX)
 TIMEOUT_CLOSED_FDS_LOG=$(mktemp /tmp/imgneko-runner-timeout-closed-fds.XXXXXX)
+TIMEOUT_DETACHED_OUTPUT_LOG=$(mktemp /tmp/imgneko-runner-timeout-detached-output.XXXXXX)
 TIMEOUT_DISABLED_LOG=$(mktemp /tmp/imgneko-runner-timeout-disabled.XXXXXX)
 TIMEOUT_CLOSED_FDS_OUTPUT=$OUTPUT_ROOT/runner/timeout-closed-fds.sh/output
+TIMEOUT_DETACHED_OUTPUT=$OUTPUT_ROOT/runner/timeout-detached-output.sh/output
 FILTER=runner/markers.c\|runner/xfail.sh\|runner/disabled.sh
 
 cleanup() {
     rm -f "$LIST_LOG" "$SUMMARY_LOG" "$XPASS_LOG" "$FLIP_LOG" \
-        "$TIMEOUT_LOG" "$TIMEOUT_CLOSED_FDS_LOG" "$TIMEOUT_DISABLED_LOG"
+        "$TIMEOUT_LOG" "$TIMEOUT_CLOSED_FDS_LOG" \
+        "$TIMEOUT_DETACHED_OUTPUT_LOG" "$TIMEOUT_DISABLED_LOG"
 }
 
 trap cleanup EXIT
@@ -169,6 +172,33 @@ assert_file_contains "$TIMEOUT_CLOSED_FDS_LOG" "Result: FAILURE"
 assert_file_exists "$TIMEOUT_CLOSED_FDS_OUTPUT"
 [ ! -s "$TIMEOUT_CLOSED_FDS_OUTPUT" ] ||
     fail "expected closed-fds timeout output to be empty"
+
+detached_start=$(date +%s)
+set +e
+IMGNEKO_TEST_TIMEOUT_DETACHED_OUTPUT_SLEEP_SECONDS=5 \
+    "$RUNNER" --output-dir "$OUTPUT_ROOT" --timeout 1 \
+    --filter runner/timeout-detached-output.sh \
+    >"$TIMEOUT_DETACHED_OUTPUT_LOG" 2>&1
+status=$?
+set -e
+detached_elapsed=$(( $(date +%s) - detached_start ))
+
+[ "$status" -ne 0 ] || fail "detached-output timeout run unexpectedly passed"
+[ "$detached_elapsed" -lt 4 ] ||
+    fail "detached-output timeout run took too long: ${detached_elapsed}s"
+
+assert_file_contains "$TIMEOUT_DETACHED_OUTPUT_LOG" \
+    "TIMEOUT: runner/timeout-detached-output.sh"
+assert_file_contains "$TIMEOUT_DETACHED_OUTPUT_LOG" "timed out tests:"
+assert_file_contains "$TIMEOUT_DETACHED_OUTPUT_LOG" \
+    "  runner/timeout-detached-output.sh"
+assert_file_contains "$TIMEOUT_DETACHED_OUTPUT_LOG" "Summary:"
+assert_file_contains "$TIMEOUT_DETACHED_OUTPUT_LOG" "discovered: 1"
+assert_file_contains "$TIMEOUT_DETACHED_OUTPUT_LOG" "timeout: 1"
+assert_file_contains "$TIMEOUT_DETACHED_OUTPUT_LOG" "Result: FAILURE"
+assert_file_exists "$TIMEOUT_DETACHED_OUTPUT"
+assert_file_contains "$TIMEOUT_DETACHED_OUTPUT" \
+    "timeout detached output script started"
 
 "$RUNNER" --output-dir "$OUTPUT_ROOT" --timeout 0 \
     --filter runner/timeout.sh >"$TIMEOUT_DISABLED_LOG" 2>&1 ||
