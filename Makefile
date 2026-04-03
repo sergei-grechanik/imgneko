@@ -54,6 +54,11 @@ COVERAGE_SUMMARY := $(COVERAGE_DIR)/summary.txt
 COVERAGE_UNCOVERED := $(COVERAGE_DIR)/uncovered.qf
 COVERAGE_PROFDATA := $(COVERAGE_DIR)/coverage.profdata
 
+# Marks the last successful instrumented test run that populated
+# $(COVERAGE_PROFILE_DIR). When covered binaries change, this stamp becomes
+# stale so `make coverage` reruns the full suite before rebuilding the report.
+COVERAGE_TESTS_STAMP := $(COVERAGE_DIR)/tests.stamp
+
 # Checked-in version file.
 VERSION_FILE := $(ROOT_DIR)/VERSION
 
@@ -330,21 +335,33 @@ test: check-config-date test-deps clean-test-output
 	if [ -n "$(FILTER)" ]; then set -- --filter "$(FILTER)"; else set -- --all; fi; \
 	"$(BIN_TEST_RUNNER)" "$$@"
 
-# Run tests with LLVM_PROFILE_FILE configured, merge the raw profiles, and
-# write coverage reports for every instrumented binary in this build.
 ifeq ($(COVERAGE_REPORT),ON)
-coverage: check-config-date test-deps clean-test-output $(ROOT_DIR)/tools/build-coverage-report.sh
-	@rm -rf "$(COVERAGE_DIR)"
+# Run the full instrumented test suite only when any instrumented binary
+# changed, then regenerate the merged coverage artifacts only when the raw
+# profiles or reporting inputs changed.
+$(COVERAGE_TESTS_STAMP): $(BIN_IMGNEKO) $(BIN_TEST_RUNNER) $(BIN_RUN_AND_CHECK) $(TEST_C_BINS) | check-config-date
+	@rm -rf "$(COVERAGE_PROFILE_DIR)" "$(TEST_OUTPUT_DIR)"
 	@mkdir -p "$(COVERAGE_PROFILE_DIR)"
-	@set --; \
-	if [ -n "$(FILTER)" ]; then set -- --filter "$(FILTER)"; else set -- --all; fi; \
-	LLVM_PROFILE_FILE="$(COVERAGE_PROFILE_DIR)/%m-%p.profraw" "$(BIN_TEST_RUNNER)" "$$@"
+	@LLVM_PROFILE_FILE="$(COVERAGE_PROFILE_DIR)/%m-%p.profraw" "$(BIN_TEST_RUNNER)" --all
+	@touch "$@"
+
+# `&:` is a grouped target rule: one recipe refreshes all three coverage
+# artifacts together, and make tracks them as a single update step.
+$(COVERAGE_PROFDATA) $(COVERAGE_SUMMARY) $(COVERAGE_UNCOVERED) &: $(COVERAGE_TESTS_STAMP) $(ROOT_DIR)/tools/build-coverage-report.sh $(ROOT_DIR)/tools/build-coverage-report.py $(ROOT_DIR)/coverage-ignore | check-config-date
 	@"$(ROOT_DIR)/tools/build-coverage-report.sh" \
 		"$(ROOT_DIR)" "$(BUILD_DIR)" "$(COVERAGE_DIR)" \
 		"$(LLVM_PROFDATA)" "$(LLVM_COV)" \
 		"$(BIN_IMGNEKO)" "$(BIN_TEST_RUNNER)" "$(BIN_RUN_AND_CHECK)" $(TEST_C_BINS)
+
+ifneq ($(strip $(FILTER)),)
+coverage: check-config-date
+	@echo "error: make coverage does not support FILTER; rerun without FILTER"
+	@exit 1
+else
+coverage: check-config-date $(COVERAGE_SUMMARY) $(COVERAGE_UNCOVERED)
 	@printf '%s\n' "Wrote $(call display_path,$(COVERAGE_SUMMARY))"
 	@printf '%s\n' "Wrote $(call display_path,$(COVERAGE_UNCOVERED))"
+endif
 else
 coverage: check-config-date
 	@echo "error: coverage report generation is disabled in $(call display_path,$(CONFIG_MK)); rerun $(call display_path,$(ROOT_DIR)/configure) --build-dir='$(call display_path,$(BUILD_DIR))' --coverage-report"

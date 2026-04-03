@@ -1,0 +1,26 @@
+# Ignore uncovered branches/functions in the quickfix coverage report.
+#
+# Syntax:
+# - blank lines and lines beginning with `#` are ignored
+# - `path-glob` suppresses every uncovered branch/function/line in matching
+#   files
+# - `path-glob function-glob` suppresses matching functions in matching files
+#
+# Examples:
+# src/generated/*.c
+# src/util/fatal.c die_*
+#
+# Note that these are different (ignore everything vs ignore only functions):
+# src/file.c
+# src/file.c *
+#
+# For line- or branch-level suppressions in source, use a nearby
+# `IMGNEKO_UNCOVERED_OK` comment instead.
+
+# This probe in test-runner.c is intentionally uncovered so the coverage
+# regression can prove that this file suppresses branch/function findings
+# without hiding uncovered line findings from the same source.
+testing/support/test-runner.c coverage_ignore_*
+
+# 3rd party code
+src/util/klib/*

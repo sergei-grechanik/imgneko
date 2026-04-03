@@ -39,6 +39,7 @@ SPACE_ROOT_REPO="$TMP_TEST_ROOT/root with spaces"
 NO_BUILD_REPO=$TMP_TEST_ROOT/no-build-repo
 UNIQUE_BUILD_REPO=$TMP_TEST_ROOT/unique-build-repo
 AMBIGUOUS_BUILD_REPO=$TMP_TEST_ROOT/ambiguous-build-repo
+COVERAGE_IGNORE_REPO=$TMP_TEST_ROOT/coverage-ignore-repo
 
 LAST_STATUS=0
 LAST_OUTPUT=
@@ -100,6 +101,42 @@ assert_file_not_contains() {
         printf '%s\n' "Actual file: $path" >&2
         sed -n '1,200p' "$path" >&2
         exit 1
+    fi
+}
+
+# Verify that a file does not match a forbidden regular expression.
+assert_file_not_matches() {
+    path=$1
+    pattern=$2
+
+    if grep -E -- "$pattern" "$path" >/dev/null 2>&1; then
+        printf '%s\n' "Expected file not to match: $pattern" >&2
+        printf '%s\n' "Actual file: $path" >&2
+        sed -n '1,200p' "$path" >&2
+        exit 1
+    fi
+}
+
+# Verify that a file matches a required regular expression.
+assert_file_matches() {
+    path=$1
+    pattern=$2
+
+    if ! grep -E -- "$pattern" "$path" >/dev/null 2>&1; then
+        printf '%s\n' "Expected file to match: $pattern" >&2
+        printf '%s\n' "Actual file: $path" >&2
+        sed -n '1,200p' "$path" >&2
+        exit 1
+    fi
+}
+
+# Verify that two strings are exactly equal.
+assert_equal() {
+    expected=$1
+    actual=$2
+
+    if [ "$expected" != "$actual" ]; then
+        fail "expected '$expected', got '$actual'"
     fi
 }
 
@@ -468,10 +505,10 @@ assert_file_contains "$COMPDB_CLANG_BUILD/compile_commands.json" "test-runner.c"
 
 # Enable coverage reporting, run one targeted test through `make coverage`, and
 # confirm the build metadata and summary file reflect the configured mode.
-say "Coverage report generation writes a summary for instrumented source files"
+say "Coverage report generation writes an incremental summary for instrumented source files"
 sh "$ROOT_DIR/configure" --build-dir="$COVERAGE_BUILD" --profile=debug --cc=clang --coverage-report
 
-run_capture "$LOG_DIR/coverage-build.out" make -C "$COVERAGE_BUILD" coverage FILTER=unit/util/path.c/append_segment
+run_capture "$LOG_DIR/coverage-build.out" make -C "$COVERAGE_BUILD" coverage
 assert_status_zero
 assert_output_contains "Wrote ./build/test-coverage/coverage/summary.txt"
 assert_output_contains "Wrote ./build/test-coverage/coverage/uncovered.qf"
@@ -491,6 +528,22 @@ assert_file_contains "$COVERAGE_BUILD/coverage/uncovered.qf" "testing/tests/unit
 assert_file_contains "$COVERAGE_BUILD/coverage/uncovered.qf" "uncovered line"
 assert_file_contains "$COVERAGE_BUILD/coverage/uncovered.qf" "branch not fully covered"
 assert_file_contains "$COVERAGE_BUILD/coverage/uncovered.qf" "function never executed:"
+TEST_RUNNER_IGNORED_BRANCH_LINE=$(grep -n 'if (coverage_ignore_branch)' "$ROOT_DIR/testing/support/test-runner.c" | cut -d: -f1)
+assert_file_contains "$COVERAGE_BUILD/coverage/uncovered.qf" "bool coverage_ignore_probe(bool coverage_ignore_branch) {"
+assert_file_contains "$COVERAGE_BUILD/coverage/uncovered.qf" "if (coverage_ignore_branch)"
+assert_file_not_contains "$COVERAGE_BUILD/coverage/uncovered.qf" "function never executed: coverage_ignore_probe"
+assert_file_matches "$COVERAGE_BUILD/coverage/uncovered.qf" "^testing/support/test-runner.c:${TEST_RUNNER_IGNORED_BRANCH_LINE}:[0-9]+: branch not fully covered"
+
+coverage_initial_mtime=$(stat -c %Y "$COVERAGE_BUILD/coverage/uncovered.qf")
+sleep 1
+run_capture "$LOG_DIR/coverage-repeat.out" make -C "$COVERAGE_BUILD" coverage
+assert_status_zero
+coverage_repeat_mtime=$(stat -c %Y "$COVERAGE_BUILD/coverage/uncovered.qf")
+assert_equal "$coverage_initial_mtime" "$coverage_repeat_mtime"
+
+run_capture "$LOG_DIR/coverage-filter-error.out" make -C "$COVERAGE_BUILD" coverage FILTER=runner/expectations.sh
+assert_status_nonzero
+assert_output_contains "error: make coverage does not support FILTER; rerun without FILTER"
 
 run_capture "$LOG_DIR/coverage-version.out" "$COVERAGE_BUILD/bin/imgneko" --version
 assert_status_zero

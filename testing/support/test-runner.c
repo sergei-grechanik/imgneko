@@ -120,6 +120,15 @@ static void die_errno(const char *message) {
     exit(1);
 }
 
+// Intentionally never called. The coverage-ignore regression keeps this helper
+// uncovered so the repo-level ignore list can prove that it suppresses branch
+// and function findings without hiding uncovered line entries.
+bool coverage_ignore_probe(bool coverage_ignore_branch) {
+    if (coverage_ignore_branch)
+        return true;
+    return false;
+}
+
 static void string_array_push_copy(StringArray *array, const char *item) {
     arr_push(*array, str_from_cstr(item));
 }

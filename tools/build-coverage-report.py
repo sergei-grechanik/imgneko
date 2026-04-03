@@ -19,7 +19,12 @@ Outputs:
 import json
 import os
 import sys
+from fnmatch import fnmatchcase
 from typing import Any, Dict, List, NamedTuple, Optional, Sequence, Set, Tuple
+
+
+IGNORE_FILE = "coverage-ignore"
+SUPPRESSION_MARKER = "IMGNEKO_UNCOVERED_OK"
 
 
 class BranchKey(NamedTuple):
@@ -48,6 +53,20 @@ class FunctionKey(NamedTuple):
     relpath: str
     lineno: int
     display_name: str
+
+
+class IgnoreRule(NamedTuple):
+    """One repo-level coverage suppression rule.
+
+    relpath_pattern: glob matched against the declaration/definition file path
+    function_pattern: glob matched against the canonical function name
+    whole_file: whether this rule came from a single-field `path-glob` entry
+    """
+
+    relpath_pattern: str
+    function_pattern: str
+    whole_file: bool
+
 
 def rel_project_path(root_dir: str, filename: str) -> Optional[str]:
     """Return a repo-relative project path for covered source files.
@@ -101,11 +120,113 @@ def function_display_name(function_name: str) -> str:
     return function_name.split(":", 1)[1]
 
 
+def load_ignore_rules(root_dir: str) -> List[IgnoreRule]:
+    """Load gitignore-like coverage suppression rules from the repo root.
+
+    Supported syntax is intentionally small:
+    - blank lines are ignored
+    - lines beginning with `#` are comments
+    - `path-glob` ignores every uncovered line/branch/function in matching files
+    - `path-glob function-glob` ignores matching functions in matching files
+    """
+    ignore_path = os.path.join(root_dir, IGNORE_FILE)
+    if not os.path.exists(ignore_path):
+        return []
+
+    rules: List[IgnoreRule] = []
+    with open(ignore_path, encoding="utf-8") as stream:
+        for lineno, line in enumerate(stream, start=1):
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+
+            fields = stripped.split()
+            if len(fields) == 1:
+                rules.append(IgnoreRule(fields[0], "*", True))
+                continue
+
+            if len(fields) == 2:
+                rules.append(IgnoreRule(fields[0], fields[1], False))
+                continue
+
+            raise ValueError(
+                f"{IGNORE_FILE}:{lineno}: expected 'path-glob' or "
+                f"'path-glob function-glob', got: {stripped}"
+            )
+
+    return rules
+
+
+def suppressed_source_lines(source_lines: Sequence[str]) -> Set[int]:
+    """Return source lines suppressed by `IMGNEKO_UNCOVERED_OK` comments.
+
+    A marker on the same line suppresses that exact line. When the marker
+    appears on a standalone comment line, it also suppresses the next physical
+    source line so callers can write:
+
+        // IMGNEKO_UNCOVERED_OK: fatal error path
+        if (bad_input)
+            die("...");
+    """
+    suppressed: Set[int] = set()
+    suppress_next_code_line = False
+
+    for lineno, line in enumerate(source_lines, start=1):
+        stripped = line.strip()
+        if SUPPRESSION_MARKER in line:
+            suppressed.add(lineno)
+            leading = line.lstrip()
+            suppress_next_code_line = (
+                leading.startswith("//") or
+                leading.startswith("/*")
+            )
+            continue
+
+        if not suppress_next_code_line:
+            continue
+        suppressed.add(lineno)
+        suppress_next_code_line = False
+
+    return suppressed
+
+
+def is_ignored_function(ignore_rules: Sequence[IgnoreRule],
+                        relpath: str,
+                        display_name: str) -> bool:
+    """Report whether repo-level rules suppress this function site."""
+    for rule in ignore_rules:
+        if not fnmatchcase(relpath, rule.relpath_pattern):
+            continue
+        if fnmatchcase(display_name, rule.function_pattern):
+            return True
+    return False
+
+
+def is_ignored_file(ignore_rules: Sequence[IgnoreRule], relpath: str) -> bool:
+    """Report whether repo-level rules suppress every finding in this file."""
+    for rule in ignore_rules:
+        if not fnmatchcase(relpath, rule.relpath_pattern):
+            continue
+        if rule.whole_file:
+            return True
+    return False
+
+
+def function_start_line(function: Dict[str, Any]) -> Optional[int]:
+    """Return the first covered source line associated with a function record."""
+    line_numbers = [int(region[0]) for region in function.get("regions", []) if region]
+    if not line_numbers:
+        return None
+    return min(line_numbers)
+
+
 def add_uncovered_lines(
     entries: Set[str],
     relpath: str,
     source_lines: Sequence[str],
     segments: Sequence[Sequence[Any]],
+    suppressed_lines: Set[int],
+    ignore_rules: Sequence[IgnoreRule],
 ) -> None:
     """Add entries for zero-count executable regions from `llvm-cov` segments.
 
@@ -114,6 +235,9 @@ def add_uncovered_lines(
     segment marks where that region ends. Expand those ranges back into source
     lines so quickfix can jump directly to the uncovered code.
     """
+    if is_ignored_file(ignore_rules, relpath):
+        return
+
     for current, nxt in zip(segments, segments[1:]):
         line, _column, count, has_count, _is_region_entry, is_gap = current[:6]
         next_line, next_column = nxt[0], nxt[1]
@@ -127,6 +251,8 @@ def add_uncovered_lines(
             continue
 
         for lineno in range(line, end_line + 1):
+            if lineno in suppressed_lines:
+                continue
             text = source_line_text(source_lines, lineno)
             if not text:
                 continue
@@ -136,8 +262,11 @@ def add_uncovered_lines(
 def collect_function_branches(
     branch_totals: Dict[BranchKey, Dict[str, Any]],
     relpath: str,
+    display_name: str,
     source_lines: Sequence[str],
     branches: Sequence[Sequence[Any]],
+    ignore_rules: Sequence[IgnoreRule],
+    suppressed_lines: Set[int],
 ) -> None:
     """Accumulate branch counts for one source branch site across functions.
 
@@ -147,10 +276,15 @@ def collect_function_branches(
     shows one branch site, not one line per translation unit. A branch is only
     uncovered if the merged counts still miss one side.
     """
+    if is_ignored_file(ignore_rules, relpath):
+        return
+
     for branch in branches:
         if len(branch) < 6:
             continue
         lineno = int(branch[0])
+        if lineno in suppressed_lines:
+            continue
         column = int(branch[1])
         true_count = int(branch[4])
         false_count = int(branch[5])
@@ -191,6 +325,8 @@ def collect_functions(
     function_totals: Dict[FunctionKey, Dict[str, Any]],
     root_dir: str,
     functions: Sequence[Dict[str, Any]],
+    ignore_rules: Sequence[IgnoreRule],
+    suppressed_lines_by_path: Dict[str, Set[int]],
 ) -> None:
     """Accumulate execution counts for one source function site across TUs."""
     for function in functions:
@@ -198,11 +334,14 @@ def collect_functions(
         if relpath is None:
             continue
 
-        line_numbers = [region[0] for region in function.get("regions", []) if region]
-        if not line_numbers:
+        lineno = function_start_line(function)
+        if lineno is None:
             continue
-        lineno = min(line_numbers)
         display_name = function_display_name(function.get("name", "<unknown>"))
+        if lineno in suppressed_lines_by_path.get(relpath, set()):
+            continue
+        if is_ignored_function(ignore_rules, relpath, display_name):
+            continue
         key = FunctionKey(relpath, lineno, display_name)
         totals = function_totals.setdefault(
             key,
@@ -252,8 +391,15 @@ def main() -> int:
     with open(json_path, encoding="utf-8") as stream:
         export_data = json.load(stream)
 
+    try:
+        ignore_rules = load_ignore_rules(root_dir)
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
     payload = export_data["data"][0]
     source_cache: Dict[str, List[str]] = {}
+    suppressed_lines_by_path: Dict[str, Set[int]] = {}
     uncovered_entries: Set[str] = set()
     branch_totals: Dict[BranchKey, Dict[str, Any]] = {}
     function_totals: Dict[FunctionKey, Dict[str, Any]] = {}
@@ -272,8 +418,16 @@ def main() -> int:
             continue
 
         source_cache[relpath] = source_lines
+        suppressed_lines_by_path[relpath] = suppressed_source_lines(source_lines)
         summary_rows.append((relpath, file_data["summary"]))
-        add_uncovered_lines(uncovered_entries, relpath, source_lines, file_data.get("segments", []))
+        add_uncovered_lines(
+            uncovered_entries,
+            relpath,
+            source_lines,
+            file_data.get("segments", []),
+            suppressed_lines_by_path[relpath],
+            ignore_rules,
+        )
 
     for function in payload.get("functions", []):
         relpath = function_rel_project_path(root_dir, function)
@@ -286,15 +440,25 @@ def main() -> int:
             except OSError:
                 continue
             source_cache[relpath] = source_lines
+            suppressed_lines_by_path[relpath] = suppressed_source_lines(source_lines)
         collect_function_branches(
             branch_totals,
             relpath,
+            function_display_name(function.get("name", "<unknown>")),
             source_lines,
             function.get("branches", []),
+            ignore_rules,
+            suppressed_lines_by_path[relpath],
         )
 
     add_merged_branches(uncovered_entries, branch_totals)
-    collect_functions(function_totals, root_dir, payload.get("functions", []))
+    collect_functions(
+        function_totals,
+        root_dir,
+        payload.get("functions", []),
+        ignore_rules,
+        suppressed_lines_by_path,
+    )
     add_merged_functions(uncovered_entries, function_totals)
 
     summary_rows.sort(key=lambda item: item[0])
