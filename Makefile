@@ -71,6 +71,7 @@ UTIL_SOURCES := $(shell if [ -d "$(ROOT_DIR)/src/util" ]; then cd "$(ROOT_DIR)" 
 TEST_RUNNER_SOURCE := testing/support/test-runner.c
 RUN_AND_CHECK_SOURCE := testing/support/run-and-check.c
 TEST_SUPPORT_SOURCES := $(shell if [ -d "$(ROOT_DIR)/testing/support" ]; then cd "$(ROOT_DIR)" && find testing/support -type f -name '*.c' ! -name 'test-runner.c' ! -name 'run-and-check.c' -print | LC_ALL=C sort; fi)
+TEST_SOURCES := $(shell if [ -d "$(ROOT_DIR)/testing/tests" ]; then cd "$(ROOT_DIR)" && find testing/tests -type f -print | LC_ALL=C sort; fi)
 TEST_C_SOURCES := $(shell if [ -d "$(ROOT_DIR)/testing/tests" ]; then cd "$(ROOT_DIR)" && find testing/tests -type f -name '*.c' -print | LC_ALL=C sort; fi)
 
 # Preserve the source tree under $(OBJ_DIR), so:
@@ -311,7 +312,7 @@ endif
 
 .DEFAULT_GOAL := all
 
-.PHONY: all install clean coverage depfile help check-config-date test test-deps test-list test-tools test-c-bins clean-test-output
+.PHONY: all install clean coverage coverage-report depfile help check-config-date test test-deps test-list test-tools test-c-bins clean-test-output
 
 # Targets to build things.
 all: check-config-date $(BIN_IMGNEKO)
@@ -339,31 +340,40 @@ ifeq ($(COVERAGE_REPORT),ON)
 # Run the full instrumented test suite only when any instrumented binary
 # changed, then regenerate the merged coverage artifacts only when the raw
 # profiles or reporting inputs changed.
-$(COVERAGE_TESTS_STAMP): $(BIN_IMGNEKO) $(BIN_TEST_RUNNER) $(BIN_RUN_AND_CHECK) $(TEST_C_BINS) | check-config-date
+$(COVERAGE_TESTS_STAMP): $(BIN_IMGNEKO) $(BIN_TEST_RUNNER) $(BIN_RUN_AND_CHECK) $(TEST_C_BINS) $(TEST_SOURCES) | check-config-date
 	@rm -rf "$(COVERAGE_PROFILE_DIR)" "$(TEST_OUTPUT_DIR)"
 	@mkdir -p "$(COVERAGE_PROFILE_DIR)"
 	@LLVM_PROFILE_FILE="$(COVERAGE_PROFILE_DIR)/%m-%p.profraw" "$(BIN_TEST_RUNNER)" --all
 	@touch "$@"
 
-# `&:` is a grouped target rule: one recipe refreshes all three coverage
-# artifacts together, and make tracks them as a single update step.
-$(COVERAGE_PROFDATA) $(COVERAGE_SUMMARY) $(COVERAGE_UNCOVERED) &: $(COVERAGE_TESTS_STAMP) $(ROOT_DIR)/tools/build-coverage-report.sh $(ROOT_DIR)/tools/build-coverage-report.py $(ROOT_DIR)/coverage-ignore | check-config-date
-	@"$(ROOT_DIR)/tools/build-coverage-report.sh" \
-		"$(ROOT_DIR)" "$(BUILD_DIR)" "$(COVERAGE_DIR)" \
-		"$(LLVM_PROFDATA)" "$(LLVM_COV)" \
-		"$(BIN_IMGNEKO)" "$(BIN_TEST_RUNNER)" "$(BIN_RUN_AND_CHECK)" $(TEST_C_BINS)
-
 ifneq ($(strip $(FILTER)),)
 coverage: check-config-date
 	@echo "error: make coverage does not support FILTER; rerun without FILTER"
 	@exit 1
+coverage-report: check-config-date
+	@echo "error: make coverage-report does not support FILTER; rerun without FILTER"
+	@exit 1
 else
-coverage: check-config-date $(COVERAGE_SUMMARY) $(COVERAGE_UNCOVERED)
+coverage: check-config-date $(COVERAGE_TESTS_STAMP)
+	@$(MAKE) --no-print-directory BUILD_DIR="$(BUILD_DIR)" coverage-report
+
+coverage-report: check-config-date
+	@if [ ! -f "$(COVERAGE_TESTS_STAMP)" ]; then \
+		echo "error: coverage report inputs are missing in $(call display_path,$(COVERAGE_DIR)); rerun make coverage first"; \
+		exit 1; \
+	fi
+	@"$(ROOT_DIR)/tools/build-coverage-report.sh" \
+		"$(ROOT_DIR)" "$(BUILD_DIR)" "$(COVERAGE_DIR)" \
+		"$(LLVM_PROFDATA)" "$(LLVM_COV)" \
+		"$(BIN_IMGNEKO)" "$(BIN_TEST_RUNNER)" "$(BIN_RUN_AND_CHECK)" $(TEST_C_BINS)
 	@printf '%s\n' "Wrote $(call display_path,$(COVERAGE_SUMMARY))"
 	@printf '%s\n' "Wrote $(call display_path,$(COVERAGE_UNCOVERED))"
 endif
 else
 coverage: check-config-date
+	@echo "error: coverage report generation is disabled in $(call display_path,$(CONFIG_MK)); rerun $(call display_path,$(ROOT_DIR)/configure) --build-dir='$(call display_path,$(BUILD_DIR))' --coverage-report"
+	@exit 1
+coverage-report: check-config-date
 	@echo "error: coverage report generation is disabled in $(call display_path,$(CONFIG_MK)); rerun $(call display_path,$(ROOT_DIR)/configure) --build-dir='$(call display_path,$(BUILD_DIR))' --coverage-report"
 	@exit 1
 endif

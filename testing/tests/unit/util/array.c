@@ -40,6 +40,8 @@ static int expect_array_eq(const char *subtest, const int *actual_data,
 static int test_growth_and_resize(TestContext *ctx) {
     const char *name = ctx->test_name;
     IntArray array = arr_empty;
+    int *reserved_data = NULL;
+    size_t reserved_capacity = 0;
     int status = 0;
 
     arr_push(array, 10);
@@ -49,6 +51,15 @@ static int test_growth_and_resize(TestContext *ctx) {
 
     if (array.capacity < 8) {
         status = fail_message(name, "reserve did not grow capacity");
+        goto cleanup;
+    }
+
+    // Reserving the current capacity should be a no-op and keep the buffer.
+    reserved_data = array.data;
+    reserved_capacity = array.capacity;
+    arr_reserve(array, reserved_capacity);
+    if (array.data != reserved_data || array.capacity != reserved_capacity) {
+        status = fail_message(name, "reserve changed an already-large buffer");
         goto cleanup;
     }
 

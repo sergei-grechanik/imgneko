@@ -18,6 +18,7 @@ Outputs:
 
 import json
 import os
+import re
 import sys
 from fnmatch import fnmatchcase
 from typing import Any, Dict, List, NamedTuple, Optional, Sequence, Set, Tuple
@@ -25,6 +26,11 @@ from typing import Any, Dict, List, NamedTuple, Optional, Sequence, Set, Tuple
 
 IGNORE_FILE = "coverage-ignore"
 SUPPRESSION_MARKER = "IMGNEKO_UNCOVERED_OK"
+SUPPRESSION_START_MARKER = f"{SUPPRESSION_MARKER}_START"
+SUPPRESSION_END_MARKER = f"{SUPPRESSION_MARKER}_END"
+SUPPRESSION_COUNT_RE = re.compile(
+    rf"{SUPPRESSION_MARKER}\[(\d+) lines\]"
+)
 
 
 class BranchKey(NamedTuple):
@@ -98,6 +104,33 @@ def source_line_text(source_lines: Sequence[str], lineno: int) -> str:
     return " ".join(source_lines[lineno - 1].strip().split())
 
 
+def source_span_text(source_lines: Sequence[str],
+                     start_line: int,
+                     start_column: int,
+                     end_line: int,
+                     end_column: int) -> str:
+    """Normalize one source span for compact quickfix output.
+
+    LLVM branch records carry both start and end columns. Use that span when it
+    stays on one physical line so quickfix points at the specific subexpression
+    that owns the branch, not the entire enclosing statement.
+    """
+    if start_line != end_line:
+        return source_line_text(source_lines, start_line)
+    if start_line < 1 or start_line > len(source_lines):
+        return ""
+
+    source_line = source_lines[start_line - 1]
+    if start_column < 1 or end_column < start_column:
+        return source_line_text(source_lines, start_line)
+
+    snippet = source_line[start_column - 1:end_column - 1]
+    snippet = " ".join(snippet.strip().split())
+    if snippet:
+        return snippet
+    return source_line_text(source_lines, start_line)
+
+
 def function_rel_project_path(root_dir: str,
                               function: Dict[str, Any]) -> Optional[str]:
     """Return the first project file associated with a function record."""
@@ -167,25 +200,48 @@ def suppressed_source_lines(source_lines: Sequence[str]) -> Set[int]:
         // IMGNEKO_UNCOVERED_OK: fatal error path
         if (bad_input)
             die("...");
+
+    `IMGNEKO_UNCOVERED_OK_START` and `IMGNEKO_UNCOVERED_OK_END` suppress every
+    physical line in the marked block, including the marker lines themselves.
+
+    `IMGNEKO_UNCOVERED_OK[N lines]` suppresses the marker line and the next `N`
+    physical lines. The word `lines` is mandatory.
     """
     suppressed: Set[int] = set()
-    suppress_next_code_line = False
+    suppress_next_lines = 0
+    block_depth = 0
 
     for lineno, line in enumerate(source_lines, start=1):
-        stripped = line.strip()
-        if SUPPRESSION_MARKER in line:
+        if block_depth > 0 or suppress_next_lines > 0:
             suppressed.add(lineno)
-            leading = line.lstrip()
-            suppress_next_code_line = (
-                leading.startswith("//") or
-                leading.startswith("/*")
-            )
+        if suppress_next_lines > 0:
+            suppress_next_lines -= 1
+
+        if SUPPRESSION_START_MARKER in line:
+            suppressed.add(lineno)
+            block_depth += 1
             continue
 
-        if not suppress_next_code_line:
+        if SUPPRESSION_END_MARKER in line:
+            suppressed.add(lineno)
+            if block_depth > 0:
+                block_depth -= 1
             continue
+
+        count_match = SUPPRESSION_COUNT_RE.search(line)
+        if count_match is not None:
+            suppressed.add(lineno)
+            suppress_next_lines = max(suppress_next_lines,
+                                      int(count_match.group(1)))
+            continue
+
+        if SUPPRESSION_MARKER not in line:
+            continue
+
         suppressed.add(lineno)
-        suppress_next_code_line = False
+        leading = line.lstrip()
+        if leading.startswith("//") or leading.startswith("/*"):
+            suppress_next_lines = max(suppress_next_lines, 1)
 
     return suppressed
 
@@ -213,11 +269,15 @@ def is_ignored_file(ignore_rules: Sequence[IgnoreRule], relpath: str) -> bool:
 
 
 def function_start_line(function: Dict[str, Any]) -> Optional[int]:
-    """Return the first covered source line associated with a function record."""
-    line_numbers = [int(region[0]) for region in function.get("regions", []) if region]
-    if not line_numbers:
+    """Return the function definition line for one `llvm-cov` function record."""
+    # The first region starts at the function definition itself. Later regions may come
+    # from macro expansions inside the body and can point at earlier lines in the
+    # header, so using the minimum region line splits one function into fake separate
+    # sites.
+    regions = function.get("regions", [])
+    if not regions:
         return None
-    return min(line_numbers)
+    return int(regions[0][0])
 
 
 def add_uncovered_lines(
@@ -286,9 +346,12 @@ def collect_function_branches(
         if lineno in suppressed_lines:
             continue
         column = int(branch[1])
+        end_line = int(branch[2]) if len(branch) >= 4 else lineno
+        end_column = int(branch[3]) if len(branch) >= 4 else column
         true_count = int(branch[4])
         false_count = int(branch[5])
-        text = source_line_text(source_lines, lineno)
+        text = source_span_text(source_lines, lineno, column, end_line,
+                                end_column)
         if not text:
             continue
         key = BranchKey(relpath, lineno, column, text)

@@ -20,7 +20,7 @@ typedef struct ArrSlice {
 } ArrSlice;
 
 // Abort immediately on allocation failure.
-ARRLIB_INLINE void arr__abort_oom(void) { abort(); }
+ARRLIB_INLINE void arr__abort_oom(void) { abort(); } // IMGNEKO_UNCOVERED_OK
 
 // Allocate or grow an array buffer to at least new_capacity elements and
 // return the resulting data pointer.
@@ -29,10 +29,12 @@ ARRLIB_INLINE void *arr__reserve_impl(void *data, size_t *capacity,
     if (new_capacity <= *capacity)
         return data;
 
+    // IMGNEKO_UNCOVERED_OK[2 lines]
     if (new_capacity > (size_t)-1 / elem_size)
         arr__abort_oom();
 
     void *new_data = realloc(data, new_capacity * elem_size);
+    // IMGNEKO_UNCOVERED_OK[2 lines]
     if (new_data == NULL)
         arr__abort_oom();
 
@@ -45,8 +47,10 @@ ARRLIB_INLINE size_t arr__grown_capacity(size_t capacity, size_t min_capacity) {
     size_t new_capacity = capacity == 0 ? 1 : capacity;
 
     while (new_capacity < min_capacity) {
+        // IMGNEKO_UNCOVERED_OK[2 lines]
         if (new_capacity > (size_t)-1 / 2)
             return min_capacity;
+
         new_capacity *= 2;
     }
 

@@ -64,6 +64,7 @@ bool file_read_stream_lines(StringArray *out, FILE *stream,
         tail_head = (tail_head + 1) % lines.size;
     }
 
+    // IMGNEKO_UNCOVERED_OK[4 lines]
     if (ferror(stream)) {
         saved_errno = errno;
         goto cleanup;
@@ -79,8 +80,10 @@ bool file_read_stream_lines(StringArray *out, FILE *stream,
     ok = true;
 
 cleanup:
+    // IMGNEKO_UNCOVERED_OK[2 lines]
     if (!ok && saved_errno != 0)
         errno = saved_errno;
+
     str_array_free(&lines);
     free(line);
     return ok;
@@ -96,10 +99,13 @@ bool file_read_lines(StringArray *out, const char *path, ptrdiff_t max_lines) {
 
     ok = file_read_stream_lines(out, stream, max_lines);
     saved_errno = errno;
+
+    // IMGNEKO_UNCOVERED_OK[4 lines]
     if (fclose(stream) != 0 && ok) {
         errno = saved_errno != 0 ? saved_errno : errno;
         return false;
     }
+
     errno = saved_errno;
     return ok;
 }

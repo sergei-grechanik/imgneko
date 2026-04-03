@@ -1,10 +1,10 @@
 // Enable POSIX APIs used in this file (getcwd).
 #define _POSIX_C_SOURCE 200809L
 
+#include <errno.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/stat.h>
-#include <sys/types.h>
 #include <unistd.h>
 
 #include "test_main.h"
@@ -70,12 +70,18 @@ static int cleanup_directory(const char *subtest, const char *path) {
 // components.
 static int test_append_segment(TestContext *ctx) {
     const char *name = ctx->test_name;
+    String empty = str_empty;
     String appended = str_from_cstr("/tmp/example");
     String appended_with_slash = str_from_cstr("/tmp/example/");
     int status = 0;
 
+    path_append(&empty, "child");
     path_append(&appended, "child");
     path_append(&appended_with_slash, "child");
+
+    status = expect_string_eq(name, empty.cstr, empty.len, STR("child"));
+    if (status != 0)
+        goto cleanup;
 
     status = expect_string_eq(name, appended.cstr, appended.len,
                               STR("/tmp/example/child"));
@@ -87,6 +93,7 @@ static int test_append_segment(TestContext *ctx) {
                          appended_with_slash.len, STR("/tmp/example/child"));
 
 cleanup:
+    str_free(empty);
     str_free(appended_with_slash);
     str_free(appended);
     return status;
@@ -474,6 +481,82 @@ cleanup:
     return status;
 }
 
+// Verify that mkdir_p rejects the empty path and reports ENOENT.
+static int test_mkdir_p_rejects_empty_path(TestContext *ctx) {
+    const char *name = ctx->test_name;
+
+    errno = 0;
+    if (mkdir_p(""))
+        return fail_message(name,
+                            "mkdir_p unexpectedly accepted an empty path");
+    if (errno != ENOENT)
+        return fail_message(name,
+                            "mkdir_p did not report ENOENT for empty path");
+
+    return 0;
+}
+
+// Verify that mkdir_p accepts the root path without trying to create extra
+// components.
+static int test_mkdir_p_accepts_root(TestContext *ctx) {
+    const char *name = ctx->test_name;
+
+    if (!mkdir_p("/"))
+        return fail_message(name, "mkdir_p failed for the root path");
+
+    return 0;
+}
+
+// Verify that mkdir_p reports the failing filesystem errno when an
+// intermediate path component is a non-directory.
+static int test_mkdir_p_preserves_errno_on_failure(TestContext *ctx) {
+    const char *name = ctx->test_name;
+    char template[] = "/tmp/imgneko-path.XXXXXX";
+    char *temp_dir = NULL;
+    String file_path = str_empty;
+    String child_path = str_empty;
+    FILE *stream = NULL;
+    int status = 0;
+
+    temp_dir = mkdtemp(template);
+    if (temp_dir == NULL) {
+        status = fail_message(name, "mkdtemp failed");
+        goto cleanup;
+    }
+
+    file_path = path_join(temp_dir, "file");
+    stream = fopen(file_path.cstr, "w");
+    if (stream == NULL) {
+        status = fail_message(name, "failed to create a blocking file");
+        goto cleanup;
+    }
+    fclose(stream);
+    stream = NULL;
+
+    child_path = path_join(file_path.cstr, "child");
+    errno = 0;
+    if (mkdir_p(child_path.cstr)) {
+        status =
+            fail_message(name, "mkdir_p unexpectedly succeeded through a file");
+        goto cleanup;
+    }
+    if (errno != ENOTDIR) {
+        status = fail_message(name, "mkdir_p did not preserve ENOTDIR");
+        goto cleanup;
+    }
+
+cleanup:
+    if (stream != NULL)
+        fclose(stream);
+    if (file_path.len > 0 && unlink(file_path.cstr) != 0 && status == 0)
+        status = fail_message(name, "failed to remove the blocking file");
+    if (temp_dir != NULL && rmdir(temp_dir) != 0 && status == 0)
+        status = fail_message(name, "failed to remove the temp directory");
+    str_free(child_path);
+    str_free(file_path);
+    return status;
+}
+
 int main(int argc, char **argv) {
     const Subtest subtests[] = {
         PREFIXED_TEST(test_append_segment),
@@ -485,6 +568,9 @@ int main(int argc, char **argv) {
         PREFIXED_TEST(test_mkdir_p_handles_relative_paths),
         PREFIXED_TEST(test_mkdir_p_handles_dot_components),
         PREFIXED_TEST(test_mkdir_p_handles_multiple_leading_slashes),
+        PREFIXED_TEST(test_mkdir_p_rejects_empty_path),
+        PREFIXED_TEST(test_mkdir_p_accepts_root),
+        PREFIXED_TEST(test_mkdir_p_preserves_errno_on_failure),
     };
 
     return run_subtests(argc, argv, subtests, ARRAY_SIZE(subtests));

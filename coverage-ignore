@@ -14,8 +14,10 @@
 # src/file.c
 # src/file.c *
 #
-# For line- or branch-level suppressions in source, use a nearby
-# `IMGNEKO_UNCOVERED_OK` comment instead.
+# For line- or branch-level suppressions in source, use nearby comments such as:
+# `IMGNEKO_UNCOVERED_OK`
+# `IMGNEKO_UNCOVERED_OK_START` / `IMGNEKO_UNCOVERED_OK_END`
+# `IMGNEKO_UNCOVERED_OK[2 lines]`
 
 # This probe in test-runner.c is intentionally uncovered so the coverage
 # regression can prove that this file suppresses branch/function findings
@@ -24,3 +26,13 @@ testing/support/test-runner.c coverage_ignore_*
 
 # 3rd party code
 src/util/klib/*
+
+# Some macro-generated array functions.
+src/util/array.h make_*
+src/util/array.h copy_*
+
+# We don't care about coverage of the tests themselves.
+testing/tests/*
+
+# TODO: src/main.c is currently rudimentary
+src/main.c

@@ -6,7 +6,7 @@
 // Map a subtest marker to the suffix printed by `--list`, or NULL for normal
 // tests.
 static const char *test_marker_name(TestMarker marker) {
-    switch (marker) {
+    switch (marker) { // IMGNEKO_UNCOVERED_OK
     case TEST_MARKER_NONE:
         return NULL;
     case TEST_MARKER_XFAIL:
@@ -15,7 +15,7 @@ static const char *test_marker_name(TestMarker marker) {
         return "DISABLED";
     }
 
-    return NULL;
+    return NULL; // IMGNEKO_UNCOVERED_OK
 }
 
 // Run named subtests selected by argv and return the combined status code.
@@ -36,7 +36,7 @@ int run_subtests(int argc, char **argv, const Subtest *subtests,
         return 0;
     }
 
-    if (argc == 1 || (argc > 1 && strcmp(argv[1], "--all") == 0)) {
+    if (argc < 2 || strcmp(argv[1], "--all") == 0) {
         for (size_t i = 0; i < subtest_count; ++i) {
             ctx.test_name = subtests[i].name;
             status |= subtests[i].func(&ctx);

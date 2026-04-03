@@ -84,6 +84,8 @@ cleanup:
 static int test_empty_and_reserve(TestContext *ctx) {
     const char *name = ctx->test_name;
     String string = str_empty;
+    String grown_nonempty = str_from_cstr("hi");
+    size_t grown_nonempty_capacity = 0;
     int status = 0;
 
     if (string.len != 0 || string.capacity != 0 || string.cstr[0] != '\0') {
@@ -108,10 +110,33 @@ static int test_empty_and_reserve(TestContext *ctx) {
         goto cleanup;
     }
 
+    // Reserving the current capacity should keep the existing buffer.
+    char *reserved_data = string.cstr;
+    size_t reserved_capacity = string.capacity;
+    str_reserve(string, reserved_capacity);
+    if (string.cstr != reserved_data || string.capacity != reserved_capacity) {
+        status = fail_message(name, "reserve changed an already-large string");
+        goto cleanup;
+    }
+
     str_insert(string, 0, 'x');
     status = expect_string_eq(name, string.cstr, string.len, STR("x"));
+    if (status != 0)
+        goto cleanup;
+
+    // Growing a non-empty string should not reset its contents.
+    grown_nonempty_capacity = grown_nonempty.capacity;
+    str_reserve(grown_nonempty, grown_nonempty_capacity + 8);
+    if (grown_nonempty.capacity < grown_nonempty_capacity + 8) {
+        status = fail_message(name, "reserve did not grow a non-empty string");
+        goto cleanup;
+    }
+
+    status = expect_string_eq(name, grown_nonempty.cstr, grown_nonempty.len,
+                              STR("hi"));
 
 cleanup:
+    str_free(grown_nonempty);
     str_free(string);
     return status;
 }
@@ -192,6 +217,43 @@ cleanup:
     str_free(empty_cstr);
     str_free(special_empty);
     return status;
+}
+
+// Constructing an empty StringArray should keep the special empty state and
+// avoid allocating storage for the zero-length input.
+static int test_make_empty_string_array(TestContext *ctx) {
+    const char *name = ctx->test_name;
+    StringArray array = make_StringArray(NULL, 0);
+
+    if (array.data != NULL)
+        return fail_message(name, "empty StringArray unexpectedly allocated");
+    if (array.size != 0)
+        return fail_message(name, "empty StringArray has nonzero size");
+    if (array.capacity != 0)
+        return fail_message(name, "empty StringArray has nonzero capacity");
+
+    arr_free(array);
+    return 0;
+}
+
+// Copying an empty StringArray should preserve the special empty array state
+// without allocating storage.
+static int test_copy_empty_string_array(TestContext *ctx) {
+    const char *name = ctx->test_name;
+    StringArray source = arr_empty;
+    StringArray copy = copy_StringArray(source);
+
+    if (copy.data != NULL)
+        return fail_message(name,
+                            "copied empty StringArray unexpectedly allocated");
+    if (copy.size != 0)
+        return fail_message(name, "copied empty StringArray has nonzero size");
+    if (copy.capacity != 0)
+        return fail_message(name,
+                            "copied empty StringArray has nonzero capacity");
+
+    arr_free(copy);
+    return 0;
 }
 
 static int test_in_place_slice_ops(TestContext *ctx) {
@@ -362,20 +424,59 @@ static int test_predicates(TestContext *ctx) {
     if (ends_with_cstr("abc", "abcdef"))
         return fail_message(name, "ends_with_cstr matched a longer suffix");
 
+    if (!str_char_is_ascii_lower('m'))
+        return fail_message(name, "ascii lower rejected lowercase");
+    if (str_char_is_ascii_lower('M'))
+        return fail_message(name, "ascii lower accepted uppercase");
+    if (str_char_is_ascii_lower('{'))
+        return fail_message(name, "ascii lower accepted punctuation after z");
+
+    if (!str_char_is_ascii_upper('M'))
+        return fail_message(name, "ascii upper rejected uppercase");
+    if (str_char_is_ascii_upper('m'))
+        return fail_message(name, "ascii upper accepted lowercase");
+
+    if (!str_char_is_ascii_alpha('q'))
+        return fail_message(name, "ascii alpha rejected lowercase");
+    if (!str_char_is_ascii_alpha('Q'))
+        return fail_message(name, "ascii alpha rejected uppercase");
+    if (str_char_is_ascii_alpha('7'))
+        return fail_message(name, "ascii alpha accepted digit");
+
+    if (!str_char_is_ascii_digit('7'))
+        return fail_message(name, "ascii digit rejected digit");
+    if (str_char_is_ascii_digit('x'))
+        return fail_message(name, "ascii digit accepted letter");
+
+    if (!str_char_is_ascii_alnum('x'))
+        return fail_message(name, "ascii alnum rejected letter");
+    if (!str_char_is_ascii_alnum('7'))
+        return fail_message(name, "ascii alnum rejected digit");
+    if (str_char_is_ascii_alnum('-'))
+        return fail_message(name, "ascii alnum accepted punctuation");
+
+    if (!str_char_is_ascii_space(' '))
+        return fail_message(name, "ascii space rejected space");
+    if (!str_char_is_ascii_space('\r'))
+        return fail_message(name, "ascii space rejected carriage return");
+
+    if (str_char_is_ascii_space('x'))
+        return fail_message(name, "ascii space accepted non-space");
+
     return 0;
 }
 
 static int test_escape_bytes(TestContext *ctx) {
     const char *name = ctx->test_name;
-    const char escaped_input[] = {'A',  '\n',       '\t',
-                                  '\\', (char)0x01, (char)0xff};
+    const char escaped_input[] = {'A',  '\a', '\b', '\f',       '\n',      '\r',
+                                  '\t', '\v', '\\', (char)0x01, (char)0xff};
     String escaped = str_empty;
     String empty = str_empty;
     int status = 0;
 
     escaped = str_from_escaped_bytes(escaped_input, sizeof(escaped_input));
     status = expect_string_eq(name, escaped.cstr, escaped.len,
-                              STR("A\\n\\t\\\\\\x01\\xff"));
+                              STR("A\\a\\b\\f\\n\\r\\t\\v\\\\\\x01\\xff"));
     if (status != 0)
         goto cleanup;
 
@@ -436,6 +537,8 @@ int main(int argc, char **argv) {
         PREFIXED_TEST(test_from_cstr_and_copy),
         PREFIXED_TEST(test_empty_and_reserve),
         PREFIXED_TEST(test_empty_states),
+        PREFIXED_TEST(test_make_empty_string_array),
+        PREFIXED_TEST(test_copy_empty_string_array),
         PREFIXED_TEST(test_in_place_slice_ops),
         PREFIXED_TEST(test_truncate_and_push),
         PREFIXED_TEST(test_append_and_insert),

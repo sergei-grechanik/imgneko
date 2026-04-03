@@ -24,6 +24,7 @@ typedef struct Subtest {
 
 // Verify that test_func starts with "test_" and produce the displayed subtest
 // name without that prefix.
+// IMGNEKO_UNCOVERED_OK_START
 #define TEST__SUBTEST_NAME(test_func)                                          \
     ((#test_func) + 5 +                                                        \
      0 * sizeof(char[((#test_func)[0] == 't' && (#test_func)[1] == 'e' &&      \
@@ -31,6 +32,7 @@ typedef struct Subtest {
                       (#test_func)[4] == '_')                                  \
                          ? 1                                                   \
                          : -1]))
+// IMGNEKO_UNCOVERED_OK_END
 
 // Build a Subtest entry from a function named with the required test_ prefix.
 #define PREFIXED_TEST(test_func)                                               \

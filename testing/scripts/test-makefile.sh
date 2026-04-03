@@ -140,6 +140,16 @@ assert_equal() {
     fi
 }
 
+# Verify that the actual integer is strictly greater than the expected one.
+assert_greater() {
+    smaller=$1
+    larger=$2
+
+    if [ "$larger" -le "$smaller" ]; then
+        fail "expected integer greater than $smaller, got $larger"
+    fi
+}
+
 # Verify that a directory was created where the scenario expects one.
 assert_dir_exists() {
     path=$1
@@ -508,6 +518,10 @@ assert_file_contains "$COMPDB_CLANG_BUILD/compile_commands.json" "test-runner.c"
 say "Coverage report generation writes an incremental summary for instrumented source files"
 sh "$ROOT_DIR/configure" --build-dir="$COVERAGE_BUILD" --profile=debug --cc=clang --coverage-report
 
+run_capture "$LOG_DIR/coverage-report-missing.out" make -C "$COVERAGE_BUILD" coverage-report
+assert_status_nonzero
+assert_output_contains "error: coverage report inputs are missing in ./build/test-coverage/coverage; rerun make coverage first"
+
 run_capture "$LOG_DIR/coverage-build.out" make -C "$COVERAGE_BUILD" coverage
 assert_status_zero
 assert_output_contains "Wrote ./build/test-coverage/coverage/summary.txt"
@@ -515,6 +529,7 @@ assert_output_contains "Wrote ./build/test-coverage/coverage/uncovered.qf"
 assert_file_exists "$COVERAGE_BUILD/coverage/summary.txt"
 assert_file_exists "$COVERAGE_BUILD/coverage/coverage.profdata"
 assert_file_exists "$COVERAGE_BUILD/coverage/uncovered.qf"
+assert_file_exists "$COVERAGE_BUILD/coverage/tests.stamp"
 assert_file_contains "$COVERAGE_BUILD/coverage/summary.txt" "File 'src/main.c'"
 assert_file_contains "$COVERAGE_BUILD/coverage/summary.txt" "File 'src/util/path.c'"
 assert_file_contains "$COVERAGE_BUILD/coverage/summary.txt" "File 'testing/support/test-runner.c'"
@@ -522,28 +537,56 @@ assert_file_contains "$COVERAGE_BUILD/coverage/summary.txt" "File 'testing/tests
 assert_file_contains "$COVERAGE_BUILD/coverage/summary.txt" "Lines executed:"
 assert_file_contains "$COVERAGE_BUILD/coverage/summary.txt" "Branches covered:"
 assert_file_contains "$COVERAGE_BUILD/coverage/summary.txt" "Uncovered locations:"
-assert_file_contains "$COVERAGE_BUILD/coverage/uncovered.qf" "src/main.c:"
 assert_file_contains "$COVERAGE_BUILD/coverage/uncovered.qf" "src/util/path.c:"
 assert_file_contains "$COVERAGE_BUILD/coverage/uncovered.qf" "testing/tests/unit/util/path.c:"
 assert_file_contains "$COVERAGE_BUILD/coverage/uncovered.qf" "uncovered line"
 assert_file_contains "$COVERAGE_BUILD/coverage/uncovered.qf" "branch not fully covered"
 assert_file_contains "$COVERAGE_BUILD/coverage/uncovered.qf" "function never executed:"
+assert_file_not_contains "$COVERAGE_BUILD/coverage/uncovered.qf" "src/util/string.h:126:1: function never executed: str_from_data"
 TEST_RUNNER_IGNORED_BRANCH_LINE=$(grep -n 'if (coverage_ignore_branch)' "$ROOT_DIR/testing/support/test-runner.c" | cut -d: -f1)
 assert_file_contains "$COVERAGE_BUILD/coverage/uncovered.qf" "bool coverage_ignore_probe(bool coverage_ignore_branch) {"
 assert_file_contains "$COVERAGE_BUILD/coverage/uncovered.qf" "if (coverage_ignore_branch)"
 assert_file_not_contains "$COVERAGE_BUILD/coverage/uncovered.qf" "function never executed: coverage_ignore_probe"
 assert_file_matches "$COVERAGE_BUILD/coverage/uncovered.qf" "^testing/support/test-runner.c:${TEST_RUNNER_IGNORED_BRANCH_LINE}:[0-9]+: branch not fully covered"
+assert_file_not_contains "$COVERAGE_BUILD/coverage/uncovered.qf" "uncovered_ok_range_probe"
+assert_file_not_contains "$COVERAGE_BUILD/coverage/uncovered.qf" "if (range_uncovered_branch)"
+assert_file_not_contains "$COVERAGE_BUILD/coverage/uncovered.qf" "uncovered_ok_count_probe"
+assert_file_not_contains "$COVERAGE_BUILD/coverage/uncovered.qf" "if (count_uncovered_branch)"
 
 coverage_initial_mtime=$(stat -c %Y "$COVERAGE_BUILD/coverage/uncovered.qf")
+coverage_tests_initial_mtime=$(stat -c %Y "$COVERAGE_BUILD/coverage/tests.stamp")
 sleep 1
 run_capture "$LOG_DIR/coverage-repeat.out" make -C "$COVERAGE_BUILD" coverage
 assert_status_zero
 coverage_repeat_mtime=$(stat -c %Y "$COVERAGE_BUILD/coverage/uncovered.qf")
-assert_equal "$coverage_initial_mtime" "$coverage_repeat_mtime"
+assert_greater "$coverage_initial_mtime" "$coverage_repeat_mtime"
+coverage_tests_repeat_mtime=$(stat -c %Y "$COVERAGE_BUILD/coverage/tests.stamp")
+assert_equal "$coverage_tests_initial_mtime" "$coverage_tests_repeat_mtime"
+
+sleep 1
+run_capture "$LOG_DIR/coverage-report-repeat.out" make -C "$COVERAGE_BUILD" coverage-report
+assert_status_zero
+coverage_report_repeat_mtime=$(stat -c %Y "$COVERAGE_BUILD/coverage/uncovered.qf")
+coverage_tests_report_mtime=$(stat -c %Y "$COVERAGE_BUILD/coverage/tests.stamp")
+assert_greater "$coverage_repeat_mtime" "$coverage_report_repeat_mtime"
+assert_equal "$coverage_tests_initial_mtime" "$coverage_tests_report_mtime"
+
+sleep 1
+touch "$ROOT_DIR/coverage-ignore"
+run_capture "$LOG_DIR/coverage-report-rebuild.out" make -C "$COVERAGE_BUILD" coverage-report
+assert_status_zero
+coverage_report_rebuild_mtime=$(stat -c %Y "$COVERAGE_BUILD/coverage/uncovered.qf")
+coverage_tests_rebuild_mtime=$(stat -c %Y "$COVERAGE_BUILD/coverage/tests.stamp")
+assert_greater "$coverage_report_repeat_mtime" "$coverage_report_rebuild_mtime"
+assert_equal "$coverage_tests_initial_mtime" "$coverage_tests_rebuild_mtime"
 
 run_capture "$LOG_DIR/coverage-filter-error.out" make -C "$COVERAGE_BUILD" coverage FILTER=runner/expectations.sh
 assert_status_nonzero
 assert_output_contains "error: make coverage does not support FILTER; rerun without FILTER"
+
+run_capture "$LOG_DIR/coverage-report-filter-error.out" make -C "$COVERAGE_BUILD" coverage-report FILTER=runner/expectations.sh
+assert_status_nonzero
+assert_output_contains "error: make coverage-report does not support FILTER; rerun without FILTER"
 
 run_capture "$LOG_DIR/coverage-version.out" "$COVERAGE_BUILD/bin/imgneko" --version
 assert_status_zero

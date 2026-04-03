@@ -54,8 +54,11 @@ bool mkdir_p(const char *path) {
         }
 
         ok = mkdir_existing_ok(partial.cstr);
+        // On normal POSIX systems, `mkdir("/")` reports `EEXIST`, so this
+        // should always be ok. IMGNEKO_UNCOVERED_OK[2 lines]
         if (!ok)
             saved_errno = errno;
+
         goto cleanup;
     }
 
@@ -98,8 +101,10 @@ bool path_resolve_absolute(String *out, const char *path) {
     if (path_is_absolute(path)) {
         resolved = str_from_cstr(path);
     } else {
+        // IMGNEKO_UNCOVERED_OK[2 lines]
         if (getcwd(cwd, sizeof(cwd)) == NULL)
             return false;
+
         resolved = str_from_cstr(cwd);
         path_append(&resolved, path);
     }

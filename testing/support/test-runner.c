@@ -129,6 +129,25 @@ bool coverage_ignore_probe(bool coverage_ignore_branch) {
     return false;
 }
 
+// Intentionally never called. Start/end suppression should hide every
+// uncovered finding in this small helper.
+// IMGNEKO_UNCOVERED_OK_START
+bool uncovered_ok_range_probe(bool range_uncovered_branch) {
+    if (range_uncovered_branch)
+        return true;
+    return false;
+}
+// IMGNEKO_UNCOVERED_OK_END
+
+// Intentionally never called. Counted suppression should hide the marker line
+// plus this whole helper body.
+// IMGNEKO_UNCOVERED_OK[5 lines]
+bool uncovered_ok_count_probe(bool count_uncovered_branch) {
+    if (count_uncovered_branch)
+        return true;
+    return false;
+}
+
 static void string_array_push_copy(StringArray *array, const char *item) {
     arr_push(*array, str_from_cstr(item));
 }
