@@ -3,6 +3,7 @@
 #include <string.h>
 
 #include "test_main.h"
+#include "util/common.h"
 
 // Return one failure message for the active subtest.
 static int fail_message(const char *subtest, const char *message) {

@@ -8,6 +8,7 @@
 #include <unistd.h>
 
 #include "test_main.h"
+#include "util/common.h"
 #include "util/path.h"
 
 #define STR(text) (text), (sizeof(text) - 1)

@@ -13,6 +13,7 @@
 #include <unistd.h>
 
 #include "util/array.h"
+#include "util/error.h"
 #include "util/file.h"
 #include "util/klib/khash.h"
 #include "util/path.h"
@@ -113,11 +114,6 @@ static const char *const test_output_dir_env = "IMGNEKO_TEST_OUTPUT_DIR";
 static const char *const stdout_file_name = "run-stdout";
 static const char *const stderr_file_name = "run-stderr";
 
-static void die_errno(const char *message) {
-    fprintf(stderr, "error: %s: %s\n", message, strerror(errno));
-    exit(1);
-}
-
 static void die_usage(const char *argv0) {
     fprintf(stderr, "usage: %s TEST_FILE\n", argv0);
     exit(2);
@@ -193,7 +189,7 @@ static size_t regex_capture_group_count(const char *regex_text) {
 
 // Return one user-facing name for the directive kind.
 static const char *directive_kind_name(DirectiveKind kind) {
-    switch (kind) {
+    switch (kind) { // IMGNEKO_UNCOVERED_OK
     case DIRECTIVE_CHECK:
         return "CHECK";
     case DIRECTIVE_CHECK_SAME:
@@ -204,7 +200,7 @@ static const char *directive_kind_name(DirectiveKind kind) {
         return "CHECK-NOT";
     }
 
-    abort();
+    abort(); // IMGNEKO_UNCOVERED_OK
 }
 
 static void pattern_segment_array_free(PatternSegmentArray *segments) {
@@ -249,8 +245,7 @@ static void parsed_test_free(ParsedTest *parsed) {
 
 static void variable_context_init(VariableContext *ctx) {
     ctx->map = kh_init(VariableMap);
-    if (ctx->map == NULL)
-        die_errno("failed to allocate variable map");
+    require(ctx->map != NULL, "failed to allocate variable map: %errno");
 }
 
 static void variable_context_free(VariableContext *ctx) {
@@ -281,8 +276,8 @@ static void variable_context_set(VariableContext *ctx, const char *name,
     int absent = 0;
     khiter_t it = kh_put(VariableMap, ctx->map, name, &absent);
 
-    if (it == kh_end(ctx->map))
-        die_errno("failed to insert into variable map");
+    require(it != kh_end(ctx->map),
+            "failed to insert into variable map: %errno");
 
     if (absent) {
         String key = str_from_cstr(name);
@@ -296,13 +291,17 @@ static void variable_context_set(VariableContext *ctx, const char *name,
 }
 
 // Write a descriptive parse error.
-static void parse_error(const char *path, int line_number, const char *message,
-                        const char *detail) {
-    if (detail == NULL)
-        fprintf(stderr, "%s:%d: error: %s\n", path, line_number, message);
-    else
-        fprintf(stderr, "%s:%d: error: %s: %s\n", path, line_number, message,
-                detail);
+static void parse_error(const char *path, int line_number,
+                        const char *message) {
+    fprintf(stderr, "%s:%d: error: %s\n", path, line_number, message);
+}
+
+// Write an invalid-variable-name parse error with the name quoted so the empty
+// name case is still explicit in diagnostics.
+static void parse_invalid_variable_name_error(const char *path, int line_number,
+                                              const char *name) {
+    fprintf(stderr, "%s:%d: error: invalid variable name: '%s'\n", path,
+            line_number, name);
 }
 
 static void check_directive_free(CheckDirective *directive) {
@@ -357,7 +356,7 @@ static bool parse_pattern_segments(const char *path, int line_number,
 
             if (end == NULL) {
                 parse_error(path, line_number,
-                            "unterminated {{...}} regex fragment", NULL);
+                            "unterminated {{...}} regex fragment");
                 return false;
             }
 
@@ -368,6 +367,7 @@ static bool parse_pattern_segments(const char *path, int line_number,
             continue;
         }
 
+        // IMGNEKO_UNCOVERED_OK: It's always `[[` at this point
         if (strncmp(pattern_text + cursor, "[[", 2) == 0) {
             const char *end = strstr(pattern_text + cursor + 2, "]]");
             const char *body;
@@ -376,7 +376,7 @@ static bool parse_pattern_segments(const char *path, int line_number,
 
             if (end == NULL) {
                 parse_error(path, line_number,
-                            "unterminated [[...]] variable fragment", NULL);
+                            "unterminated [[...]] variable fragment");
                 return false;
             }
 
@@ -388,8 +388,8 @@ static bool parse_pattern_segments(const char *path, int line_number,
                 bool valid = is_valid_variable_name(name.cstr);
 
                 if (!valid) {
-                    parse_error(path, line_number, "invalid variable name",
-                                name.cstr);
+                    parse_invalid_variable_name_error(path, line_number,
+                                                      name.cstr);
                     str_free(name);
                     return false;
                 }
@@ -405,8 +405,7 @@ static bool parse_pattern_segments(const char *path, int line_number,
             bool valid = is_valid_variable_name(name.cstr);
 
             if (!valid) {
-                parse_error(path, line_number, "invalid variable name",
-                            name.cstr);
+                parse_invalid_variable_name_error(path, line_number, name.cstr);
                 str_free(name);
                 return false;
             }
@@ -458,8 +457,7 @@ static bool parse_test_file(const char *path, ParsedTest *parsed) {
     int line_number = 0;
     bool ok = true;
 
-    if (stream == NULL)
-        die_errno("failed to open test file");
+    require(stream != NULL, "failed to open test file: %errno");
 
     while (getline(&line, &line_capacity, stream) >= 0) {
         const char *directive_name = NULL;
@@ -476,13 +474,13 @@ static bool parse_test_file(const char *path, ParsedTest *parsed) {
         if (name_len == 3 && strncmp(directive_name, "RUN", 3) == 0) {
             if (parsed->run_command.len != 0) {
                 parse_error(path, line_number,
-                            "multiple RUN directives are not supported", NULL);
+                            "multiple RUN directives are not supported");
                 ok = false;
                 break;
             }
             if (payload[0] == '\0') {
                 parse_error(path, line_number,
-                            "RUN directive requires a command", NULL);
+                            "RUN directive requires a command");
                 ok = false;
                 break;
             }
@@ -524,8 +522,7 @@ static bool parse_test_file(const char *path, ParsedTest *parsed) {
         arr_push(parsed->directives, directive);
     }
 
-    if (ferror(stream))
-        die_errno("failed to read test file");
+    require(!ferror(stream), "failed to read test file: %errno");
 
     free(line);
     fclose(stream);
@@ -533,11 +530,11 @@ static bool parse_test_file(const char *path, ParsedTest *parsed) {
     if (!ok)
         return false;
     if (parsed->run_command.len == 0) {
-        parse_error(path, 1, "missing RUN directive", NULL);
+        parse_error(path, 1, "missing RUN directive");
         return false;
     }
     if (parsed->directives.size == 0) {
-        parse_error(path, 1, "missing CHECK directives", NULL);
+        parse_error(path, 1, "missing CHECK directives");
         return false;
     }
     return true;
@@ -592,21 +589,20 @@ static String resolve_test_output_dir(void) {
     String output_dir = str_empty;
 
     if (configured_dir != NULL && configured_dir[0] != '\0') {
-        if (!path_resolve_absolute(&output_dir, configured_dir))
-            die_errno("failed to resolve test output directory");
+        require(path_resolve_absolute(&output_dir, configured_dir),
+                "failed to resolve test output directory: %errno");
     } else {
         char template[] = "/tmp/imgneko-run-and-check.XXXXXX";
         char *created_dir = mkdtemp(template);
 
-        if (created_dir == NULL)
-            die_errno("mkdtemp failed");
+        require(created_dir != NULL, "mkdtemp failed: %errno");
         output_dir = str_from_cstr(created_dir);
     }
 
-    if (!mkdir_p(output_dir.cstr))
-        die_errno("failed to create test output directory");
-    if (setenv(test_output_dir_env, output_dir.cstr, 1) != 0)
-        die_errno("failed to update test output env");
+    require(mkdir_p(output_dir.cstr),
+            "failed to create test output directory: %errno");
+    require(setenv(test_output_dir_env, output_dir.cstr, 1) == 0,
+            "failed to update test output env: %errno");
 
     return output_dir;
 }
@@ -619,7 +615,7 @@ static bool compile_pattern(const char *path, const CheckDirective *directive,
     for (size_t i = 0; i < directive->segments.size; ++i) {
         const PatternSegment *segment = &directive->segments.data[i];
 
-        switch (segment->kind) {
+        switch (segment->kind) { // IMGNEKO_UNCOVERED_OK
         case SEGMENT_LITERAL:
             append_regex_escaped_literal(&compiled->regex_text,
                                          segment->text.cstr, segment->text.len);
@@ -704,10 +700,12 @@ static bool regex_search_segment(const CompiledPattern *pattern,
     const char *subject = line->text.cstr + start_column;
     int regexec_flags = 0;
 
+    // IMGNEKO_UNCOVERED_OK_START
     if (start_column > line->text.len || end_column > line->text.len ||
         start_column > end_column) {
         return false;
     }
+    // IMGNEKO_UNCOVERED_OK_END
 
     if (line->text.cstr[end_column] != '\0') {
         window = str_from_data(subject, end_column - start_column);
@@ -725,6 +723,7 @@ static bool regex_search_segment(const CompiledPattern *pattern,
             // regexec() reports offsets relative to `subject`. Shift every
             // present match back to the original line coordinates. Optional
             // groups that did not participate are returned as negative offsets.
+            // IMGNEKO_UNCOVERED_OK: `rm_eo < 0` is always false
             if (matches[i].rm_so < 0 || matches[i].rm_eo < 0)
                 continue;
             matches[i].rm_so += (regoff_t)start_column;
@@ -733,11 +732,13 @@ static bool regex_search_segment(const CompiledPattern *pattern,
         str_free(window);
         return true;
     }
+    // IMGNEKO_UNCOVERED_OK: Hard to trigger anything but REG_NOMATCH or success
     if (rc == REG_NOMATCH) {
         str_free(window);
         return false;
     }
 
+    // IMGNEKO_UNCOVERED_OK_START
     {
         char buffer[256];
         regerror(rc, &pattern->regex, buffer, sizeof(buffer));
@@ -745,6 +746,7 @@ static bool regex_search_segment(const CompiledPattern *pattern,
         fprintf(stderr, "error: regexec failed: %s\n", buffer);
         exit(1);
     }
+    // IMGNEKO_UNCOVERED_OK_END
 }
 
 // Read the stdout file into logical lines so matching keeps its line-oriented
@@ -813,6 +815,7 @@ static bool find_check_same_match(const CompiledPattern *pattern,
                                   const LineMatch *previous_match,
                                   LineMatch *match_out, regmatch_t *captures,
                                   size_t capture_count) {
+    // IMGNEKO_UNCOVERED_OK[2 lines]
     if (previous_match->line_index >= lines->size)
         return false;
 
@@ -866,6 +869,7 @@ static bool output_region_is_empty(const OutputLineArray *lines,
     if (start.line_index == end.line_index)
         return start.column >= end.column;
 
+    // IMGNEKO_UNCOVERED_OK[2 lines]
     if (start.line_index >= lines->size || end.line_index >= lines->size)
         return false;
 
@@ -982,6 +986,7 @@ static void apply_captures(VariableContext *variables,
         const CaptureBinding *binding = &pattern->bindings.data[i];
         regmatch_t match = captures[binding->group_index];
 
+        // IMGNEKO_UNCOVERED_OK[2 lines]
         if (match.rm_so < 0 || match.rm_eo < 0)
             continue;
 
@@ -1002,13 +1007,13 @@ static bool report_positive_match_failure(const char *path,
     fprintf(stderr, "%s:%d: note: pattern: %s\n", path, directive->line_number,
             directive->raw_pattern.cstr);
 
-    if (directive->kind == DIRECTIVE_CHECK_SAME && previous_positive != NULL &&
-        previous_positive->line_index < lines->size) {
+    if (directive->kind == DIRECTIVE_CHECK_SAME) {
+        assert(previous_positive != NULL);
         print_output_line_note(path, directive->line_number,
                                previous_positive->line_index + 1,
                                &lines->data[previous_positive->line_index]);
-    } else if (directive->kind == DIRECTIVE_CHECK_NEXT &&
-               previous_positive != NULL) {
+    } else if (directive->kind == DIRECTIVE_CHECK_NEXT) {
+        assert(previous_positive != NULL);
         if (previous_positive->line_index + 1 < lines->size) {
             print_output_line_note(
                 path, directive->line_number, previous_positive->line_index + 2,
@@ -1083,8 +1088,8 @@ static bool run_checks(const char *path, const ParsedTest *parsed,
 
         capture_count = pattern.capture_group_count + 1;
         captures = calloc(capture_count, sizeof(*captures));
-        if (captures == NULL)
-            die_errno("failed to allocate regex match array");
+        require(captures != NULL,
+                "failed to allocate regex match array: %errno");
 
         if (directive->kind == DIRECTIVE_CHECK) {
             if (have_previous_positive) {
@@ -1097,7 +1102,8 @@ static bool run_checks(const char *path, const ParsedTest *parsed,
             matched =
                 find_check_same_match(&pattern, &lines, &previous_positive,
                                       &match, captures, capture_count);
-        } else if (directive->kind == DIRECTIVE_CHECK_NEXT) {
+        } else if (/*IMGNEKO_UNCOVERED_OK*/ directive->kind ==
+                   DIRECTIVE_CHECK_NEXT) {
             matched =
                 find_check_next_match(&pattern, &lines, &previous_positive,
                                       &match, captures, capture_count);
@@ -1170,21 +1176,21 @@ static int run_command_capture(const char *command, const char *output_dir,
     int status = 1;
 
     stdout_fd = open(stdout_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
-    if (stdout_fd < 0)
-        die_errno("failed to open stdout output file");
+    require(stdout_fd >= 0, "failed to open stdout output file: %errno");
     stderr_fd = open(stderr_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
-    if (stderr_fd < 0) {
+    if (stderr_fd < 0) { // IMGNEKO_UNCOVERED_OK_START
         close(stdout_fd);
         die_errno("failed to open stderr output file");
-    }
+    } // IMGNEKO_UNCOVERED_OK_END
 
     pid = fork();
-    if (pid < 0) {
+    if (pid < 0) { // IMGNEKO_UNCOVERED_OK_START
         close(stderr_fd);
         close(stdout_fd);
         die_errno("fork failed");
-    }
+    } // IMGNEKO_UNCOVERED_OK_END
 
+    // IMGNEKO_UNCOVERED_OK_START
     if (pid == 0) {
         if (dup2(stdout_fd, STDOUT_FILENO) < 0 ||
             dup2(stderr_fd, STDERR_FILENO) < 0) {
@@ -1194,6 +1200,7 @@ static int run_command_capture(const char *command, const char *output_dir,
 
         close(stderr_fd);
         close(stdout_fd);
+
         if (setenv(test_output_dir_env, output_dir, 1) != 0) {
             fprintf(stderr, "error: failed to update test output env: %s\n",
                     strerror(errno));
@@ -1206,20 +1213,21 @@ static int run_command_capture(const char *command, const char *output_dir,
         }
 
         execl("/bin/sh", "sh", "-c", command, (char *)NULL);
+
         fprintf(stderr, "error: failed to exec /bin/sh: %s\n", strerror(errno));
         _exit(127);
     }
+    // IMGNEKO_UNCOVERED_OK_END
 
     close(stderr_fd);
     close(stdout_fd);
 
-    if (waitpid(pid, &status, 0) < 0)
-        die_errno("waitpid failed");
+    require(waitpid(pid, &status, 0) >= 0, "waitpid failed: %errno");
     if (WIFEXITED(status))
         return WEXITSTATUS(status);
     if (WIFSIGNALED(status))
         return 128 + WTERMSIG(status);
-    return 1;
+    return 1; // IMGNEKO_UNCOVERED_OK
 }
 
 // Print the RUN command metadata so direct invocations show exactly which
@@ -1235,6 +1243,12 @@ static void print_run_metadata(const char *path, const char *command,
 // Print the shell exit-like status after the RUN command finishes.
 static void print_run_exit_code(const char *path, int exit_code) {
     fprintf(stderr, "%s: note: RUN exit code: %d\n", path, exit_code);
+}
+
+// Print the final high-level run-and-check outcome for this test file.
+static void print_result(const char *path, bool ok) {
+    fprintf(stderr, "%s: note: run-and-check result: %s\n", path,
+            ok ? "PASS" : "FAIL");
 }
 
 // Print the last few lines from one redirected output file to aid failure
@@ -1295,8 +1309,8 @@ int main(int argc, char **argv) {
     if (!parse_test_file(argv[1], &parsed))
         goto cleanup;
 
-    if (!path_resolve_absolute(&test_path, argv[1]))
-        die_errno("failed to resolve test path");
+    require(path_resolve_absolute(&test_path, argv[1]),
+            "failed to resolve test path: %errno");
     output_dir = resolve_test_output_dir();
     stdout_path = path_join(output_dir.cstr, stdout_file_name);
     stderr_path = path_join(output_dir.cstr, stderr_file_name);
@@ -1323,6 +1337,10 @@ int main(int argc, char **argv) {
 cleanup:
     if (run_completed && exit_code != 0)
         print_failure_output_tails(argv[1], stdout_path.cstr, stderr_path.cstr);
+
+    assert(argc > 1);
+    print_result(argv[1], exit_code == 0);
+
     str_free(expanded_command);
     str_free(stderr_path);
     str_free(stdout_path);

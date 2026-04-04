@@ -3,8 +3,6 @@
 
 #include <stddef.h>
 
-#include "util/common.h"
-
 typedef struct TestContext {
     const char *test_name;
 } TestContext;

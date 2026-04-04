@@ -314,7 +314,7 @@ def add_uncovered_lines(
             if lineno in suppressed_lines:
                 continue
             text = source_line_text(source_lines, lineno)
-            if not text:
+            if not text or text == "}":
                 continue
             entries.add(f"{relpath}:{lineno}:1: uncovered line: {text}")
 

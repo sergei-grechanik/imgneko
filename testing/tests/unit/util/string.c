@@ -2,6 +2,7 @@
 #include <string.h>
 
 #include "test_main.h"
+#include "util/common.h"
 #include "util/string.h"
 
 #define STR(text) (text), (sizeof(text) - 1)

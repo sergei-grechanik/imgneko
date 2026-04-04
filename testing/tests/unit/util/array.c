@@ -3,6 +3,7 @@
 
 #include "test_main.h"
 #include "util/array.h"
+#include "util/common.h"
 
 DEFINE_ARRAY_TYPE(IntArray, int)
 

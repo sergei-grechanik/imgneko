@@ -27,13 +27,16 @@ NOT_LOG=$(mktemp /tmp/imgneko-run-and-check-not.XXXXXX)
 VAR_LOG=$(mktemp /tmp/imgneko-run-and-check-var.XXXXXX)
 NOT_VAR_DEF_LOG=$(mktemp /tmp/imgneko-run-and-check-not-var-def.XXXXXX)
 NOT_VAR_USE_LOG=$(mktemp /tmp/imgneko-run-and-check-not-var-use.XXXXXX)
+NEXT_NO_NEXT_LINE_LOG=$(mktemp /tmp/imgneko-run-and-check-next-no-next-line.XXXXXX)
 ANCHOR_LOG=$(mktemp /tmp/imgneko-run-and-check-anchor.XXXXXX)
 SAME_LINE_VAR_LOG=$(mktemp /tmp/imgneko-run-and-check-same-line-var.XXXXXX)
+SAME_LINE_WITHOUT_PREVIOUS_LOG=$(mktemp /tmp/imgneko-run-and-check-same-line-without-previous.XXXXXX)
 OUTPUT_DIR_LOG=$(mktemp /tmp/imgneko-run-and-check-output-dir.XXXXXX)
 WHOLE_LINE_NOT_LOG=$(mktemp /tmp/imgneko-run-and-check-whole-line-not.XXXXXX)
 
 cleanup() {
-    rm -f "$NOT_LOG" "$VAR_LOG" "$NOT_VAR_DEF_LOG" "$NOT_VAR_USE_LOG" "$ANCHOR_LOG" "$SAME_LINE_VAR_LOG" "$OUTPUT_DIR_LOG" "$WHOLE_LINE_NOT_LOG"
+    rm -f "$NOT_LOG" "$VAR_LOG" "$NOT_VAR_DEF_LOG" "$NOT_VAR_USE_LOG" "$NEXT_NO_NEXT_LINE_LOG" "$ANCHOR_LOG" "$SAME_LINE_VAR_LOG" "$OUTPUT_DIR_LOG" "$WHOLE_LINE_NOT_LOG"
+    rm -f "$SAME_LINE_WITHOUT_PREVIOUS_LOG"
 }
 
 trap cleanup EXIT
@@ -84,6 +87,17 @@ assert_file_contains "$NOT_VAR_USE_LOG" "check-not-variable-use-fail.sh:12: note
 assert_file_contains "$NOT_VAR_USE_LOG" "check-not-variable-use-fail.sh:12: note: output line 2: id 123 middle abc"
 
 set +e
+"$RUN_AND_CHECK" "$TEST_DIR/check-next-no-next-line-fail.sh" >"$NEXT_NO_NEXT_LINE_LOG" 2>&1
+status=$?
+set -e
+
+[ "$status" -ne 0 ] || fail "CHECK-NEXT no-next-line failure unexpectedly passed"
+assert_file_contains "$NEXT_NO_NEXT_LINE_LOG" "check-next-no-next-line-fail.sh: note: RUN exit code: 0"
+assert_file_contains "$NEXT_NO_NEXT_LINE_LOG" "check-next-no-next-line-fail.sh:10: error: CHECK-NEXT did not match"
+assert_file_contains "$NEXT_NO_NEXT_LINE_LOG" "check-next-no-next-line-fail.sh:10: note: pattern: beta"
+assert_file_contains "$NEXT_NO_NEXT_LINE_LOG" "check-next-no-next-line-fail.sh:10: note: there is no next output line after line 1"
+
+set +e
 "$RUN_AND_CHECK" "$TEST_DIR/anchor-both-fail.sh" >"$ANCHOR_LOG" 2>&1
 status=$?
 set -e
@@ -103,6 +117,16 @@ set -e
     fail "same-line variable reuse failure unexpectedly passed"
 assert_file_contains "$SAME_LINE_VAR_LOG" "same-line-variable-use-fail.sh: note: RUN exit code: 0"
 assert_file_contains "$SAME_LINE_VAR_LOG" "same-line-variable-use-fail.sh:9: error: undefined variable [[value]] in CHECK"
+
+set +e
+"$RUN_AND_CHECK" "$TEST_DIR/same-line-without-previous-fail.sh" >"$SAME_LINE_WITHOUT_PREVIOUS_LOG" 2>&1
+status=$?
+set -e
+
+[ "$status" -ne 0 ] ||
+    fail "CHECK-SAME without a previous positive match unexpectedly passed"
+assert_file_contains "$SAME_LINE_WITHOUT_PREVIOUS_LOG" "same-line-without-previous-fail.sh: note: RUN exit code: 0"
+assert_file_contains "$SAME_LINE_WITHOUT_PREVIOUS_LOG" "same-line-without-previous-fail.sh:9: error: CHECK-SAME requires a previous positive match"
 
 set +e
 "$RUN_AND_CHECK" "$TEST_DIR/not-whole-line-anchor-fail.sh" >"$WHOLE_LINE_NOT_LOG" 2>&1

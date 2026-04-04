@@ -4,6 +4,7 @@
 #include <unistd.h>
 
 #include "test_main.h"
+#include "util/common.h"
 #include "util/path.h"
 #include "util/string.h"
 

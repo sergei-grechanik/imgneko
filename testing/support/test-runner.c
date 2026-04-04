@@ -19,6 +19,7 @@
 #include <unistd.h>
 
 #include "util/array.h"
+#include "util/error.h"
 #include "util/file.h"
 #include "util/path.h"
 #include "util/string.h"
@@ -114,11 +115,6 @@ static const double timeout_output_drain_grace_seconds = 0.25;
 // Per-test environment variable that points tests at their own output
 // directory.
 static const char *const test_output_dir_env = "IMGNEKO_TEST_OUTPUT_DIR";
-
-static void die_errno(const char *message) {
-    fprintf(stderr, "error: %s: %s\n", message, strerror(errno));
-    exit(1);
-}
 
 // Intentionally never called. The coverage-ignore regression keeps this helper
 // uncovered so the repo-level ignore list can prove that it suppresses branch
@@ -283,8 +279,7 @@ static TestMarker executable_test_marker(const char *path) {
     TestMarker marker = TEST_MARKER_NONE;
     size_t line_number = 0;
 
-    if (stream == NULL)
-        die_errno("failed to open an executable test file");
+    require(stream != NULL, "failed to open an executable test file: %errno");
 
     while (line_number < 5 && getline(&line, &line_capacity, stream) >= 0) {
         TestMarker line_marker;
@@ -526,8 +521,8 @@ static String test_output_file_path(const char *test_output_dir) {
 static double monotonic_seconds(void) {
     struct timespec ts;
 
-    if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0)
-        die_errno("clock_gettime failed");
+    require(clock_gettime(CLOCK_MONOTONIC, &ts) == 0,
+            "clock_gettime failed: %errno");
 
     return (double)ts.tv_sec + (double)ts.tv_nsec / 1000000000.0;
 }
@@ -683,16 +678,16 @@ static TestRunResult run_argv(char *const *argv, const char *test_output_dir,
         // internal signal setup into later code.
         sigemptyset(&sigchld_action.sa_mask);
         sigchld_action.sa_handler = run_argv_sigchld_handler;
-        if (sigaction(SIGCHLD, &sigchld_action, &old_sigchld_action) != 0)
-            die_errno("sigaction failed");
+        require(sigaction(SIGCHLD, &sigchld_action, &old_sigchld_action) == 0,
+                "sigaction failed: %errno");
 
         // Block SIGCHLD in normal execution so a child exit cannot land in the
         // tiny window between waitpid(WNOHANG) and pselect(). If that happens,
         // the signal stays pending until pselect() temporarily unblocks it.
         sigemptyset(&sigchld_mask);
         sigaddset(&sigchld_mask, SIGCHLD);
-        if (sigprocmask(SIG_BLOCK, &sigchld_mask, &old_sigchld_mask) != 0)
-            die_errno("sigprocmask failed");
+        require(sigprocmask(SIG_BLOCK, &sigchld_mask, &old_sigchld_mask) == 0,
+                "sigprocmask failed: %errno");
 
         // pselect() takes a full replacement mask, not a "signals to unblock"
         // set, so start from the caller's original mask and only make SIGCHLD
@@ -701,12 +696,10 @@ static TestRunResult run_argv(char *const *argv, const char *test_output_dir,
         sigdelset(&wait_mask, SIGCHLD);
     }
 
-    if (!mkdir_p(test_output_dir))
-        die_errno("failed to create a directory");
+    require(mkdir_p(test_output_dir), "failed to create a directory: %errno");
     output_fd = open(output_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
 
-    if (output_fd < 0)
-        die_errno("failed to open a test output file");
+    require(output_fd >= 0, "failed to open a test output file: %errno");
 
     // Route both stdout and stderr through one pipe so the parent can always
     // capture the full merged output stream into output_path, and optionally
@@ -776,8 +769,8 @@ static TestRunResult run_argv(char *const *argv, const char *test_output_dir,
     // parent lost the race but the process-group setup step is already done.
     // ESRCH means the child exited before the parent got here, so there is no
     // remaining process to move into a group.
-    if (setpgid(pid, pid) != 0 && errno != EACCES && errno != ESRCH)
-        die_errno("setpgid failed");
+    require(setpgid(pid, pid) == 0 || errno == EACCES || errno == ESRCH,
+            "setpgid failed: %errno");
 
     start_time = monotonic_seconds();
     if (timeout_enabled)
@@ -864,13 +857,12 @@ static TestRunResult run_argv(char *const *argv, const char *test_output_dir,
 
     // Restore the caller's signal state now that this child is no longer being
     // supervised by the pselect()/SIGCHLD timeout machinery.
-    if (timeout_enabled &&
-        sigprocmask(SIG_SETMASK, &old_sigchld_mask, NULL) != 0) {
-        die_errno("sigprocmask restore failed");
-    }
-    if (timeout_enabled && sigaction(SIGCHLD, &old_sigchld_action, NULL) != 0) {
-        die_errno("sigaction restore failed");
-    }
+    require(!timeout_enabled ||
+                sigprocmask(SIG_SETMASK, &old_sigchld_mask, NULL) == 0,
+            "sigprocmask restore failed: %errno");
+    require(!timeout_enabled ||
+                sigaction(SIGCHLD, &old_sigchld_action, NULL) == 0,
+            "sigaction restore failed: %errno");
 
     result.elapsed_seconds = monotonic_seconds() - start_time;
     if (deadline_expired) {
@@ -880,19 +872,20 @@ static TestRunResult run_argv(char *const *argv, const char *test_output_dir,
         result.exit_code = 124;
         // Kill the whole process group in case the test spawned children that
         // would otherwise outlive the direct runner child.
-        if (kill(-pid, SIGTERM) != 0 && errno != ESRCH)
-            die_errno("kill failed");
+        require(kill(-pid, SIGTERM) == 0 || errno == ESRCH,
+                "kill failed: %errno");
         // Give the test subtree a brief chance to exit cleanly on SIGTERM
         // before forcing it down with SIGKILL.
         struct timespec grace = {.tv_sec = 0, .tv_nsec = 100000000};
         nanosleep(&grace, NULL);
-        if (kill(-pid, SIGKILL) != 0 && errno != ESRCH)
-            die_errno("kill failed");
+        require(kill(-pid, SIGKILL) == 0 || errno == ESRCH,
+                "kill failed: %errno");
         // Reap the direct child so we do not leave a zombie behind after the
         // timeout path finishes. ECHILD means it was already reaped elsewhere
         // in the timeout race, which is fine.
-        if (!child_reaped && waitpid(pid, &status, 0) < 0 && errno != ECHILD)
-            die_errno("waitpid failed after timeout");
+        require(child_reaped || waitpid(pid, &status, 0) >= 0 ||
+                    errno == ECHILD,
+                "waitpid failed after timeout: %errno");
         // A timeout can kill the child before the parent has drained all bytes
         // already buffered in the pipe, so finish draining them before closing
         // the output file. Bound that drain in case a detached descendant kept
@@ -931,8 +924,7 @@ static int run_argv_capture_stdout_lines(char *const *argv,
     pid_t pid;
     int status;
 
-    if (pipe(pipe_fds) != 0)
-        die_errno("pipe failed");
+    require(pipe(pipe_fds) == 0, "pipe failed: %errno");
 
     pid = fork();
     if (pid < 0) {
@@ -966,8 +958,7 @@ static int run_argv_capture_stdout_lines(char *const *argv,
         int read_errno = errno;
 
         fclose(stream);
-        if (waitpid(pid, &status, 0) < 0)
-            die_errno("waitpid failed");
+        require(waitpid(pid, &status, 0) >= 0, "waitpid failed: %errno");
         errno = read_errno;
         die_errno("failed to read child stdout");
     }
@@ -1433,13 +1424,13 @@ int main(int argc, char **argv) {
                 exit_code = 1;
                 goto cleanup;
             }
-            if (!path_resolve_absolute(&output_dir, argv[++i]))
-                die_errno("failed to resolve output directory");
+            require(path_resolve_absolute(&output_dir, argv[++i]),
+                    "failed to resolve output directory: %errno");
             continue;
         }
         if (strncmp(argv[i], "--output-dir=", 13) == 0) {
-            if (!path_resolve_absolute(&output_dir, argv[i] + 13))
-                die_errno("failed to resolve output directory");
+            require(path_resolve_absolute(&output_dir, argv[i] + 13),
+                    "failed to resolve output directory: %errno");
             continue;
         }
         if (strcmp(argv[i], "--filter") == 0) {

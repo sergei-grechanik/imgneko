@@ -4,6 +4,7 @@
 #include <unistd.h>
 
 #include "test_main.h"
+#include "util/common.h"
 
 // Emit one failure message for the current subtest and return a failing status.
 static int fail_message(const char *subtest, const char *message) {
