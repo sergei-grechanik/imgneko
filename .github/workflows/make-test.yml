@@ -38,7 +38,7 @@ jobs:
 
       - name: Regenerate checked-in dependency file
         run: |
-          make -C build/depfiles depfile
+          make BUILD_DIR=build/depfiles depfile
           git diff --exit-code -- mk/dependencies.mk
 
   make-test-default:
@@ -69,7 +69,11 @@ jobs:
           sudo apt-get install -y clang
 
       - name: Configure ASan build
-        run: ./configure --profile=asan --cc=clang
+        run: ./configure --profile=asan --cc=clang --coverage-report
 
-      - name: Run ASan-profile tests
-        run: make -C build/asan test
+      - name: Run ASan-profile coverage
+        # Note: This will run all tests and also generate a coverage report.
+        run: make BUILD_DIR=build/asan coverage
+
+      - name: Dump uncovered quickfix entries
+        run: cat build/asan/coverage/uncovered.qf
