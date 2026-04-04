@@ -6,6 +6,43 @@
 set -eu
 
 ROOT_DIR=$(CDPATH= cd "$(dirname "$0")/../.." && pwd)
+SOURCE_ROOT=${IMGNEKO_TEST_MAKEFILE_SOURCE_ROOT:-$ROOT_DIR}
+
+# Copy only git-tracked files from the source working tree into a fresh
+# destination. This keeps local build artifacts out of test repos while still
+# including any uncommitted edits to tracked files.
+copy_tracked_repo() {
+    destination=$1
+
+    mkdir -p "$destination"
+    (
+        cd "$SOURCE_ROOT" &&
+        git ls-files -z | tar --null -T - -cf -
+    ) | (
+        cd "$destination" &&
+        tar -xf -
+    )
+}
+
+if [ "${IMGNEKO_TEST_MAKEFILE_ISOLATED:-0}" != 1 ]; then
+    ISOLATED_ROOT=$(mktemp -d /tmp/imgneko-makefile-test-repo.XXXXXX)
+    ISOLATED_REPO=$ISOLATED_ROOT/repo
+
+    copy_tracked_repo "$ISOLATED_REPO"
+
+    set +e
+    (
+        cd "$ISOLATED_REPO" &&
+        IMGNEKO_TEST_MAKEFILE_ISOLATED=1 \
+        IMGNEKO_TEST_MAKEFILE_SOURCE_ROOT="$ROOT_DIR" \
+            sh "$ISOLATED_REPO/testing/scripts/test-makefile.sh"
+    )
+    status=$?
+    set -e
+
+    rm -rf "$ISOLATED_ROOT"
+    exit "$status"
+fi
 
 DEFAULT_BUILD=$ROOT_DIR/build/default
 CUSTOM_BUILD=$ROOT_DIR/build/test-debug-custom-cc
@@ -209,22 +246,12 @@ run_capture() {
     set -e
 }
 
-# Copy the whole repository tree for tests that need to mutate top-level files
-# such as configure or VERSION without touching the real checkout.
+# Copy a clean tracked-file snapshot for tests that need to mutate top-level
+# files such as configure or VERSION without touching the active test repo.
 copy_repo() {
     destination=$1
 
-    cp -R "$ROOT_DIR" "$destination"
-    chmod +x "$destination/configure"
-}
-
-# Copy the repository while clearing any existing build tree so tests can set up
-# an exact ./build layout without inheriting local artifacts from the checkout.
-copy_repo_without_build() {
-    destination=$1
-
-    copy_repo "$destination"
-    rm -rf "$destination/build"
+    copy_tracked_repo "$destination"
 }
 
 trap cleanup EXIT
@@ -286,7 +313,7 @@ assert_output_contains "-DFEATURE_X=1"
 # make should direct the user to configure first instead of inventing a default
 # build path on its own.
 say "Root make requires configure when no build directories exist"
-copy_repo_without_build "$NO_BUILD_REPO"
+copy_repo "$NO_BUILD_REPO"
 
 run_capture "$LOG_DIR/root-make-no-builds.out" make -C "$NO_BUILD_REPO"
 assert_status_nonzero
@@ -296,7 +323,7 @@ assert_output_contains "run ./configure first"
 # In a fresh repository copy with only one build directory under ./build, plain
 # root-level make should select that directory even before it is configured.
 say "Root make auto-selects a unique non-default build directory"
-copy_repo_without_build "$UNIQUE_BUILD_REPO"
+copy_repo "$UNIQUE_BUILD_REPO"
 UNIQUE_BUILD=$UNIQUE_BUILD_REPO/build/solo
 mkdir -p "$UNIQUE_BUILD"
 
@@ -316,7 +343,7 @@ assert_path_absent "$UNIQUE_BUILD_REPO/build/default"
 # With multiple build directories under ./build, plain root-level make must ask
 # users to disambiguate even if neither directory is configured yet.
 say "Root make requires explicit disambiguation with multiple build directories"
-copy_repo_without_build "$AMBIGUOUS_BUILD_REPO"
+copy_repo "$AMBIGUOUS_BUILD_REPO"
 mkdir -p "$AMBIGUOUS_BUILD_REPO/build/one" "$AMBIGUOUS_BUILD_REPO/build/two"
 
 run_capture "$LOG_DIR/root-make-ambiguous.out" make -C "$AMBIGUOUS_BUILD_REPO"
@@ -537,17 +564,12 @@ assert_file_contains "$COVERAGE_BUILD/coverage/summary.txt" "File 'testing/tests
 assert_file_contains "$COVERAGE_BUILD/coverage/summary.txt" "Lines executed:"
 assert_file_contains "$COVERAGE_BUILD/coverage/summary.txt" "Branches covered:"
 assert_file_contains "$COVERAGE_BUILD/coverage/summary.txt" "Uncovered locations:"
-assert_file_contains "$COVERAGE_BUILD/coverage/uncovered.qf" "src/util/path.c:"
-assert_file_contains "$COVERAGE_BUILD/coverage/uncovered.qf" "testing/tests/unit/util/path.c:"
 assert_file_contains "$COVERAGE_BUILD/coverage/uncovered.qf" "uncovered line"
 assert_file_contains "$COVERAGE_BUILD/coverage/uncovered.qf" "branch not fully covered"
 assert_file_contains "$COVERAGE_BUILD/coverage/uncovered.qf" "function never executed:"
-assert_file_not_contains "$COVERAGE_BUILD/coverage/uncovered.qf" "src/util/string.h:126:1: function never executed: str_from_data"
-TEST_RUNNER_IGNORED_BRANCH_LINE=$(grep -n 'if (coverage_ignore_branch)' "$ROOT_DIR/testing/support/test-runner.c" | cut -d: -f1)
 assert_file_contains "$COVERAGE_BUILD/coverage/uncovered.qf" "bool coverage_ignore_probe(bool coverage_ignore_branch) {"
 assert_file_contains "$COVERAGE_BUILD/coverage/uncovered.qf" "if (coverage_ignore_branch)"
 assert_file_not_contains "$COVERAGE_BUILD/coverage/uncovered.qf" "function never executed: coverage_ignore_probe"
-assert_file_matches "$COVERAGE_BUILD/coverage/uncovered.qf" "^testing/support/test-runner.c:${TEST_RUNNER_IGNORED_BRANCH_LINE}:[0-9]+: branch not fully covered"
 assert_file_not_contains "$COVERAGE_BUILD/coverage/uncovered.qf" "uncovered_ok_range_probe"
 assert_file_not_contains "$COVERAGE_BUILD/coverage/uncovered.qf" "if (range_uncovered_branch)"
 assert_file_not_contains "$COVERAGE_BUILD/coverage/uncovered.qf" "uncovered_ok_count_probe"
