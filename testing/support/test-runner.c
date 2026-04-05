@@ -23,6 +23,7 @@
 #include "util/file.h"
 #include "util/path.h"
 #include "util/string.h"
+#include "util/time.h"
 
 #ifndef TEST_RUNNER_ROOT_DIR
 #error "TEST_RUNNER_ROOT_DIR must be defined at compile time"
@@ -92,6 +93,15 @@ typedef struct TestRunResult {
     double elapsed_seconds;
 } TestRunResult;
 
+// Per-test runtime configuration shared by executable and C test launches.
+typedef struct TestRunConfig {
+    const char *test_output_dir;
+    const char *output_path;
+    double timeout_seconds;
+    bool output_passthrough;
+    double debug_parent_setpgid_delay_seconds;
+} TestRunConfig;
+
 DEFINE_ARRAY_TYPE(CSubtestArray, CSubtest)
 DEFINE_ARRAY_TYPE(TestFileArray, TestFile)
 DEFINE_ARRAY_TYPE(TestCaseArray, TestCase)
@@ -119,11 +129,12 @@ static const char *const test_output_dir_env = "IMGNEKO_TEST_OUTPUT_DIR";
 // Intentionally never called. The coverage-ignore regression keeps this helper
 // uncovered so the repo-level ignore list can prove that it suppresses branch
 // and function findings without hiding uncovered line entries.
-bool coverage_ignore_probe(bool coverage_ignore_branch) {
-    if (coverage_ignore_branch)
-        return true;
-    return false;
+bool coverage_ignore_probe(bool arg)
+// IMGNEKO_UNCOVERED_OK_START
+{
+    return arg;
 }
+// IMGNEKO_UNCOVERED_OK_END
 
 // Intentionally never called. Start/end suppression should hide every
 // uncovered finding in this small helper.
@@ -164,6 +175,7 @@ static void test_file_array_free(TestFileArray *array) {
 
 // Return the user-facing name for a test marker, or NULL for an unmarked test.
 static const char *test_marker_name(TestMarker marker) {
+    // IMGNEKO_UNCOVERED_OK
     switch (marker) {
     case TEST_MARKER_NONE:
         return NULL;
@@ -173,6 +185,7 @@ static const char *test_marker_name(TestMarker marker) {
         return "DISABLED";
     }
 
+    // IMGNEKO_UNCOVERED_OK
     return NULL;
 }
 
@@ -299,11 +312,13 @@ static TestMarker executable_test_marker(const char *path) {
         marker = line_marker;
     }
 
+    // IMGNEKO_UNCOVERED_OK_START
     if (ferror(stream)) {
         free(line);
         fclose(stream);
         die_errno("failed to read an executable test file");
     }
+    // IMGNEKO_UNCOVERED_OK_END
 
     free(line);
     fclose(stream);
@@ -339,12 +354,10 @@ static int compare_test_cases(const void *lhs, const void *rhs) {
 // not already absolute. The caller owns the returned string and must free it
 // with str_free.
 static String absolute_build_dir(void) {
-    String resolved = str_empty;
+    String resolved = str_from_cstr(build_dir);
 
-    if (path_is_absolute(build_dir))
-        resolved = str_from_cstr(build_dir);
-    else
-        resolved = path_join(root_dir, build_dir);
+    require(path_is_absolute(build_dir),
+            "TEST_RUNNER_BUILD_DIR must be absolute");
 
     path_trim_trailing_slashes(&resolved);
     return resolved;
@@ -383,6 +396,7 @@ static void discover_test_files_rec(const char *tests_root_abs,
                                       : path_join(rel_dir, entry->d_name);
         abs_path = path_join(tests_root_abs, rel_path.cstr);
 
+        // IMGNEKO_UNCOVERED_OK_START
         if (stat(abs_path.cstr, &st) != 0) {
             str_free(rel_path);
             str_free(abs_path);
@@ -390,6 +404,7 @@ static void discover_test_files_rec(const char *tests_root_abs,
             str_free(dir_path);
             die_errno("failed to stat a test path");
         }
+        // IMGNEKO_UNCOVERED_OK_END
 
         if (S_ISDIR(st.st_mode)) {
             discover_test_files_rec(tests_root_abs, rel_path.cstr, files);
@@ -448,14 +463,94 @@ static String default_test_output_dir(void) {
     return output_dir;
 }
 
+// Compute the default absolute directory that stores discovered tests. The
+// caller owns the returned string and must free it with str_free.
+static String default_tests_dir(void) {
+    return path_join(root_dir, tests_root_rel);
+}
+
+// Compute the default absolute directory that stores compiled C test binaries.
+// The caller owns the returned string and must free it with str_free.
+static String default_test_bin_dir(void) {
+    String test_bin_dir = absolute_build_dir();
+    path_append(&test_bin_dir, "obj/test-bin");
+    return test_bin_dir;
+}
+
+// Require the selected output root to be absent or empty so a new run never
+// mixes fresh results with leftover files from an earlier invocation.
+static void require_empty_output_dir(const char *output_dir) {
+    struct stat st;
+    DIR *dir;
+    bool has_entries = false;
+    int readdir_errno = 0;
+    String rm_command = str_from_cstr("rm -r ");
+
+    if (stat(output_dir, &st) != 0) {
+        require(errno == ENOENT, "failed to stat output directory: %errno");
+        str_free(rm_command);
+        return;
+    }
+
+    str_append_shell_quoted_word(&rm_command, output_dir);
+
+    if (!S_ISDIR(st.st_mode)) {
+        fprintf(stderr,
+                "error: test output path exists and is not a directory: %s\n"
+                "       remove it first with %s\n",
+                output_dir, rm_command.cstr);
+        str_free(rm_command);
+        exit(1);
+    }
+
+    dir = opendir(output_dir);
+    if (dir == NULL)
+        die_errno("failed to open output directory");
+
+    errno = 0;
+    for (;;) {
+        struct dirent *entry = readdir(dir);
+
+        if (entry == NULL)
+            break;
+        if (strcmp(entry->d_name, ".") == 0 ||
+            strcmp(entry->d_name, "..") == 0) {
+            continue;
+        }
+
+        has_entries = true;
+        break;
+    }
+
+    readdir_errno = errno;
+    // IMGNEKO_UNCOVERED_OK_START
+    if (!has_entries && readdir_errno != 0) {
+        errno = readdir_errno;
+        die("failed to read output directory: %errno");
+    }
+    // IMGNEKO_UNCOVERED_OK_END
+    require(closedir(dir) == 0, "failed to close output directory: %errno");
+
+    if (has_entries) {
+        fprintf(stderr,
+                "error: test output directory is not empty: %s\n"
+                "       remove it first with %s\n",
+                output_dir, rm_command.cstr);
+        str_free(rm_command);
+        exit(1);
+    }
+
+    str_free(rm_command);
+}
+
 // Reject output roots that would let the runner delete the repository root,
 // the whole build directory, or the filesystem root.
 static void validate_output_dir(const char *output_dir) {
     String build_dir_abs = absolute_build_dir();
     bool unsafe = false;
 
-    if (!path_is_absolute(output_dir))
-        unsafe = true;
+    require(path_is_absolute(output_dir),
+            "output directory must be an absolute path");
 
     if (strcmp(output_dir, "/") == 0 || path_is_prefix(output_dir, root_dir) ||
         path_is_prefix(output_dir, build_dir_abs.cstr)) {
@@ -517,42 +612,10 @@ static String test_output_file_path(const char *test_output_dir) {
     return path_join(test_output_dir, "output");
 }
 
-// Return the current monotonic time in seconds.
-static double monotonic_seconds(void) {
-    struct timespec ts;
-
-    require(clock_gettime(CLOCK_MONOTONIC, &ts) == 0,
-            "clock_gettime failed: %errno");
-
-    return (double)ts.tv_sec + (double)ts.tv_nsec / 1000000000.0;
-}
-
 // pselect() only wakes for signals that are actually caught, so install a
 // no-op SIGCHLD handler purely to interrupt the sleep when the child changes
 // state. The main loop still does the real reap via waitpid().
 static void run_argv_sigchld_handler(int signum) { (void)signum; }
-
-// Return the relative timeout until the next monotonic deadline. Zero means
-// the deadline already expired.
-static struct timespec timeout_until_next_deadline(double deadline_seconds) {
-    struct timespec timeout = {0};
-    double remaining_seconds = deadline_seconds - monotonic_seconds();
-
-    if (remaining_seconds <= 0.0)
-        return timeout;
-
-    timeout.tv_sec = (time_t)remaining_seconds;
-    timeout.tv_nsec =
-        (long)((remaining_seconds - (double)timeout.tv_sec) * 1000000000.0);
-    if (timeout.tv_nsec >= 1000000000L) {
-        timeout.tv_sec += timeout.tv_nsec / 1000000000L;
-        timeout.tv_nsec %= 1000000000L;
-    }
-    if (timeout.tv_sec == 0 && timeout.tv_nsec == 0)
-        timeout.tv_nsec = 1;
-
-    return timeout;
-}
 
 // Write the full byte range to fd, retrying short writes and EINTR. Fatal on
 // failure because the runner cannot recover from losing captured output.
@@ -561,11 +624,13 @@ static void write_all_or_die(int fd, const char *data, size_t len,
     while (len != 0) {
         ssize_t written = write(fd, data, len);
 
+        // IMGNEKO_UNCOVERED_OK_START
         if (written < 0) {
             if (errno == EINTR)
                 continue;
             die_errno(message);
         }
+        // IMGNEKO_UNCOVERED_OK_END
 
         data += written;
         len -= (size_t)written;
@@ -580,11 +645,13 @@ static void pump_child_output(int output_pipe_fd, int output_fd,
     char buffer[4096];
     ssize_t count = read(output_pipe_fd, buffer, sizeof(buffer));
 
+    // IMGNEKO_UNCOVERED_OK_START
     if (count < 0) {
         if (errno == EINTR)
             return;
         die_errno("failed to read child output");
     }
+    // IMGNEKO_UNCOVERED_OK_END
 
     if (count == 0) {
         close(output_pipe_fd);
@@ -612,10 +679,12 @@ static void drain_child_output_pipe_until_deadline(int output_pipe_fd,
 
     while (!output_pipe_closed) {
         fd_set read_fds;
-        struct timespec wait_timeout =
-            timeout_until_next_deadline(deadline_seconds);
+        struct timespec wait_timeout = time_timeout_until_deadline(
+            deadline_seconds, time_monotonic_seconds());
         int rc;
 
+        // TODO: Coverage. Reaching this branch depends on a tight timing window
+        // between the deadline computation and the immediate follow-up check.
         if (wait_timeout.tv_sec == 0 && wait_timeout.tv_nsec == 0)
             break;
 
@@ -626,11 +695,13 @@ static void drain_child_output_pipe_until_deadline(int output_pipe_fd,
 
         if (rc == 0)
             break;
+        // IMGNEKO_UNCOVERED_OK_START
         if (rc < 0) {
             if (errno == EINTR)
                 continue;
             die_errno("pselect failed while draining timed-out child output");
         }
+        // IMGNEKO_UNCOVERED_OK_END
 
         if (FD_ISSET(output_pipe_fd, &read_fds)) {
             pump_child_output(output_pipe_fd, output_fd, output_passthrough,
@@ -645,17 +716,15 @@ static void drain_child_output_pipe_until_deadline(int output_pipe_fd,
 // Run argv in a child process with stdout/stderr captured into output_path.
 // The child also receives its per-test output directory and runs from it.
 //
-// When output_passthrough is enabled, mirror the merged child output to the
-// user while still writing the same bytes into output_path.
+// When `config->output_passthrough` is true, mirror the merged child output to
+// the user while still writing the same bytes into `config->output_path`.
 //
-// When a timeout is enabled, place the child in its own process group so a
-// timeout can terminate the whole test subtree, not just the direct exec'd
-// process.
-static TestRunResult run_argv(char *const *argv, const char *test_output_dir,
-                              const char *output_path, double timeout_seconds,
-                              bool output_passthrough) {
+// When `config->timeout_seconds` enables a timeout, place the child in its own
+// process group so timeout cleanup can terminate the whole test subtree, not
+// just the direct exec'd process.
+static TestRunResult run_argv(char *const *argv, const TestRunConfig *config) {
     TestRunResult result = {.exit_code = 1, .timed_out = false};
-    bool timeout_enabled = timeout_seconds > 0.0;
+    bool timeout_enabled = config->timeout_seconds > 0.0;
     bool deadline_expired = false;
     bool child_reaped = false;
     bool output_pipe_closed = false;
@@ -696,28 +765,21 @@ static TestRunResult run_argv(char *const *argv, const char *test_output_dir,
         sigdelset(&wait_mask, SIGCHLD);
     }
 
-    require(mkdir_p(test_output_dir), "failed to create a directory: %errno");
-    output_fd = open(output_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    require(mkdir_p(config->test_output_dir),
+            "failed to create a directory: %errno");
+    output_fd = open(config->output_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
 
     require(output_fd >= 0, "failed to open a test output file: %errno");
 
     // Route both stdout and stderr through one pipe so the parent can always
     // capture the full merged output stream into output_path, and optionally
     // mirror the same bytes to the user's terminal in passthrough mode.
-    if (pipe(output_pipe_fds) != 0) {
-        close(output_fd);
-        die_errno("pipe failed");
-    }
+    require(pipe(output_pipe_fds) == 0, "pipe failed: %errno");
 
     pid = fork();
+    require(pid >= 0, "fork failed: %errno");
 
-    if (pid < 0) {
-        close(output_pipe_fds[0]);
-        close(output_pipe_fds[1]);
-        close(output_fd);
-        die_errno("fork failed");
-    }
-
+    // IMGNEKO_UNCOVERED_OK_START
     if (pid == 0) {
         // The parent blocks SIGCHLD around its wait loop. Undo that in the
         // child before running the test so the test process inherits the
@@ -744,14 +806,14 @@ static TestRunResult run_argv(char *const *argv, const char *test_output_dir,
         close(output_pipe_fds[0]);
         close(output_pipe_fds[1]);
         close(output_fd);
-        if (setenv(test_output_dir_env, test_output_dir, 1) != 0) {
+        if (setenv(test_output_dir_env, config->test_output_dir, 1) != 0) {
             fprintf(stderr, "error: failed to update test output env: %s\n",
                     strerror(errno));
             _exit(127);
         }
-        if (chdir(test_output_dir) != 0) {
+        if (chdir(config->test_output_dir) != 0) {
             fprintf(stderr, "error: failed to chdir to %s: %s\n",
-                    test_output_dir, strerror(errno));
+                    config->test_output_dir, strerror(errno));
             _exit(127);
         }
         execvp(argv[0], argv);
@@ -759,22 +821,32 @@ static TestRunResult run_argv(char *const *argv, const char *test_output_dir,
                 strerror(errno));
         _exit(127);
     }
+    // IMGNEKO_UNCOVERED_OK_END
 
     close(output_pipe_fds[1]);
+
+    // An artificial delay injected to trigger the situation where the parent is
+    // too late to set the child process group before the child exits or sets it
+    // itself.
+    time_sleep_seconds(config->debug_parent_setpgid_delay_seconds);
 
     // Repeat setpgid in the parent to close the small race where timeout
     // cleanup might need to signal the process group before the child runs its
     // own setpgid call.
-    // EACCES means the child already exec'd after its own setpgid(), so the
-    // parent lost the race but the process-group setup step is already done.
-    // ESRCH means the child exited before the parent got here, so there is no
-    // remaining process to move into a group.
-    require(setpgid(pid, pid) == 0 || errno == EACCES || errno == ESRCH,
-            "setpgid failed: %errno");
+    if (setpgid(pid, pid) != 0) {
+        // EACCES means the child already exec'd after its own setpgid(), so the
+        // parent lost the race but the process-group setup step is done.
+        // ESRCH means the child exited before the parent got here, so there is
+        // no remaining process to move into a group. This is hard to trigger in
+        // practice if we don't reap the process first.
+        // IMGNEKO_UNCOVERED_OK[2 lines]
+        if (errno != EACCES && errno != ESRCH)
+            die_errno("setpgid failed: %errno");
+    }
 
-    start_time = monotonic_seconds();
+    start_time = time_monotonic_seconds();
     if (timeout_enabled)
-        deadline_seconds = start_time + timeout_seconds;
+        deadline_seconds = start_time + config->timeout_seconds;
 
     // Loop until the child is reaped and the output pipe reaches EOF, or the
     // deadline expires. The child can exit before the parent consumes the last
@@ -785,12 +857,14 @@ static TestRunResult run_argv(char *const *argv, const char *test_output_dir,
             // child already changed state, 0 means it is still running.
             pid_t waited = waitpid(pid, &status, WNOHANG);
 
+            // IMGNEKO_UNCOVERED_OK_START
             if (waited < 0) {
                 // A caught signal can interrupt the probe; just retry.
                 if (errno == EINTR)
                     continue;
                 die_errno("waitpid failed");
             }
+            // IMGNEKO_UNCOVERED_OK_END
 
             if (waited == pid)
                 child_reaped = true;
@@ -812,8 +886,12 @@ static TestRunResult run_argv(char *const *argv, const char *test_output_dir,
         }
 
         if (timeout_enabled && !child_reaped) {
-            wait_timeout = timeout_until_next_deadline(deadline_seconds);
+            wait_timeout = time_timeout_until_deadline(
+                deadline_seconds, time_monotonic_seconds());
 
+            // TODO: Coverage. This branch also depends on the deadline expiring
+            // in a narrow window between helper return and the follow-up check
+            // here.
             if (wait_timeout.tv_sec == 0 && wait_timeout.tv_nsec == 0) {
                 deadline_expired = true;
                 break;
@@ -837,16 +915,16 @@ static TestRunResult run_argv(char *const *argv, const char *test_output_dir,
         if (rc < 0) {
             // EINTR is the normal wakeup path after SIGCHLD (or another caught
             // signal); loop back and probe waitpid() again.
-            if (errno == EINTR)
-                continue;
-            die_errno("pselect failed");
+            require(errno == EINTR, "pselect failed: %errno");
+            continue;
         }
 
+        // IMGNEKO_UNCOVERED_OK: output_pipe_closed is never true here
         if (!output_pipe_closed && FD_ISSET(output_pipe_fds[0], &read_fds)) {
             // Consume one available chunk, append it to the per-test output
             // file, and optionally pass it through to the user immediately.
-            pump_child_output(output_pipe_fds[0], output_fd, output_passthrough,
-                              &output_pipe_closed);
+            pump_child_output(output_pipe_fds[0], output_fd,
+                              config->output_passthrough, &output_pipe_closed);
         }
 
         // Keep SIGCHLD blocked between the WNOHANG probe and pselect(). That
@@ -857,14 +935,14 @@ static TestRunResult run_argv(char *const *argv, const char *test_output_dir,
 
     // Restore the caller's signal state now that this child is no longer being
     // supervised by the pselect()/SIGCHLD timeout machinery.
-    require(!timeout_enabled ||
-                sigprocmask(SIG_SETMASK, &old_sigchld_mask, NULL) == 0,
-            "sigprocmask restore failed: %errno");
-    require(!timeout_enabled ||
-                sigaction(SIGCHLD, &old_sigchld_action, NULL) == 0,
-            "sigaction restore failed: %errno");
+    if (timeout_enabled) {
+        require(sigprocmask(SIG_SETMASK, &old_sigchld_mask, NULL) == 0,
+                "sigprocmask restore failed: %errno");
+        require(sigaction(SIGCHLD, &old_sigchld_action, NULL) == 0,
+                "sigaction restore failed: %errno");
+    }
 
-    result.elapsed_seconds = monotonic_seconds() - start_time;
+    result.elapsed_seconds = time_monotonic_seconds() - start_time;
     if (deadline_expired) {
         result.timed_out = true;
         // Use 124 as the synthetic timeout status. This matches the common
@@ -872,17 +950,20 @@ static TestRunResult run_argv(char *const *argv, const char *test_output_dir,
         result.exit_code = 124;
         // Kill the whole process group in case the test spawned children that
         // would otherwise outlive the direct runner child.
+        // IMGNEKO_UNCOVERED_OK: ESRCH case is hard to trigger
         require(kill(-pid, SIGTERM) == 0 || errno == ESRCH,
                 "kill failed: %errno");
         // Give the test subtree a brief chance to exit cleanly on SIGTERM
         // before forcing it down with SIGKILL.
         struct timespec grace = {.tv_sec = 0, .tv_nsec = 100000000};
         nanosleep(&grace, NULL);
+        // IMGNEKO_UNCOVERED_OK: ESRCH case is hard to trigger
         require(kill(-pid, SIGKILL) == 0 || errno == ESRCH,
                 "kill failed: %errno");
         // Reap the direct child so we do not leave a zombie behind after the
         // timeout path finishes. ECHILD means it was already reaped elsewhere
         // in the timeout race, which is fine.
+        // IMGNEKO_UNCOVERED_OK[2 lines]: ECHILD case is hard to trigger
         require(child_reaped || waitpid(pid, &status, 0) >= 0 ||
                     errno == ECHILD,
                 "waitpid failed after timeout: %errno");
@@ -892,11 +973,11 @@ static TestRunResult run_argv(char *const *argv, const char *test_output_dir,
         // the inherited pipe open after escaping the timed-out process group.
         if (!output_pipe_closed) {
             drain_child_output_pipe_until_deadline(
-                output_pipe_fds[0], output_fd, output_passthrough,
-                monotonic_seconds() + timeout_output_drain_grace_seconds);
+                output_pipe_fds[0], output_fd, config->output_passthrough,
+                time_monotonic_seconds() + timeout_output_drain_grace_seconds);
         }
         close(output_fd);
-        result.elapsed_seconds = monotonic_seconds() - start_time;
+        result.elapsed_seconds = time_monotonic_seconds() - start_time;
         return result;
     }
 
@@ -912,6 +993,7 @@ static TestRunResult run_argv(char *const *argv, const char *test_output_dir,
         return result;
     }
 
+    // IMGNEKO_UNCOVERED_OK
     return result;
 }
 
@@ -927,12 +1009,9 @@ static int run_argv_capture_stdout_lines(char *const *argv,
     require(pipe(pipe_fds) == 0, "pipe failed: %errno");
 
     pid = fork();
-    if (pid < 0) {
-        close(pipe_fds[0]);
-        close(pipe_fds[1]);
-        die_errno("fork failed");
-    }
+    require(pid >= 0, "fork failed: %errno");
 
+    // IMGNEKO_UNCOVERED_OK_START
     if (pid == 0) {
         // Redirect stdout to the pipe and run the command.
         if (dup2(pipe_fds[1], STDOUT_FILENO) < 0) {
@@ -946,14 +1025,13 @@ static int run_argv_capture_stdout_lines(char *const *argv,
                 strerror(errno));
         _exit(127);
     }
+    // IMGNEKO_UNCOVERED_OK_END
 
     close(pipe_fds[1]);
     stream = fdopen(pipe_fds[0], "r");
-    if (stream == NULL) {
-        close(pipe_fds[0]);
-        die_errno("fdopen failed");
-    }
+    require(stream != NULL, "fdopen failed: %errno");
 
+    // IMGNEKO_UNCOVERED_OK_START: Hard to make it fail
     if (!file_read_stream_lines(stdout_lines, stream, -1)) {
         int read_errno = errno;
 
@@ -962,11 +1040,10 @@ static int run_argv_capture_stdout_lines(char *const *argv,
         errno = read_errno;
         die_errno("failed to read child stdout");
     }
-    fclose(stream);
+    // IMGNEKO_UNCOVERED_OK_END
 
-    if (waitpid(pid, &status, 0) < 0) {
-        die_errno("waitpid failed");
-    }
+    fclose(stream);
+    require(waitpid(pid, &status, 0) >= 0, "waitpid failed: %errno");
 
     if (WIFEXITED(status)) {
         return WEXITSTATUS(status);
@@ -976,6 +1053,7 @@ static int run_argv_capture_stdout_lines(char *const *argv,
         return 128 + WTERMSIG(status);
     }
 
+    // IMGNEKO_UNCOVERED_OK
     return 1;
 }
 
@@ -1032,48 +1110,53 @@ static bool test_matches_pattern(const TestCase *test_case,
     return false;
 }
 
-// Check whether a test matches any filter pattern (supporting '|' alternation).
+// Check whether a test matches any already-flattened filter pattern. Empty
+// filter arrays match everything.
 static bool test_matches_filters(const TestCase *test_case,
                                  const StringArray *filters) {
-    size_t i;
-
     if (filters->size == 0)
         return true;
 
-    for (i = 0; i < filters->size; ++i) {
-        const char *pattern = filters->data[i].cstr;
-        const char *cursor = pattern;
-
-        while (*cursor != '\0') {
-            const char *bar = strchr(cursor, '|');
-            size_t len = bar != NULL ? (size_t)(bar - cursor) : strlen(cursor);
-            String part = str_from_data(cursor, len);
-
-            if (part.len != 0 && test_matches_pattern(test_case, part.cstr)) {
-                str_free(part);
-                return true;
-            }
-
-            str_free(part);
-            if (bar == NULL)
-                break;
-            cursor = bar + 1;
-        }
-    }
+    for (size_t i = 0; i < filters->size; ++i)
+        if (test_matches_pattern(test_case, filters->data[i].cstr))
+            return true;
 
     return false;
 }
 
+// Expand `|` alternation in filter patterns into individual match patterns.
+// Return false after reporting a CLI error if any alternation part is empty.
+static bool flatten_filters(const StringArray *patterns, StringArray *out) {
+    for (size_t i = 0; i < patterns->size; ++i) {
+        const char *pattern = patterns->data[i].cstr;
+        const char *cursor = pattern;
+
+        do {
+            const char *bar = strchr(cursor, '|');
+            size_t len = bar != NULL ? (size_t)(bar - cursor) : strlen(cursor);
+
+            if (len == 0) {
+                fprintf(stderr, "error: invalid filter pattern: %s\n", pattern);
+                return false;
+            }
+
+            arr_push(*out, str_from_data(cursor, len));
+            if (bar == NULL)
+                break;
+
+            cursor = bar + 1;
+        } while (true);
+    }
+
+    return true;
+}
+
 // Build the expected on-disk path for a compiled C test binary.
 // The caller owns the returned string and must free it with str_free.
-static String c_test_output_path(const char *rel_path) {
-    String build_dir_abs = absolute_build_dir();
-    String base = path_join(build_dir_abs.cstr, "obj/test-bin");
-    String final_path = path_join(base.cstr, rel_path);
-
+static String c_test_output_path(const char *test_bin_dir,
+                                 const char *rel_path) {
+    String final_path = path_join(test_bin_dir, rel_path);
     str_append_cstr(final_path, ".bin");
-    str_free(base);
-    str_free(build_dir_abs);
     return final_path;
 }
 
@@ -1107,9 +1190,9 @@ static void require_c_test_binary(const TestFile *file, const char *exe_path) {
 // Writes the executable path to `*exe_path_out`; caller owns it and frees it
 // with str_free.
 static void c_test_subtests(const TestFile *file, CSubtestArray *subtests,
-                            String *exe_path_out) {
+                            const char *test_bin_dir, String *exe_path_out) {
     StringArray stdout_lines = arr_empty;
-    String exe_path = c_test_output_path(file->rel_path.cstr);
+    String exe_path = c_test_output_path(test_bin_dir, file->rel_path.cstr);
     int status;
     char *argv[] = {exe_path.cstr, "--list", NULL};
 
@@ -1132,6 +1215,8 @@ static void c_test_subtests(const TestFile *file, CSubtestArray *subtests,
         if (line[0] != '\0') {
             TestMarker marker = strip_trailing_test_marker(line);
 
+            // IMGNEKO_UNCOVERED_OK_START: This looks impossible with the
+            // current implementation of strip_trailing_test_marker.
             if (line[0] == '\0') {
                 fprintf(stderr, "error: invalid empty subtest name in %s\n",
                         file->rel_path.cstr);
@@ -1140,6 +1225,7 @@ static void c_test_subtests(const TestFile *file, CSubtestArray *subtests,
                 c_subtest_array_free(subtests);
                 exit(1);
             }
+            // IMGNEKO_UNCOVERED_OK_END
 
             arr_push(*subtests, ((CSubtest){
                                     .name = str_from_cstr(line),
@@ -1154,6 +1240,7 @@ static void c_test_subtests(const TestFile *file, CSubtestArray *subtests,
 
 // Expand discovered files into runnable test cases.
 static void discover_test_cases(const TestFileArray *files,
+                                const char *test_bin_dir,
                                 TestCaseArray *cases) {
     size_t i;
 
@@ -1166,7 +1253,7 @@ static void discover_test_cases(const TestFileArray *files,
             size_t j;
 
             // A C test binary can expose multiple subtests via --list.
-            c_test_subtests(file, &subtests, &exe_path);
+            c_test_subtests(file, &subtests, test_bin_dir, &exe_path);
             if (subtests.size == 0) {
                 arr_push(*cases, ((TestCase){
                                      .kind = TEST_KIND_C,
@@ -1217,10 +1304,7 @@ static void discover_test_cases(const TestFileArray *files,
 
 // Run one executable test file directly.
 static TestRunResult run_executable_test(const TestCase *test_case,
-                                         const char *test_output_dir,
-                                         const char *output_path,
-                                         double timeout_seconds,
-                                         bool output_passthrough) {
+                                         const TestRunConfig *config) {
     char *argv[] = {test_case->file_abs_path.cstr, NULL};
 
     if (access(test_case->file_abs_path.cstr, X_OK) != 0) {
@@ -1229,23 +1313,19 @@ static TestRunResult run_executable_test(const TestCase *test_case,
         return (TestRunResult){.exit_code = 1};
     }
 
-    return run_argv(argv, test_output_dir, output_path, timeout_seconds,
-                    output_passthrough);
+    return run_argv(argv, config);
 }
 
 // Run one compiled C test, either a selected subtest or all subtests.
 static TestRunResult run_c_test(const TestCase *test_case,
-                                const char *test_output_dir,
-                                const char *output_path, double timeout_seconds,
-                                bool output_passthrough) {
+                                const TestRunConfig *config) {
     char *argv[] = {
         test_case->c_exe_path.cstr,
         test_case->c_subtest.len != 0 ? test_case->c_subtest.cstr : "--all",
         NULL,
     };
 
-    return run_argv(argv, test_output_dir, output_path, timeout_seconds,
-                    output_passthrough);
+    return run_argv(argv, config);
 }
 
 // Print one discovered test id, appending its marker when present.
@@ -1279,6 +1359,7 @@ static void print_summary_count(const char *label, size_t count) {
 static void seed_debug_random(void) {
     static bool seeded = false;
 
+    // IMGNEKO_UNCOVERED_OK[2 lines]
     if (seeded)
         return;
 
@@ -1317,6 +1398,7 @@ static void prepare_env_vars(void) {
         str_append_cstr(new_path, old_path);
     }
 
+    // IMGNEKO_UNCOVERED_OK_START: setenv/unsetenv failures are hard to inject
     if (setenv("PATH", new_path.cstr, 1) != 0) {
         str_free(bin_dir);
         str_free(new_path);
@@ -1338,6 +1420,7 @@ static void prepare_env_vars(void) {
         str_free(new_path);
         die_errno("failed to update test environment");
     }
+    // IMGNEKO_UNCOVERED_OK_END
 
     str_free(build_dir_abs);
     str_free(bin_dir);
@@ -1347,44 +1430,51 @@ static void prepare_env_vars(void) {
 // Print CLI usage help.
 static void usage(FILE *stream) {
     String default_output_dir = default_test_output_dir();
+    String default_test_bin_dir_path = default_test_bin_dir();
+    String tests_dir = default_tests_dir();
 
     fprintf(stream,
             "Usage: %s [--list] [--all] [--output-dir DIR] [--filter PATTERN]\n"
+            "       [--tests-dir DIR] [--test-bin-dir DIR]\n"
             "       [--timeout SECONDS] [-p|--output-passthrough]\n"
             "       [--debug-flip-exit-probability P]\n"
+            "       [--debug-parent-setpgid-delay SECONDS]\n"
             "       [PATTERN ...]\n"
-            "\n"
-            "Discover tests under %s/ relative to %s.\n"
             "\n"
             "Use -p/--output-passthrough to mirror test stdout/stderr live.\n"
             "Patterns use shell-style wildcards and may be joined with '|'.\n"
+            "Default tests dir: %s\n"
+            "Default C test bin dir: %s\n"
             "Default output dir: %s\n"
             "Default timeout: %.0f seconds\n",
-            "test-runner", tests_root_rel, root_dir, default_output_dir.cstr,
-            default_test_timeout_seconds);
+            "test-runner", tests_dir.cstr, default_test_bin_dir_path.cstr,
+            default_output_dir.cstr, default_test_timeout_seconds);
 
+    str_free(tests_dir);
+    str_free(default_test_bin_dir_path);
     str_free(default_output_dir);
 }
 
 int main(int argc, char **argv) {
     // User-specified filters and options.
+    StringArray raw_filters = arr_empty;
     StringArray filters = arr_empty;
     bool list_only = false;
     bool run_all = false;
     bool output_passthrough = false;
+    String tests_dir = str_empty;
     String output_dir = str_empty;
+    String test_bin_dir = str_empty;
     double timeout_seconds = default_test_timeout_seconds;
     double debug_flip_exit_probability = 0.0;
+    double debug_parent_setpgid_delay_seconds = 0.0;
 
     // Collected files and test cases.
     TestFileArray files = arr_empty;
     TestCaseArray cases = arr_empty;
 
-    // The directory where we look for test files.
-    String tests_dir = str_empty;
-
     // Results
-    double run_start_seconds = monotonic_seconds();
+    double run_start_seconds = time_monotonic_seconds();
     int exit_code = 0;
     size_t discovered = 0;
     size_t passed = 0;
@@ -1439,11 +1529,41 @@ int main(int argc, char **argv) {
                 exit_code = 1;
                 goto cleanup;
             }
-            string_array_push_copy(&filters, argv[++i]);
+            string_array_push_copy(&raw_filters, argv[++i]);
             continue;
         }
         if (strncmp(argv[i], "--filter=", 9) == 0) {
-            string_array_push_copy(&filters, argv[i] + 9);
+            string_array_push_copy(&raw_filters, argv[i] + 9);
+            continue;
+        }
+        if (strcmp(argv[i], "--tests-dir") == 0) {
+            if (i + 1 >= argc) {
+                usage(stderr);
+                exit_code = 1;
+                goto cleanup;
+            }
+            require(path_resolve_absolute(&tests_dir, argv[++i]),
+                    "failed to resolve tests directory: %errno");
+            continue;
+        }
+        if (strncmp(argv[i], "--tests-dir=", 12) == 0) {
+            require(path_resolve_absolute(&tests_dir, argv[i] + 12),
+                    "failed to resolve tests directory: %errno");
+            continue;
+        }
+        if (strcmp(argv[i], "--test-bin-dir") == 0) {
+            if (i + 1 >= argc) {
+                usage(stderr);
+                exit_code = 1;
+                goto cleanup;
+            }
+            require(path_resolve_absolute(&test_bin_dir, argv[++i]),
+                    "failed to resolve test-bin directory: %errno");
+            continue;
+        }
+        if (strncmp(argv[i], "--test-bin-dir=", 15) == 0) {
+            require(path_resolve_absolute(&test_bin_dir, argv[i] + 15),
+                    "failed to resolve test-bin directory: %errno");
             continue;
         }
         if (strcmp(argv[i], "--timeout") == 0) {
@@ -1504,16 +1624,51 @@ int main(int argc, char **argv) {
             }
             continue;
         }
+        if (strcmp(argv[i], "--debug-parent-setpgid-delay") == 0) {
+            if (i + 1 >= argc) {
+                fprintf(stderr,
+                        "error: --debug-parent-setpgid-delay requires a "
+                        "value\n");
+                exit_code = 1;
+                goto cleanup;
+            }
+            if (!parse_timeout_seconds(argv[++i],
+                                       &debug_parent_setpgid_delay_seconds)) {
+                fprintf(stderr,
+                        "error: invalid --debug-parent-setpgid-delay value: "
+                        "%s\n",
+                        argv[i]);
+                usage(stderr);
+                exit_code = 1;
+                goto cleanup;
+            }
+            continue;
+        }
+        if (strncmp(argv[i], "--debug-parent-setpgid-delay=", 29) == 0) {
+            // IMGNEKO_UNCOVERED_OK_START
+            if (!parse_timeout_seconds(argv[i] + 29,
+                                       &debug_parent_setpgid_delay_seconds)) {
+                fprintf(stderr,
+                        "error: invalid --debug-parent-setpgid-delay value: "
+                        "%s\n",
+                        argv[i] + 29);
+                usage(stderr);
+                exit_code = 1;
+                goto cleanup;
+            }
+            continue;
+            // IMGNEKO_UNCOVERED_OK_END
+        }
         if (argv[i][0] == '-') {
             fprintf(stderr, "error: unknown option: %s\n", argv[i]);
             usage(stderr);
             exit_code = 1;
             goto cleanup;
         }
-        string_array_push_copy(&filters, argv[i]);
+        string_array_push_copy(&raw_filters, argv[i]);
     }
 
-    if (run_all && filters.size != 0) {
+    if (run_all && raw_filters.size != 0) {
         fprintf(stderr, "error: --all cannot be combined with --filter or "
                         "positional patterns\n");
         usage(stderr);
@@ -1521,17 +1676,28 @@ int main(int argc, char **argv) {
         goto cleanup;
     }
 
+    if (!flatten_filters(&raw_filters, &filters)) {
+        exit_code = 1;
+        goto cleanup;
+    }
+
     if (output_dir.len == 0)
         output_dir = default_test_output_dir();
+    if (tests_dir.len == 0)
+        tests_dir = default_tests_dir();
+    if (test_bin_dir.len == 0)
+        test_bin_dir = default_test_bin_dir();
     validate_output_dir(output_dir.cstr);
+    if (!list_only)
+        require_empty_output_dir(output_dir.cstr);
     if (debug_flip_exit_probability > 0.0)
         seed_debug_random();
 
     // Discover tests.
 
     prepare_env_vars();
-    tests_dir = path_join(root_dir, tests_root_rel);
 
+    // IMGNEKO_UNCOVERED_OK[4 lines]
     if (chdir(root_dir) != 0) {
         str_free(tests_dir);
         die_errno("failed to chdir to repository root");
@@ -1544,13 +1710,15 @@ int main(int argc, char **argv) {
         goto cleanup;
     }
 
-    discover_test_cases(&files, &cases);
+    discover_test_cases(&files, test_bin_dir.cstr, &cases);
+    // IMGNEKO_UNCOVERED_OK_START
     if (cases.size == 0) {
         fprintf(stderr, "error: no runnable tests found under %s\n",
                 tests_dir.cstr);
         exit_code = 1;
         goto cleanup;
     }
+    // IMGNEKO_UNCOVERED_OK_END
 
     for (size_t i = 0; i < cases.size; ++i) {
         TestCase *test_case = &cases.data[i];
@@ -1577,16 +1745,21 @@ int main(int argc, char **argv) {
         String test_output_dir =
             test_output_dir_path(test_case, output_dir.cstr);
         String output_path = test_output_file_path(test_output_dir.cstr);
+        TestRunConfig run_config = {
+            .test_output_dir = test_output_dir.cstr,
+            .output_path = output_path.cstr,
+            .timeout_seconds = timeout_seconds,
+            .output_passthrough = output_passthrough,
+            .debug_parent_setpgid_delay_seconds =
+                debug_parent_setpgid_delay_seconds,
+        };
+
         if (test_case->kind == TEST_KIND_C) {
-            run_result =
-                run_c_test(test_case, test_output_dir.cstr, output_path.cstr,
-                           timeout_seconds, output_passthrough);
-        } else if (test_case->kind == TEST_KIND_EXECUTABLE) {
-            run_result = run_executable_test(test_case, test_output_dir.cstr,
-                                             output_path.cstr, timeout_seconds,
-                                             output_passthrough);
+            run_result = run_c_test(test_case, &run_config);
         } else {
-            run_result.exit_code = 1;
+            // Everything else is expected to be executable.
+            assert(test_case->kind == TEST_KIND_EXECUTABLE);
+            run_result = run_executable_test(test_case, &run_config);
         }
         if (!run_result.timed_out) {
             run_result.exit_code = maybe_flip_exit_code(
@@ -1631,7 +1804,7 @@ int main(int argc, char **argv) {
     }
 
     if (!list_only) {
-        double total_run_seconds = monotonic_seconds() - run_start_seconds;
+        double total_run_seconds = time_monotonic_seconds() - run_start_seconds;
 
         print_named_test_list("timed out tests", &timed_out_tests);
         print_named_test_list("failed tests", &failed_tests);
@@ -1655,8 +1828,10 @@ cleanup:
     str_array_free(&timed_out_tests);
     str_array_free(&xpassed_tests);
     str_array_free(&failed_tests);
+    str_free(test_bin_dir);
     str_free(output_dir);
     str_free(tests_dir);
+    str_array_free(&raw_filters);
     str_array_free(&filters);
     test_case_array_free(&cases);
     test_file_array_free(&files);

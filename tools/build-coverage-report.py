@@ -131,6 +131,17 @@ def source_span_text(source_lines: Sequence[str],
     return source_line_text(source_lines, start_line)
 
 
+def uncovered_entry_sort_key(entry: str) -> Tuple[str, int, int, str]:
+    """Sort quickfix entries by source location, not lexicographic text.
+
+    The quickfix format is `path:line:column: message`. Sorting those whole
+    strings directly puts line `100` before line `20`, so parse the numeric
+    fields explicitly and keep the full entry as a deterministic tie-breaker.
+    """
+    relpath, lineno, column, _message = entry.split(":", 3)
+    return relpath, int(lineno), int(column), entry
+
+
 def function_rel_project_path(root_dir: str,
                               function: Dict[str, Any]) -> Optional[str]:
     """Return the first project file associated with a function record."""
@@ -547,7 +558,7 @@ def main() -> int:
         stream.write(f"Uncovered locations: {len(uncovered_entries)}\n")
 
     with open(uncovered_path, "w", encoding="utf-8") as stream:
-        for entry in sorted(uncovered_entries):
+        for entry in sorted(uncovered_entries, key=uncovered_entry_sort_key):
             stream.write(entry)
             stream.write("\n")
 

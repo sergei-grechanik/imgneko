@@ -20,6 +20,10 @@ $(BUILD_DIR)/obj/src/util/string.o: \
 	$(ROOT_DIR)/src/util/array.h \
 	$(ROOT_DIR)/src/util/string.c \
 	$(ROOT_DIR)/src/util/string.h
+$(BUILD_DIR)/obj/src/util/time.o: \
+	$(ROOT_DIR)/src/util/error.h \
+	$(ROOT_DIR)/src/util/time.c \
+	$(ROOT_DIR)/src/util/time.h
 $(BUILD_DIR)/obj/test-bin/runner/environment.c.bin: \
 	$(ROOT_DIR)/src/util/array.h \
 	$(ROOT_DIR)/src/util/common.h \
@@ -36,10 +40,14 @@ $(BUILD_DIR)/obj/test-bin/runner/markers.c.bin: \
 	$(ROOT_DIR)/src/util/common.h \
 	$(ROOT_DIR)/testing/support/test_main.h \
 	$(ROOT_DIR)/testing/tests/runner/markers.c
+$(BUILD_DIR)/obj/test-bin/runner/no-subtests.c.bin: \
+	$(ROOT_DIR)/testing/tests/runner/no-subtests.c
 $(BUILD_DIR)/obj/test-bin/runner/output.c.bin: \
 	$(ROOT_DIR)/src/util/common.h \
 	$(ROOT_DIR)/testing/support/test_main.h \
 	$(ROOT_DIR)/testing/tests/runner/output.c
+$(BUILD_DIR)/obj/test-bin/runner/spaced-subtests.c.bin: \
+	$(ROOT_DIR)/testing/tests/runner/spaced-subtests.c
 $(BUILD_DIR)/obj/test-bin/unit/util/array.c.bin: \
 	$(ROOT_DIR)/src/util/array.h \
 	$(ROOT_DIR)/src/util/common.h \
@@ -65,6 +73,13 @@ $(BUILD_DIR)/obj/test-bin/unit/util/string.c.bin: \
 	$(ROOT_DIR)/src/util/string.h \
 	$(ROOT_DIR)/testing/support/test_main.h \
 	$(ROOT_DIR)/testing/tests/unit/util/string.c
+$(BUILD_DIR)/obj/test-bin/unit/util/time-sleep.c.bin: \
+	$(ROOT_DIR)/src/util/time.h \
+	$(ROOT_DIR)/testing/tests/unit/util/time-sleep.c
+$(BUILD_DIR)/obj/test-bin/unit/util/time.c.bin: \
+	$(ROOT_DIR)/src/util/time.h \
+	$(ROOT_DIR)/testing/support/test_main.h \
+	$(ROOT_DIR)/testing/tests/unit/util/time.c
 $(BUILD_DIR)/obj/testing/support/run-and-check.o: \
 	$(ROOT_DIR)/src/util/array.h \
 	$(ROOT_DIR)/src/util/error.h \
@@ -79,6 +94,7 @@ $(BUILD_DIR)/obj/testing/support/test-runner.o: \
 	$(ROOT_DIR)/src/util/file.h \
 	$(ROOT_DIR)/src/util/path.h \
 	$(ROOT_DIR)/src/util/string.h \
+	$(ROOT_DIR)/src/util/time.h \
 	$(ROOT_DIR)/testing/support/test-runner.c
 $(BUILD_DIR)/obj/testing/support/test_main.o: \
 	$(ROOT_DIR)/testing/support/test_main.c \

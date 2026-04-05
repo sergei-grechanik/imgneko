@@ -91,6 +91,17 @@ void str_trim_trailing_chars(String *text, const char *trim_chars) {
     }
 }
 
+void str_append_shell_quoted_word(String *out, const char *text) {
+    str_push(*out, '\'');
+    for (size_t i = 0; text[i] != '\0'; ++i) {
+        if (text[i] == '\'')
+            str_append_cstr(*out, "'\\''");
+        else
+            str_push(*out, text[i]);
+    }
+    str_push(*out, '\'');
+}
+
 void str_array_free(StringArray *strings) {
     for (size_t i = 0; i < strings->size; ++i)
         str_free(strings->data[i]);

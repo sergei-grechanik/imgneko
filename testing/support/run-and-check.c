@@ -540,18 +540,6 @@ static bool parse_test_file(const char *path, ParsedTest *parsed) {
     return true;
 }
 
-// Append one shell-quoted word so `/bin/sh -c` sees the original bytes.
-static void append_shell_quoted_word(String *out, const char *text) {
-    str_push(*out, '\'');
-    for (size_t i = 0; text[i] != '\0'; ++i) {
-        if (text[i] == '\'')
-            str_append_cstr(*out, "'\\''");
-        else
-            str_push(*out, text[i]);
-    }
-    str_push(*out, '\'');
-}
-
 // Expand lit-style substitutions in one RUN command. `%s` becomes the
 // shell-quoted absolute test path, and `%%` becomes a literal percent sign.
 static String expand_run_command(const char *command, const char *test_path) {
@@ -564,7 +552,7 @@ static String expand_run_command(const char *command, const char *test_path) {
         }
 
         if (command[i + 1] == 's') {
-            append_shell_quoted_word(&expanded, test_path);
+            str_append_shell_quoted_word(&expanded, test_path);
             ++i;
             continue;
         }

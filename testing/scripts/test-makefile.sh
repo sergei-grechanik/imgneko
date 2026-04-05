@@ -167,6 +167,18 @@ assert_file_matches() {
     fi
 }
 
+# Remove coverage suppressions from the copied test-runner so the test can
+# force visible uncovered quickfix entries without mutating the source tree.
+unsuppress_coverage_test_probes() {
+    if ! grep -Fqx "testing/support/test-runner.c coverage_ignore_*" "$ROOT_DIR/coverage-ignore"; then
+        fail "missing expected coverage-ignore rule for test-runner.c"
+    fi
+
+    sed -i '/^testing\/support\/test-runner\.c coverage_ignore_\*$/d' \
+        "$ROOT_DIR/coverage-ignore"
+    sed -i '/IMGNEKO_UNCOVERED_OK/d' "$ROOT_DIR/testing/support/test-runner.c"
+}
+
 # Verify that two strings are exactly equal.
 assert_equal() {
     expected=$1
@@ -564,16 +576,6 @@ assert_file_contains "$COVERAGE_BUILD/coverage/summary.txt" "File 'testing/tests
 assert_file_contains "$COVERAGE_BUILD/coverage/summary.txt" "Lines executed:"
 assert_file_contains "$COVERAGE_BUILD/coverage/summary.txt" "Branches covered:"
 assert_file_contains "$COVERAGE_BUILD/coverage/summary.txt" "Uncovered locations:"
-assert_file_contains "$COVERAGE_BUILD/coverage/uncovered.qf" "uncovered line"
-assert_file_contains "$COVERAGE_BUILD/coverage/uncovered.qf" "branch not fully covered"
-assert_file_contains "$COVERAGE_BUILD/coverage/uncovered.qf" "function never executed:"
-assert_file_contains "$COVERAGE_BUILD/coverage/uncovered.qf" "bool coverage_ignore_probe(bool coverage_ignore_branch) {"
-assert_file_contains "$COVERAGE_BUILD/coverage/uncovered.qf" "if (coverage_ignore_branch)"
-assert_file_not_contains "$COVERAGE_BUILD/coverage/uncovered.qf" "function never executed: coverage_ignore_probe"
-assert_file_not_contains "$COVERAGE_BUILD/coverage/uncovered.qf" "uncovered_ok_range_probe"
-assert_file_not_contains "$COVERAGE_BUILD/coverage/uncovered.qf" "if (range_uncovered_branch)"
-assert_file_not_contains "$COVERAGE_BUILD/coverage/uncovered.qf" "uncovered_ok_count_probe"
-assert_file_not_contains "$COVERAGE_BUILD/coverage/uncovered.qf" "if (count_uncovered_branch)"
 
 coverage_initial_mtime=$(stat -c %Y "$COVERAGE_BUILD/coverage/uncovered.qf")
 coverage_tests_initial_mtime=$(stat -c %Y "$COVERAGE_BUILD/coverage/tests.stamp")
@@ -592,6 +594,22 @@ coverage_report_repeat_mtime=$(stat -c %Y "$COVERAGE_BUILD/coverage/uncovered.qf
 coverage_tests_report_mtime=$(stat -c %Y "$COVERAGE_BUILD/coverage/tests.stamp")
 assert_greater "$coverage_repeat_mtime" "$coverage_report_repeat_mtime"
 assert_equal "$coverage_tests_initial_mtime" "$coverage_tests_report_mtime"
+
+# The checked-in suppressions may leave `uncovered.qf` empty. Remove the
+# copied repo's ignore rule and inline suppression comments from test-runner.c,
+# then regenerate the report and verify concrete quickfix entries.
+sleep 1
+unsuppress_coverage_test_probes
+run_capture "$LOG_DIR/coverage-report-unsuppressed.out" make -C "$COVERAGE_BUILD" coverage-report
+assert_status_zero
+assert_file_contains "$COVERAGE_BUILD/coverage/uncovered.qf" "uncovered line"
+assert_file_contains "$COVERAGE_BUILD/coverage/uncovered.qf" "branch not fully covered"
+assert_file_contains "$COVERAGE_BUILD/coverage/uncovered.qf" "function never executed:"
+assert_file_contains "$COVERAGE_BUILD/coverage/uncovered.qf" "function never executed: coverage_ignore_probe"
+assert_file_contains "$COVERAGE_BUILD/coverage/uncovered.qf" "function never executed: uncovered_ok_range_probe"
+assert_file_contains "$COVERAGE_BUILD/coverage/uncovered.qf" "function never executed: uncovered_ok_count_probe"
+assert_file_contains "$COVERAGE_BUILD/coverage/uncovered.qf" "return arg;"
+assert_file_contains "$COVERAGE_BUILD/coverage/uncovered.qf" "return false;"
 
 sleep 1
 touch "$ROOT_DIR/coverage-ignore"

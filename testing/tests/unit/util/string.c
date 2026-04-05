@@ -490,6 +490,36 @@ cleanup:
     return status;
 }
 
+static int test_append_shell_quoted_word(TestContext *ctx) {
+    const char *name = ctx->test_name;
+    String empty = str_empty;
+    String plain = str_from_cstr("ls ");
+    String quoted = str_empty;
+    int status = 0;
+
+    // Empty strings and embedded apostrophes are the tricky cases for
+    // single-quoted shell words.
+    str_append_shell_quoted_word(&empty, "");
+    status = expect_string_eq(name, empty.cstr, empty.len, STR("''"));
+    if (status != 0)
+        goto cleanup;
+
+    str_append_shell_quoted_word(&plain, "alpha beta");
+    status =
+        expect_string_eq(name, plain.cstr, plain.len, STR("ls 'alpha beta'"));
+    if (status != 0)
+        goto cleanup;
+
+    str_append_shell_quoted_word(&quoted, "a'b");
+    status = expect_string_eq(name, quoted.cstr, quoted.len, STR("'a'\\''b'"));
+
+cleanup:
+    str_free(quoted);
+    str_free(plain);
+    str_free(empty);
+    return status;
+}
+
 static int test_trim_trailing_chars(TestContext *ctx) {
     const char *name = ctx->test_name;
     char cstr_line[] = "alpha\r\n";
@@ -545,6 +575,7 @@ int main(int argc, char **argv) {
         PREFIXED_TEST(test_append_and_insert),
         PREFIXED_TEST(test_predicates),
         PREFIXED_TEST(test_escape_bytes),
+        PREFIXED_TEST(test_append_shell_quoted_word),
         PREFIXED_TEST(test_trim_trailing_chars),
     };
 

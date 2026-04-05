@@ -335,6 +335,10 @@ void str_trim_trailing_chars_cstr(char *text, const char *trim_chars);
 // present in `trim_chars`.
 void str_trim_trailing_chars(String *text, const char *trim_chars);
 
+// Append one single-quoted shell word so a POSIX shell parses the original
+// bytes literally. The existing contents of `out` are preserved.
+void str_append_shell_quoted_word(String *out, const char *text);
+
 DEFINE_ARRAY_TYPE(StringArray, String)
 
 // Free a StringArray and each owned string it contains.
