@@ -170,13 +170,13 @@ assert_file_matches() {
 # Remove coverage suppressions from the copied test-runner so the test can
 # force visible uncovered quickfix entries without mutating the source tree.
 unsuppress_coverage_test_probes() {
-    if ! grep -Fqx "testing/support/test-runner.c coverage_ignore_*" "$ROOT_DIR/coverage-ignore"; then
+    if ! grep -Fqx "testing/tools/test-runner.c coverage_ignore_*" "$ROOT_DIR/coverage-ignore"; then
         fail "missing expected coverage-ignore rule for test-runner.c"
     fi
 
-    sed -i '/^testing\/support\/test-runner\.c coverage_ignore_\*$/d' \
+    sed -i '/^testing\/tools\/test-runner\.c coverage_ignore_\*$/d' \
         "$ROOT_DIR/coverage-ignore"
-    sed -i '/IMGNEKO_UNCOVERED_OK/d' "$ROOT_DIR/testing/support/test-runner.c"
+    sed -i '/IMGNEKO_UNCOVERED_OK/d' "$ROOT_DIR/testing/tools/test-runner.c"
 }
 
 # Verify that two strings are exactly equal.
@@ -571,7 +571,7 @@ assert_file_exists "$COVERAGE_BUILD/coverage/uncovered.qf"
 assert_file_exists "$COVERAGE_BUILD/coverage/tests.stamp"
 assert_file_contains "$COVERAGE_BUILD/coverage/summary.txt" "File 'src/main.c'"
 assert_file_contains "$COVERAGE_BUILD/coverage/summary.txt" "File 'src/util/path.c'"
-assert_file_contains "$COVERAGE_BUILD/coverage/summary.txt" "File 'testing/support/test-runner.c'"
+assert_file_contains "$COVERAGE_BUILD/coverage/summary.txt" "File 'testing/tools/test-runner.c'"
 assert_file_contains "$COVERAGE_BUILD/coverage/summary.txt" "File 'testing/tests/unit/util/path.c'"
 assert_file_contains "$COVERAGE_BUILD/coverage/summary.txt" "Lines executed:"
 assert_file_contains "$COVERAGE_BUILD/coverage/summary.txt" "Branches covered:"
@@ -657,7 +657,7 @@ touch "$DEPFILES_REPO/src/util/path.h"
 run_capture "$LOG_DIR/depfile-normal-rebuild.out" make -C "$NORMAL_DEPS_BUILD" test-list
 assert_status_zero
 assert_output_contains "src/util/path.c"
-assert_output_contains "testing/support/test-runner.c"
+assert_output_contains "testing/tools/test-runner.c"
 assert_output_contains "testing/tests/unit/util/path.c"
 assert_output_not_contains "src/main.c"
 

@@ -22,7 +22,7 @@
 # This probe in test-runner.c is intentionally uncovered so the coverage
 # regression can prove that this file suppresses branch/function findings
 # without hiding uncovered line findings from the same source.
-testing/support/test-runner.c coverage_ignore_*
+testing/tools/test-runner.c coverage_ignore_*
 
 # 3rd party code
 src/util/klib/*

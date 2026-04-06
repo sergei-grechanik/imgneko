@@ -68,9 +68,9 @@ VERSION_FILE := $(ROOT_DIR)/VERSION
 
 APP_SOURCES := src/main.c
 UTIL_SOURCES := $(shell if [ -d "$(ROOT_DIR)/src/util" ]; then cd "$(ROOT_DIR)" && find src/util -type f -name '*.c' -print | LC_ALL=C sort; fi)
-TEST_RUNNER_SOURCE := testing/support/test-runner.c
-RUN_AND_CHECK_SOURCE := testing/support/run-and-check.c
-TEST_SUPPORT_SOURCES := $(shell if [ -d "$(ROOT_DIR)/testing/support" ]; then cd "$(ROOT_DIR)" && find testing/support -type f -name '*.c' ! -name 'test-runner.c' ! -name 'run-and-check.c' -print | LC_ALL=C sort; fi)
+TEST_RUNNER_SOURCE := testing/tools/test-runner.c
+RUN_AND_CHECK_SOURCE := testing/tools/run-and-check.c
+TEST_SUPPORT_SOURCES := $(shell if [ -d "$(ROOT_DIR)/testing/support" ]; then cd "$(ROOT_DIR)" && find testing/support -type f -name '*.c' -print | LC_ALL=C sort; fi)
 TEST_SOURCES := $(shell if [ -d "$(ROOT_DIR)/testing/tests" ]; then cd "$(ROOT_DIR)" && find testing/tests -type f -print | LC_ALL=C sort; fi)
 TEST_C_SOURCES := $(shell if [ -d "$(ROOT_DIR)/testing/tests" ]; then cd "$(ROOT_DIR)" && find testing/tests -type f -name '*.c' -print | LC_ALL=C sort; fi)
 

@@ -80,22 +80,22 @@ $(BUILD_DIR)/obj/test-bin/unit/util/time.c.bin: \
 	$(ROOT_DIR)/src/util/time.h \
 	$(ROOT_DIR)/testing/support/test_main.h \
 	$(ROOT_DIR)/testing/tests/unit/util/time.c
-$(BUILD_DIR)/obj/testing/support/run-and-check.o: \
+$(BUILD_DIR)/obj/testing/support/test_main.o: \
+	$(ROOT_DIR)/testing/support/test_main.c \
+	$(ROOT_DIR)/testing/support/test_main.h
+$(BUILD_DIR)/obj/testing/tools/run-and-check.o: \
 	$(ROOT_DIR)/src/util/array.h \
 	$(ROOT_DIR)/src/util/error.h \
 	$(ROOT_DIR)/src/util/file.h \
 	$(ROOT_DIR)/src/util/klib/khash.h \
 	$(ROOT_DIR)/src/util/path.h \
 	$(ROOT_DIR)/src/util/string.h \
-	$(ROOT_DIR)/testing/support/run-and-check.c
-$(BUILD_DIR)/obj/testing/support/test-runner.o: \
+	$(ROOT_DIR)/testing/tools/run-and-check.c
+$(BUILD_DIR)/obj/testing/tools/test-runner.o: \
 	$(ROOT_DIR)/src/util/array.h \
 	$(ROOT_DIR)/src/util/error.h \
 	$(ROOT_DIR)/src/util/file.h \
 	$(ROOT_DIR)/src/util/path.h \
 	$(ROOT_DIR)/src/util/string.h \
 	$(ROOT_DIR)/src/util/time.h \
-	$(ROOT_DIR)/testing/support/test-runner.c
-$(BUILD_DIR)/obj/testing/support/test_main.o: \
-	$(ROOT_DIR)/testing/support/test_main.c \
-	$(ROOT_DIR)/testing/support/test_main.h
+	$(ROOT_DIR)/testing/tools/test-runner.c
