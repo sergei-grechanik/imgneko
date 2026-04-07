@@ -20,6 +20,7 @@ BLOCKED_DISCOVERY_DIR=$IMGNEKO_TEST_OUTPUT_DIR/blocked-discovery
 BLOCKED_DISCOVERY_CHILD=$BLOCKED_DISCOVERY_DIR/locked
 EXEC_RACE_TEST_DIR=$IMGNEKO_TEST_OUTPUT_DIR/exec-race-tests
 SETPGID_RACE_TEST_DIR=$IMGNEKO_TEST_OUTPUT_DIR/setpgid-race-tests
+OUTPUT_DRAIN_RACE_TEST_DIR=$IMGNEKO_TEST_OUTPUT_DIR/output-drain-race-tests
 TIMEOUT_TEST_DIR=$IMGNEKO_TEST_OUTPUT_DIR/timeout-tests
 FAKE_C_TEST_DIR=$IMGNEKO_TEST_OUTPUT_DIR/fake-c-tests
 FAKE_TEST_BIN_DIR=$IMGNEKO_TEST_OUTPUT_DIR/fake-test-bin
@@ -27,11 +28,13 @@ FILE_OUTPUT_PATH=$IMGNEKO_TEST_OUTPUT_DIR/output-file
 BLOCKED_OUTPUT_DIR=$IMGNEKO_TEST_OUTPUT_DIR/blocked-output
 EXEC_RACE_OUTPUT_DIR=$IMGNEKO_TEST_OUTPUT_DIR/exec-race-output
 SETPGID_RACE_OUTPUT_DIR=$IMGNEKO_TEST_OUTPUT_DIR/setpgid-race-output
+OUTPUT_DRAIN_RACE_OUTPUT_DIR=$IMGNEKO_TEST_OUTPUT_DIR/output-drain-race-output
 FLIP_MANY_OUTPUT_DIR=$IMGNEKO_TEST_OUTPUT_DIR/flip-many-output
 TIMEOUT_PASSTHROUGH_OUTPUT_DIR=$IMGNEKO_TEST_OUTPUT_DIR/timeout-passthrough-output
 
 mkdir -p "$MARKER_TEST_DIR" "$EMPTY_TEST_DIR" "$BLOCKED_DISCOVERY_CHILD"
-mkdir -p "$EXEC_RACE_TEST_DIR" "$SETPGID_RACE_TEST_DIR" "$TIMEOUT_TEST_DIR"
+mkdir -p "$EXEC_RACE_TEST_DIR" "$SETPGID_RACE_TEST_DIR"
+mkdir -p "$OUTPUT_DRAIN_RACE_TEST_DIR" "$TIMEOUT_TEST_DIR"
 mkdir -p "$FAKE_C_TEST_DIR/runner" "$FAKE_TEST_BIN_DIR/runner"
 mkdir -p "$BLOCKED_OUTPUT_DIR"
 
@@ -222,6 +225,31 @@ echo '== parent setpgid eacces =='
 # CHECK: == parent setpgid eacces ==
 # CHECK: RUN: eacces-after-exec.sh
 # CHECK: PASS: eacces-after-exec.sh
+# CHECK: Summary:
+# CHECK: discovered: 1
+# CHECK: passed: 1
+# CHECK: Result: SUCCESS
+
+cat >"$OUTPUT_DRAIN_RACE_TEST_DIR/reaped-before-output-drain.sh" <<'EOF'
+#!/bin/sh
+# Emit more than two pipe chunks and exit immediately so the parent can reap
+# the child while unread output still remains buffered.
+i=0
+while [ "$i" -lt 256 ]; do
+    printf '%080d\n' "$i"
+    i=$((i + 1))
+done
+EOF
+chmod +x "$OUTPUT_DRAIN_RACE_TEST_DIR/reaped-before-output-drain.sh"
+
+echo '== child reaped before output drain =='
+"$RUNNER" --tests-dir "$OUTPUT_DRAIN_RACE_TEST_DIR" \
+    --output-dir "$OUTPUT_DRAIN_RACE_OUTPUT_DIR" \
+    --debug-parent-output-chunk-delay 0.01 \
+    --filter reaped-before-output-drain.sh 2>&1
+# CHECK: == child reaped before output drain ==
+# CHECK: RUN: reaped-before-output-drain.sh
+# CHECK: PASS: reaped-before-output-drain.sh
 # CHECK: Summary:
 # CHECK: discovered: 1
 # CHECK: passed: 1

@@ -100,6 +100,7 @@ typedef struct TestRunConfig {
     double timeout_seconds;
     bool output_passthrough;
     double debug_parent_setpgid_delay_seconds;
+    double debug_parent_output_chunk_delay_seconds;
 } TestRunConfig;
 
 DEFINE_ARRAY_TYPE(CSubtestArray, CSubtest)
@@ -638,8 +639,9 @@ static void write_all_or_die(int fd, const char *data, size_t len,
 }
 
 // Read one chunk from the merged child-output pipe, append it to the captured
-// output file, and optionally mirror it to the user's terminal.
-static void pump_child_output(int output_pipe_fd, int output_fd,
+// output file, and optionally mirror it to the user's terminal. Returns
+// whether a non-empty chunk was consumed.
+static bool pump_child_output(int output_pipe_fd, int output_fd,
                               bool output_passthrough,
                               bool *output_pipe_closed) {
     char buffer[4096];
@@ -648,7 +650,7 @@ static void pump_child_output(int output_pipe_fd, int output_fd,
     // IMGNEKO_UNCOVERED_OK_START
     if (count < 0) {
         if (errno == EINTR)
-            return;
+            return false;
         die_errno("failed to read child output");
     }
     // IMGNEKO_UNCOVERED_OK_END
@@ -656,7 +658,7 @@ static void pump_child_output(int output_pipe_fd, int output_fd,
     if (count == 0) {
         close(output_pipe_fd);
         *output_pipe_closed = true;
-        return;
+        return false;
     }
 
     write_all_or_die(output_fd, buffer, (size_t)count,
@@ -665,6 +667,7 @@ static void pump_child_output(int output_pipe_fd, int output_fd,
         write_all_or_die(STDOUT_FILENO, buffer, (size_t)count,
                          "failed to pass test output through");
     }
+    return true;
 }
 
 // After a timeout, a detached descendant may keep the inherited output pipe
@@ -683,10 +686,10 @@ static void drain_child_output_pipe_until_deadline(int output_pipe_fd,
             deadline_seconds, time_monotonic_seconds());
         int rc;
 
-        // TODO: Coverage. Reaching this branch depends on a tight timing window
-        // between the deadline computation and the immediate follow-up check.
+        // IMGNEKO_UNCOVERED_OK_START
         if (wait_timeout.tv_sec == 0 && wait_timeout.tv_nsec == 0)
             break;
+        // IMGNEKO_UNCOVERED_OK_END
 
         FD_ZERO(&read_fds);
         FD_SET(output_pipe_fd, &read_fds);
@@ -889,13 +892,12 @@ static TestRunResult run_argv(char *const *argv, const TestRunConfig *config) {
             wait_timeout = time_timeout_until_deadline(
                 deadline_seconds, time_monotonic_seconds());
 
-            // TODO: Coverage. This branch also depends on the deadline expiring
-            // in a narrow window between helper return and the follow-up check
-            // here.
+            // IMGNEKO_UNCOVERED_OK_START
             if (wait_timeout.tv_sec == 0 && wait_timeout.tv_nsec == 0) {
                 deadline_expired = true;
                 break;
             }
+            // IMGNEKO_UNCOVERED_OK_END
 
             wait_timeout_ptr = &wait_timeout;
         }
@@ -923,8 +925,18 @@ static TestRunResult run_argv(char *const *argv, const TestRunConfig *config) {
         if (!output_pipe_closed && FD_ISSET(output_pipe_fds[0], &read_fds)) {
             // Consume one available chunk, append it to the per-test output
             // file, and optionally pass it through to the user immediately.
-            pump_child_output(output_pipe_fds[0], output_fd,
-                              config->output_passthrough, &output_pipe_closed);
+            bool received_output_chunk = pump_child_output(
+                output_pipe_fds[0], output_fd, config->output_passthrough,
+                &output_pipe_closed);
+
+            if (received_output_chunk &&
+                config->debug_parent_output_chunk_delay_seconds > 0.0) {
+                // Debug-only hook to slow output draining enough to exercise
+                // the state where the child is already reaped but unread bytes
+                // still remain buffered in the merged output pipe.
+                time_sleep_seconds(
+                    config->debug_parent_output_chunk_delay_seconds);
+            }
         }
 
         // Keep SIGCHLD blocked between the WNOHANG probe and pselect(). That
@@ -1439,6 +1451,7 @@ static void usage(FILE *stream) {
             "       [--timeout SECONDS] [-p|--output-passthrough]\n"
             "       [--debug-flip-exit-probability P]\n"
             "       [--debug-parent-setpgid-delay SECONDS]\n"
+            "       [--debug-parent-output-chunk-delay SECONDS]\n"
             "       [PATTERN ...]\n"
             "\n"
             "Use -p/--output-passthrough to mirror test stdout/stderr live.\n"
@@ -1468,6 +1481,7 @@ int main(int argc, char **argv) {
     double timeout_seconds = default_test_timeout_seconds;
     double debug_flip_exit_probability = 0.0;
     double debug_parent_setpgid_delay_seconds = 0.0;
+    double debug_parent_output_chunk_delay_seconds = 0.0;
 
     // Collected files and test cases.
     TestFileArray files = arr_empty;
@@ -1659,6 +1673,39 @@ int main(int argc, char **argv) {
             continue;
             // IMGNEKO_UNCOVERED_OK_END
         }
+        if (strcmp(argv[i], "--debug-parent-output-chunk-delay") == 0) {
+            if (i + 1 >= argc) {
+                fprintf(stderr,
+                        "error: --debug-parent-output-chunk-delay requires "
+                        "a value\n");
+                exit_code = 1;
+                goto cleanup;
+            }
+            if (!parse_timeout_seconds(
+                    argv[++i], &debug_parent_output_chunk_delay_seconds)) {
+                fprintf(stderr,
+                        "error: invalid --debug-parent-output-chunk-delay "
+                        "value: %s\n",
+                        argv[i]);
+                usage(stderr);
+                exit_code = 1;
+                goto cleanup;
+            }
+            continue;
+        }
+        if (strncmp(argv[i], "--debug-parent-output-chunk-delay=", 34) == 0) {
+            if (!parse_timeout_seconds(
+                    argv[i] + 34, &debug_parent_output_chunk_delay_seconds)) {
+                fprintf(stderr,
+                        "error: invalid --debug-parent-output-chunk-delay "
+                        "value: %s\n",
+                        argv[i] + 34);
+                usage(stderr);
+                exit_code = 1;
+                goto cleanup;
+            }
+            continue;
+        }
         if (argv[i][0] == '-') {
             fprintf(stderr, "error: unknown option: %s\n", argv[i]);
             usage(stderr);
@@ -1752,6 +1799,8 @@ int main(int argc, char **argv) {
             .output_passthrough = output_passthrough,
             .debug_parent_setpgid_delay_seconds =
                 debug_parent_setpgid_delay_seconds,
+            .debug_parent_output_chunk_delay_seconds =
+                debug_parent_output_chunk_delay_seconds,
         };
 
         if (test_case->kind == TEST_KIND_C) {

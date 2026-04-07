@@ -241,6 +241,28 @@ echo '== debug parent setpgid delay huge =='
 # CHECK: error: invalid --debug-parent-setpgid-delay value: 1e5000
 # CHECK: Usage: test-runner [--list] [--all] [--output-dir DIR] [--filter PATTERN]
 
+echo '== debug parent output chunk delay equals =='
+"$RUNNER" --list --debug-parent-output-chunk-delay=0 runner/no-subtests.c 2>&1
+# CHECK: == debug parent output chunk delay equals ==
+# CHECK-NEXT: runner/no-subtests.c
+
+echo '== missing debug parent output chunk delay =='
+"$RUNNER" --debug-parent-output-chunk-delay 2>&1 || true
+# CHECK: == missing debug parent output chunk delay ==
+# CHECK: error: --debug-parent-output-chunk-delay requires a value
+
+echo '== debug parent output chunk delay text =='
+"$RUNNER" --debug-parent-output-chunk-delay nope 2>&1 || true
+# CHECK: == debug parent output chunk delay text ==
+# CHECK: error: invalid --debug-parent-output-chunk-delay value: nope
+# CHECK: Usage: test-runner [--list] [--all] [--output-dir DIR] [--filter PATTERN]
+
+echo '== debug parent output chunk delay negative =='
+"$RUNNER" --debug-parent-output-chunk-delay=-1 2>&1 || true
+# CHECK: == debug parent output chunk delay negative ==
+# CHECK: error: invalid --debug-parent-output-chunk-delay value: -1
+# CHECK: Usage: test-runner [--list] [--all] [--output-dir DIR] [--filter PATTERN]
+
 echo '== unknown option =='
 "$RUNNER" --definitely-unknown 2>&1 || true
 # CHECK: == unknown option ==
