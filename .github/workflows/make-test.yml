@@ -75,5 +75,10 @@ jobs:
         # Note: This will run all tests and also generate a coverage report.
         run: make BUILD_DIR=build/asan coverage
 
-      - name: Dump uncovered quickfix entries
-        run: cat build/asan/coverage/uncovered.qf
+      - name: Require empty uncovered quickfix report
+        run: |
+          if [ -s build/asan/coverage/uncovered.qf ]; then
+            cat build/asan/coverage/uncovered.qf
+            echo "error: build/asan/coverage/uncovered.qf is not empty" >&2
+            exit 1
+          fi
