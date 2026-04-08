@@ -53,7 +53,7 @@ EOF
 chmod +x "$TMP_TEST_DIR/signaled.sh"
 
 echo '== list custom c tests =='
-"$RUNNER" --list --filter 'runner/no-subtests.c|runner/spaced-subtests.c' 2>&1
+"$RUNNER" --jobs=1 --list --filter 'runner/no-subtests.c|runner/spaced-subtests.c' 2>&1
 # CHECK: == list custom c tests ==
 # CHECK: runner/no-subtests.c
 # CHECK: runner/spaced-subtests.c/marked_disabled DISABLED
@@ -61,7 +61,7 @@ echo '== list custom c tests =='
 # CHECK: runner/spaced-subtests.c/plain_spaced
 
 echo '== run no subtests =='
-"$RUNNER" --output-dir "$NO_SUBTESTS_OUTPUT_DIR" \
+"$RUNNER" --jobs=1 --output-dir "$NO_SUBTESTS_OUTPUT_DIR" \
     --filter runner/no-subtests.c 2>&1
 # CHECK: == run no subtests ==
 # CHECK: RUN: runner/no-subtests.c
@@ -72,7 +72,7 @@ echo '== run no subtests =='
 # CHECK: Result: SUCCESS
 
 echo '== run spaced subtests =='
-"$RUNNER" --output-dir "$SPACED_OUTPUT_DIR" \
+"$RUNNER" --jobs=1 --output-dir "$SPACED_OUTPUT_DIR" \
     --filter runner/spaced-subtests.c 2>&1
 # CHECK: == run spaced subtests ==
 # CHECK: DISABLED: runner/spaced-subtests.c/marked_disabled
@@ -88,7 +88,7 @@ echo '== run spaced subtests =='
 # CHECK: Result: SUCCESS
 
 echo '== empty output tail =='
-"$RUNNER" --tests-dir "$TMP_TEST_DIR" --output-dir "$EMPTY_FAIL_OUTPUT_DIR" \
+"$RUNNER" --jobs=1 --tests-dir "$TMP_TEST_DIR" --output-dir "$EMPTY_FAIL_OUTPUT_DIR" \
     --filter empty-output-fail.sh 2>&1 || true
 # CHECK: == empty output tail ==
 # CHECK: RUN: empty-output-fail.sh
@@ -99,7 +99,7 @@ echo '== empty output tail =='
 # CHECK: Result: FAILURE
 
 echo '== missing output tail =='
-"$RUNNER" --tests-dir "$TMP_TEST_DIR" --output-dir "$MISSING_FAIL_OUTPUT_DIR" \
+"$RUNNER" --jobs=1 --tests-dir "$TMP_TEST_DIR" --output-dir "$MISSING_FAIL_OUTPUT_DIR" \
     --filter missing-output-fail.sh 2>&1 || true
 # CHECK: == missing output tail ==
 # CHECK: RUN: missing-output-fail.sh
@@ -110,7 +110,7 @@ echo '== missing output tail =='
 # CHECK: Result: FAILURE
 
 echo '== signaled executable =='
-"$RUNNER" --tests-dir "$TMP_TEST_DIR" --output-dir "$SIGNALED_OUTPUT_DIR" \
+"$RUNNER" --jobs=1 --tests-dir "$TMP_TEST_DIR" --output-dir "$SIGNALED_OUTPUT_DIR" \
     --filter signaled.sh 2>&1 || true
 # CHECK: == signaled executable ==
 # CHECK: RUN: signaled.sh
@@ -128,7 +128,7 @@ EOF
 chmod +x "$AMBIGUOUS_TEST_DIR/ambiguous-marker.sh"
 
 echo '== ambiguous markers =='
-"$RUNNER" --list --tests-dir "$AMBIGUOUS_TEST_DIR" \
+"$RUNNER" --jobs=1 --list --tests-dir "$AMBIGUOUS_TEST_DIR" \
     --filter ambiguous-marker.sh 2>&1 || true
 # CHECK: == ambiguous markers ==
 # CHECK: error: ambiguous test markers in line: # XFAIL DISABLED
@@ -142,13 +142,13 @@ EOF
 chmod +x "$MULTIPLE_MARKERS_TEST_DIR/multiple-markers.sh"
 
 echo '== multiple markers =='
-"$RUNNER" --list --tests-dir "$MULTIPLE_MARKERS_TEST_DIR" \
+"$RUNNER" --jobs=1 --list --tests-dir "$MULTIPLE_MARKERS_TEST_DIR" \
     --filter multiple-markers.sh 2>&1 || true
 # CHECK: == multiple markers ==
 # CHECK: error: multiple test markers found in {{.*multiple-markers\.sh}}
 
 echo '== missing c binary =='
-"$RUNNER" --list --tests-dir "$TMP_C_TEST_DIR" \
+"$RUNNER" --jobs=1 --list --tests-dir "$TMP_C_TEST_DIR" \
     --test-bin-dir "$FAKE_TEST_BIN_DIR" \
     --filter runner/no-subtests.c 2>&1 || true
 # CHECK: == missing c binary ==
@@ -161,7 +161,7 @@ kill -TERM $$
 EOF
 chmod +x "$FAKE_NO_SUBTESTS_BIN"
 echo '== signaled c list =='
-"$RUNNER" --list --tests-dir "$TMP_C_TEST_DIR" \
+"$RUNNER" --jobs=1 --list --tests-dir "$TMP_C_TEST_DIR" \
     --test-bin-dir "$FAKE_TEST_BIN_DIR" \
     --filter runner/no-subtests.c 2>&1 || true
 # CHECK: == signaled c list ==

@@ -22,6 +22,7 @@ EXEC_RACE_TEST_DIR=$IMGNEKO_TEST_OUTPUT_DIR/exec-race-tests
 SETPGID_RACE_TEST_DIR=$IMGNEKO_TEST_OUTPUT_DIR/setpgid-race-tests
 OUTPUT_DRAIN_RACE_TEST_DIR=$IMGNEKO_TEST_OUTPUT_DIR/output-drain-race-tests
 TIMEOUT_TEST_DIR=$IMGNEKO_TEST_OUTPUT_DIR/timeout-tests
+PARALLEL_TEST_DIR=$IMGNEKO_TEST_OUTPUT_DIR/parallel-tests
 FAKE_C_TEST_DIR=$IMGNEKO_TEST_OUTPUT_DIR/fake-c-tests
 FAKE_TEST_BIN_DIR=$IMGNEKO_TEST_OUTPUT_DIR/fake-test-bin
 FILE_OUTPUT_PATH=$IMGNEKO_TEST_OUTPUT_DIR/output-file
@@ -29,12 +30,16 @@ BLOCKED_OUTPUT_DIR=$IMGNEKO_TEST_OUTPUT_DIR/blocked-output
 EXEC_RACE_OUTPUT_DIR=$IMGNEKO_TEST_OUTPUT_DIR/exec-race-output
 SETPGID_RACE_OUTPUT_DIR=$IMGNEKO_TEST_OUTPUT_DIR/setpgid-race-output
 OUTPUT_DRAIN_RACE_OUTPUT_DIR=$IMGNEKO_TEST_OUTPUT_DIR/output-drain-race-output
+PARALLEL_COMPLETION_OUTPUT_DIR=$IMGNEKO_TEST_OUTPUT_DIR/parallel-completion-output
+PARALLEL_CLOSED_FDS_OUTPUT_DIR=$IMGNEKO_TEST_OUTPUT_DIR/parallel-closed-fds-output
 FLIP_MANY_OUTPUT_DIR=$IMGNEKO_TEST_OUTPUT_DIR/flip-many-output
 TIMEOUT_PASSTHROUGH_OUTPUT_DIR=$IMGNEKO_TEST_OUTPUT_DIR/timeout-passthrough-output
+TIMEOUT_SIGKILL_OUTPUT_DIR=$IMGNEKO_TEST_OUTPUT_DIR/timeout-sigkill-output
+PARALLEL_TIMEOUT_OUTPUT_DIR=$IMGNEKO_TEST_OUTPUT_DIR/parallel-timeout-output
 
 mkdir -p "$MARKER_TEST_DIR" "$EMPTY_TEST_DIR" "$BLOCKED_DISCOVERY_CHILD"
 mkdir -p "$EXEC_RACE_TEST_DIR" "$SETPGID_RACE_TEST_DIR"
-mkdir -p "$OUTPUT_DRAIN_RACE_TEST_DIR" "$TIMEOUT_TEST_DIR"
+mkdir -p "$OUTPUT_DRAIN_RACE_TEST_DIR" "$TIMEOUT_TEST_DIR" "$PARALLEL_TEST_DIR"
 mkdir -p "$FAKE_C_TEST_DIR/runner" "$FAKE_TEST_BIN_DIR/runner"
 mkdir -p "$BLOCKED_OUTPUT_DIR"
 
@@ -67,7 +72,7 @@ EOF
 chmod +x "$MARKER_TEST_DIR/plain-marker.sh"
 
 echo '== marker boundaries =='
-"$RUNNER" --list --tests-dir="$MARKER_TEST_DIR" \
+"$RUNNER" --jobs=1 --list --tests-dir="$MARKER_TEST_DIR" \
     --filter 'start-marker.sh|alnum-marker.sh|underscore-marker.sh|plain-marker.sh' \
     2>&1
 # CHECK: == marker boundaries ==
@@ -79,38 +84,38 @@ echo '== marker boundaries =='
 
 ROOT_PREFIX_SAFE_OUTPUT_DIR=$(dirname "$IMGNEKO_ROOT_DIR")/fake-output-dir
 echo '== tests dir equals and similar prefix output =='
-"$RUNNER" --list --output-dir "$ROOT_PREFIX_SAFE_OUTPUT_DIR" \
+"$RUNNER" --jobs=1 --list --output-dir "$ROOT_PREFIX_SAFE_OUTPUT_DIR" \
     --tests-dir="$MARKER_TEST_DIR" --filter start-marker.sh 2>&1
 # CHECK: == tests dir equals and similar prefix output ==
 # CHECK-NEXT: start-marker.sh XFAIL
 
 echo '== path unset =='
-env -u PATH "$RUNNER" --list runner/no-subtests.c 2>&1
+env -u PATH "$RUNNER" --jobs=1 --list runner/no-subtests.c 2>&1
 # CHECK: == path unset ==
 # CHECK-NEXT: runner/no-subtests.c
 
 echo 'stale output path' >"$FILE_OUTPUT_PATH"
 echo '== output path is file =='
-"$RUNNER" --output-dir "$FILE_OUTPUT_PATH" \
+"$RUNNER" --jobs=1 --output-dir "$FILE_OUTPUT_PATH" \
     --filter runner/output.sh 2>&1 || true
 # CHECK: == output path is file ==
 # CHECK: error: test output path exists and is not a directory: {{.*output-file}}
 
 chmod 000 "$BLOCKED_OUTPUT_DIR"
 echo '== blocked output dir =='
-"$RUNNER" --output-dir "$BLOCKED_OUTPUT_DIR" \
+"$RUNNER" --jobs=1 --output-dir "$BLOCKED_OUTPUT_DIR" \
     --filter runner/output.sh 2>&1 || true
 # CHECK: == blocked output dir ==
 # CHECK: error: failed to open output directory: Permission denied
 
 echo '== no tests found =='
-"$RUNNER" --list --tests-dir "$EMPTY_TEST_DIR" 2>&1 || true
+"$RUNNER" --jobs=1 --list --tests-dir "$EMPTY_TEST_DIR" 2>&1 || true
 # CHECK: == no tests found ==
 # CHECK: error: no tests found under {{.*empty-tests}}
 
 chmod 000 "$BLOCKED_DISCOVERY_CHILD"
 echo '== blocked discovery =='
-"$RUNNER" --list --tests-dir "$BLOCKED_DISCOVERY_DIR" 2>&1 || true
+"$RUNNER" --jobs=1 --list --tests-dir "$BLOCKED_DISCOVERY_DIR" 2>&1 || true
 # CHECK: == blocked discovery ==
 # CHECK: error: failed to open tests directory: Permission denied
 
@@ -155,7 +160,7 @@ EOF
 chmod +x "$FAKE_TEST_BIN_DIR/runner/many-subtests.c.bin"
 
 echo '== single-char c subtests =='
-"$RUNNER" --list --tests-dir "$FAKE_C_TEST_DIR" \
+"$RUNNER" --jobs=1 --list --tests-dir "$FAKE_C_TEST_DIR" \
     --test-bin-dir "$FAKE_TEST_BIN_DIR" \
     --filter runner/single-char-subtests.c 2>&1
 # CHECK: == single-char c subtests ==
@@ -165,7 +170,7 @@ echo '== single-char c subtests =='
 # A temporary fake C test with many subtests makes the 0.5 debug-flip path hit
 # both flipped and unflipped outcomes with negligible flake risk.
 echo '== probabilistic debug flip =='
-"$RUNNER" --tests-dir "$FAKE_C_TEST_DIR" \
+"$RUNNER" --jobs=1 --tests-dir "$FAKE_C_TEST_DIR" \
     --test-bin-dir "$FAKE_TEST_BIN_DIR" \
     --output-dir "$FLIP_MANY_OUTPUT_DIR" \
     --debug-flip-exit-probability 0.5 \
@@ -192,14 +197,15 @@ EOF
 chmod +x "$EXEC_RACE_TEST_DIR/b-target.sh"
 
 echo '== exec permission race =='
-"$RUNNER" --tests-dir "$EXEC_RACE_TEST_DIR" \
+"$RUNNER" --jobs=1 --tests-dir "$EXEC_RACE_TEST_DIR" \
     --output-dir "$EXEC_RACE_OUTPUT_DIR" 2>&1 || true
 # CHECK: == exec permission race ==
 # CHECK: RUN: a-remove-exec.sh
 # CHECK: PASS: a-remove-exec.sh
 # CHECK: RUN: b-target.sh
-# CHECK: error: test file is not executable: {{.*b-target\.sh}}
-# CHECK: error: failed to read captured output {{.*b-target\.sh/output}}: No such file or directory
+# CHECK: LAST 20 LINES OF TEST OUTPUT {{.*b-target\.sh/output}}
+# CHECK: error: failed to exec {{.*b-target\.sh}}: Permission denied
+# CHECK: ===== }}} END TEST OUTPUT =====
 # CHECK: FAIL: b-target.sh
 # CHECK: failed tests:
 # CHECK: b-target.sh
@@ -218,7 +224,7 @@ EOF
 chmod +x "$SETPGID_RACE_TEST_DIR/eacces-after-exec.sh"
 
 echo '== parent setpgid eacces =='
-"$RUNNER" --tests-dir "$SETPGID_RACE_TEST_DIR" \
+"$RUNNER" --jobs=1 --tests-dir "$SETPGID_RACE_TEST_DIR" \
     --output-dir "$SETPGID_RACE_OUTPUT_DIR" \
     --debug-parent-setpgid-delay 1 \
     --filter eacces-after-exec.sh 2>&1
@@ -243,7 +249,7 @@ EOF
 chmod +x "$OUTPUT_DRAIN_RACE_TEST_DIR/reaped-before-output-drain.sh"
 
 echo '== child reaped before output drain =='
-"$RUNNER" --tests-dir "$OUTPUT_DRAIN_RACE_TEST_DIR" \
+"$RUNNER" --jobs=1 --tests-dir "$OUTPUT_DRAIN_RACE_TEST_DIR" \
     --output-dir "$OUTPUT_DRAIN_RACE_OUTPUT_DIR" \
     --debug-parent-output-chunk-delay 0.01 \
     --filter reaped-before-output-drain.sh 2>&1
@@ -255,6 +261,61 @@ echo '== child reaped before output drain =='
 # CHECK: passed: 1
 # CHECK: Result: SUCCESS
 
+cat >"$PARALLEL_TEST_DIR/instant-success.sh" <<'EOF'
+#!/bin/sh
+exit 0
+EOF
+chmod +x "$PARALLEL_TEST_DIR/instant-success.sh"
+
+cat >"$PARALLEL_TEST_DIR/slow-success.sh" <<'EOF'
+#!/bin/sh
+sleep 1
+exit 0
+EOF
+chmod +x "$PARALLEL_TEST_DIR/slow-success.sh"
+
+echo '== parallel completed child before wait =='
+"$RUNNER" --tests-dir "$PARALLEL_TEST_DIR" \
+    --output-dir "$PARALLEL_COMPLETION_OUTPUT_DIR" \
+    -j 2 --filter 'instant-success.sh|slow-success.sh' 2>&1
+# CHECK: == parallel completed child before wait ==
+# CHECK: RUN: instant-success.sh
+# CHECK: RUN: slow-success.sh
+# CHECK: PASS: instant-success.sh
+# CHECK: PASS: slow-success.sh
+# CHECK: Summary:
+# CHECK: discovered: 2
+# CHECK: passed: 2
+# CHECK: Result: SUCCESS
+
+cat >"$PARALLEL_TEST_DIR/closed-fds-sleeper.sh" <<'EOF'
+#!/bin/sh
+exec 1>&- 2>&-
+sleep 1
+EOF
+chmod +x "$PARALLEL_TEST_DIR/closed-fds-sleeper.sh"
+
+cat >"$PARALLEL_TEST_DIR/delayed-output.sh" <<'EOF'
+#!/bin/sh
+sleep 0.2
+echo 'delayed output marker'
+EOF
+chmod +x "$PARALLEL_TEST_DIR/delayed-output.sh"
+
+echo '== parallel closed fds =='
+"$RUNNER" --tests-dir "$PARALLEL_TEST_DIR" \
+    --output-dir "$PARALLEL_CLOSED_FDS_OUTPUT_DIR" \
+    -j 2 --filter 'closed-fds-sleeper.sh|delayed-output.sh' 2>&1
+# CHECK: == parallel closed fds ==
+# CHECK: RUN: closed-fds-sleeper.sh
+# CHECK: RUN: delayed-output.sh
+# CHECK: PASS: delayed-output.sh
+# CHECK: PASS: closed-fds-sleeper.sh
+# CHECK: Summary:
+# CHECK: discovered: 2
+# CHECK: passed: 2
+# CHECK: Result: SUCCESS
+
 cat >"$TIMEOUT_TEST_DIR/timeout-passthrough.sh" <<'EOF'
 #!/bin/sh
 echo 'timeout passthrough marker'
@@ -262,8 +323,77 @@ sleep 5
 EOF
 chmod +x "$TIMEOUT_TEST_DIR/timeout-passthrough.sh"
 
-echo '== timeout passthrough =='
+cat >"$TIMEOUT_TEST_DIR/ignore-term.sh" <<'EOF'
+#!/bin/sh
+trap '' TERM
+sleep 5
+EOF
+chmod +x "$TIMEOUT_TEST_DIR/ignore-term.sh"
+
+cat >"$TIMEOUT_TEST_DIR/ignore-term-too.sh" <<'EOF'
+#!/bin/sh
+trap '' TERM
+sleep 5
+EOF
+chmod +x "$TIMEOUT_TEST_DIR/ignore-term-too.sh"
+
+cat >"$TIMEOUT_TEST_DIR/detached-output.sh" <<'EOF'
+#!/bin/sh
+printf '%s\n' 'timeout detached output marker'
+setsid sh -c 'sleep 5' &
+sleep 2
+EOF
+chmod +x "$TIMEOUT_TEST_DIR/detached-output.sh"
+
+echo '== timeout sigkill =='
+"$RUNNER" --jobs=1 --tests-dir "$TIMEOUT_TEST_DIR" \
+    --output-dir "$TIMEOUT_SIGKILL_OUTPUT_DIR" \
+    --timeout 1 --filter ignore-term.sh 2>&1 || true
+# CHECK: == timeout sigkill ==
+# CHECK: RUN: ignore-term.sh
+# CHECK: TIMEOUT: ignore-term.sh
+# CHECK: timed out tests:
+# CHECK: ignore-term.sh
+# CHECK: Result: FAILURE
+
+echo '== parallel timeout bookkeeping =='
 "$RUNNER" --tests-dir "$TIMEOUT_TEST_DIR" \
+    --output-dir "$PARALLEL_TIMEOUT_OUTPUT_DIR" \
+    -j 2 --timeout 1 \
+    --filter 'ignore-term.sh|detached-output.sh' 2>&1 || true
+# CHECK: == parallel timeout bookkeeping ==
+# CHECK: RUN: detached-output.sh
+# CHECK: RUN: ignore-term.sh
+# CHECK: TIMEOUT: ignore-term.sh
+# CHECK: TIMEOUT: detached-output.sh
+# CHECK: timed out tests:
+# CHECK: ignore-term.sh
+# CHECK: detached-output.sh
+# CHECK: Summary:
+# CHECK: discovered: 2
+# CHECK: timeout: 2
+# CHECK: Result: FAILURE
+
+echo '== parallel timeout sigkill deadlines =='
+"$RUNNER" --tests-dir "$TIMEOUT_TEST_DIR" \
+    --output-dir "$PARALLEL_TIMEOUT_OUTPUT_DIR-sigkill" \
+    -j 2 --timeout 1 \
+    --filter 'ignore-term.sh|ignore-term-too.sh' 2>&1 || true
+# CHECK: == parallel timeout sigkill deadlines ==
+# CHECK: RUN: ignore-term-too.sh
+# CHECK: RUN: ignore-term.sh
+# CHECK: TIMEOUT: ignore-term-too.sh
+# CHECK: TIMEOUT: ignore-term.sh
+# CHECK: timed out tests:
+# CHECK: ignore-term-too.sh
+# CHECK: ignore-term.sh
+# CHECK: Summary:
+# CHECK: discovered: 2
+# CHECK: timeout: 2
+# CHECK: Result: FAILURE
+
+echo '== timeout passthrough =='
+"$RUNNER" --jobs=1 --tests-dir "$TIMEOUT_TEST_DIR" \
     --output-dir "$TIMEOUT_PASSTHROUGH_OUTPUT_DIR" \
     --output-passthrough --timeout 1 --filter timeout-passthrough.sh \
     2>&1 || true

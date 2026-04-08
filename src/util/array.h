@@ -218,6 +218,17 @@ ARRLIB_INLINE void *arr__insert_arr_impl(void *data, size_t *size,
         (arr).size -= (n);                                                     \
     } while (0)
 
+// Remove the element at index from an owning array in place, shifting the tail
+// down to keep the remaining elements contiguous.
+#define arr_remove_at(arr, index)                                              \
+    do {                                                                       \
+        size_t arr__index = (index);                                           \
+        assert(arr__index < (arr).size);                                       \
+        memmove((arr).data + arr__index, (arr).data + arr__index + 1,          \
+                ((arr).size - arr__index - 1) * sizeof((arr).data[0]));        \
+        (arr).size--;                                                          \
+    } while (0)
+
 // Remove n elements from the front of an owning array in place.
 #define arr_drop_front(arr, n)                                                 \
     do {                                                                       \

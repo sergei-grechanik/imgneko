@@ -162,7 +162,12 @@ c_escape = $(subst ",\",$(subst \,\\,$(1)))
 
 TEST_RUNNER_DEFINES := \
 	-DTEST_RUNNER_ROOT_DIR=\"$(call c_escape,$(ROOT_DIR))\" \
-	-DTEST_RUNNER_BUILD_DIR=\"$(call c_escape,$(BUILD_DIR))\"
+	-DTEST_RUNNER_BUILD_DIR=\"$(call c_escape,$(BUILD_DIR))\" \
+	-DTEST_RUNNER_DEFAULT_JOBS=$(TEST_JOBS)
+
+# Choose the job count from `JOBS`, then `PARALLEL`, then the configured
+# `TEST_JOBS` default, and fall back to `1` if none of them are set.
+TEST_RUNNER_JOBS := $(or $(strip $(JOBS)),$(strip $(PARALLEL)),$(strip $(TEST_JOBS)),1)
 
 # Helpers to convert *.bin and *.o targets to *.d depfile paths and *.json
 # compile database fragment paths.
@@ -206,7 +211,7 @@ COMMON_LINK_FLAGS = $(COVERAGE_LINK_FLAGS) $(LDFLAGS)
 
 # Emit one #define line per saved configuration variable.
 CONFIG_INFO_DEFINES := \
-	$(foreach var,PROFILE PREFIX CC CPPFLAGS CFLAGS LDFLAGS LDLIBS FEATURE_X COMP_DB_MJ COVERAGE_REPORT DEPFILES, \
+	$(foreach var,PROFILE PREFIX CC CPPFLAGS CFLAGS LDFLAGS LDLIBS FEATURE_X COMP_DB_MJ COVERAGE_REPORT DEPFILES TEST_JOBS, \
 		printf '%s\n' '#define BUILD_CONFIG_$(var) "$(call c_escape,$($(var)))"';)
 
 # Use the checked-in dependency file everywhere, then add any generated
@@ -334,17 +339,18 @@ install: check-config-date all
 test: check-config-date test-deps clean-test-output
 	@set --; \
 	if [ -n "$(FILTER)" ]; then set -- --filter "$(FILTER)"; else set -- --all; fi; \
-	"$(BIN_TEST_RUNNER)" "$$@"
+	"$(BIN_TEST_RUNNER)" -j "$(TEST_RUNNER_JOBS)" "$$@"
 
 ifeq ($(COVERAGE_REPORT),ON)
 # Run the full instrumented test suite only when any instrumented binary
 # changed, then regenerate the merged coverage artifacts only when the raw
 # profiles or reporting inputs changed.
-$(COVERAGE_TESTS_STAMP): $(BIN_IMGNEKO) $(BIN_TEST_RUNNER) $(BIN_RUN_AND_CHECK) $(TEST_C_BINS) $(TEST_SOURCES) | check-config-date
+$(COVERAGE_TESTS_STAMP): $(BIN_IMGNEKO) $(TEST_TOOLS) $(TEST_C_BINS) | check-config-date
 	@rm -rf "$(COVERAGE_PROFILE_DIR)" "$(TEST_OUTPUT_DIR)"
 	@mkdir -p "$(COVERAGE_PROFILE_DIR)"
-	@LLVM_PROFILE_FILE="$(COVERAGE_PROFILE_DIR)/%m-%p.profraw" "$(BIN_TEST_RUNNER)" --all
+	@LLVM_PROFILE_FILE="$(COVERAGE_PROFILE_DIR)/%m-%p.profraw" "$(BIN_TEST_RUNNER)" -j "$(TEST_RUNNER_JOBS)" --all
 	@touch "$@"
+	@$(COMPILE_DB_REFRESH)
 
 ifneq ($(strip $(FILTER)),)
 coverage: check-config-date
@@ -415,5 +421,6 @@ help:
 	@printf '%s\n' ''
 	@printf '%s\n' 'To run tests from a configured build directory:'
 	@printf '%s\n' '  make BUILD_DIR=build/debug test'
+	@printf '%s\n' '  make BUILD_DIR=build/debug test JOBS=4'
 	@printf '%s\n' '  make BUILD_DIR=build/debug test FILTER='\''test-runner*|some_test.c/subtest'\'''
 	@printf '%s\n' '  make BUILD_DIR=build/debug test-list FILTER='\''*.sh|*.test'\'''

@@ -198,12 +198,42 @@ cleanup:
     return status;
 }
 
+static int test_remove_at(TestContext *ctx) {
+    const char *name = ctx->test_name;
+    IntArray front = arr_from_c(IntArray, ((int const[]){1, 2, 3, 4}));
+    IntArray middle = arr_from_c(IntArray, ((int const[]){1, 2, 3, 4}));
+    IntArray back = arr_from_c(IntArray, ((int const[]){1, 2, 3, 4}));
+    int status = 0;
+
+    // Removing from any position should keep the remaining elements packed and
+    // preserve their relative order.
+    arr_remove_at(front, 0);
+    status = expect_array_eq(name, front.data, front.size, INTS(2, 3, 4));
+    if (status != 0)
+        goto cleanup;
+
+    arr_remove_at(middle, 1);
+    status = expect_array_eq(name, middle.data, middle.size, INTS(1, 3, 4));
+    if (status != 0)
+        goto cleanup;
+
+    arr_remove_at(back, back.size - 1);
+    status = expect_array_eq(name, back.data, back.size, INTS(1, 2, 3));
+
+cleanup:
+    arr_free(back);
+    arr_free(middle);
+    arr_free(front);
+    return status;
+}
+
 int main(int argc, char **argv) {
     const Subtest subtests[] = {
         PREFIXED_TEST(test_growth_and_resize),
         PREFIXED_TEST(test_copy_from_data),
         PREFIXED_TEST(test_in_place_slice_ops),
         PREFIXED_TEST(test_append_and_insert),
+        PREFIXED_TEST(test_remove_at),
     };
 
     return run_subtests(argc, argv, subtests, ARRAY_SIZE(subtests));

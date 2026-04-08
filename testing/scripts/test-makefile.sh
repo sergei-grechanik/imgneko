@@ -51,6 +51,7 @@ INVALID_FEATURE_BUILD=$ROOT_DIR/build/test-invalid-feature
 INVALID_COMPDB_BUILD=$ROOT_DIR/build/test-invalid-compdb
 INVALID_COVERAGE_BUILD=$ROOT_DIR/build/test-invalid-coverage
 INVALID_DEPFILES_BUILD=$ROOT_DIR/build/test-invalid-depfiles
+INVALID_TEST_JOBS_BUILD=$ROOT_DIR/build/test-invalid-test-jobs
 COMPDB_WITH_MESSAGE_BUILD=$ROOT_DIR/build/test-compdb-with-message
 COMPDB_WITHOUT_MESSAGE_BUILD=$ROOT_DIR/build/test-compdb-without-message
 COVERAGE_WITH_MESSAGE_BUILD=$ROOT_DIR/build/test-coverage-with-message
@@ -62,6 +63,7 @@ COVERAGE_BUILD=$ROOT_DIR/build/test-coverage
 SPACE_BUILD="$ROOT_DIR/build/test bad dir"
 RECONFIGURE_BUILD=$ROOT_DIR/build/test-reconfigure-check
 RELATIVE_BUILD_DIR_TEST=$ROOT_DIR/build/test-relative-builddir
+TEST_JOBS_BUILD=$ROOT_DIR/build/test-jobs-default
 
 # Use one temporary root for scenarios that intentionally leave the project
 # tree, and clean it up on exit.
@@ -276,6 +278,7 @@ assert_path_absent "$INVALID_FEATURE_BUILD"
 assert_path_absent "$INVALID_COMPDB_BUILD"
 assert_path_absent "$INVALID_COVERAGE_BUILD"
 assert_path_absent "$INVALID_DEPFILES_BUILD"
+assert_path_absent "$INVALID_TEST_JOBS_BUILD"
 assert_path_absent "$COMPDB_WITH_MESSAGE_BUILD"
 assert_path_absent "$COMPDB_WITHOUT_MESSAGE_BUILD"
 assert_path_absent "$COVERAGE_WITH_MESSAGE_BUILD"
@@ -287,6 +290,7 @@ assert_path_absent "$COVERAGE_BUILD"
 assert_path_absent "$SPACE_BUILD"
 assert_path_absent "$RECONFIGURE_BUILD"
 assert_path_absent "$RELATIVE_BUILD_DIR_TEST"
+assert_path_absent "$TEST_JOBS_BUILD"
 mkdir -p "$LOG_DIR"
 
 # Verify the fully default path: no --build-dir, no profile override, and a
@@ -390,6 +394,28 @@ assert_file_exists "$DEFAULT_BUILD/bin/test-runner"
 assert_file_exists "$DEFAULT_BUILD/obj/test-bin/unit/util/path.c.bin"
 assert_output_not_contains "RUN:"
 
+# Configure a build with a non-default compiled-in parallelism and verify the
+# runner help reflects that saved default.
+say "Configure default test jobs"
+sh "$ROOT_DIR/configure" --build-dir="$TEST_JOBS_BUILD" --test-jobs=3
+run_capture "$LOG_DIR/make-test-jobs-tools.out" make -C "$TEST_JOBS_BUILD" test-tools
+assert_status_zero
+run_capture "$LOG_DIR/test-jobs-help.out" "$TEST_JOBS_BUILD/bin/test-runner" --help
+assert_status_zero
+assert_output_contains "Default jobs: 3"
+
+# The top-level `make test` target should accept both JOBS and PARALLEL as the
+# user-facing override knobs for test-runner parallelism.
+say "Make test accepts JOBS and PARALLEL"
+run_capture "$LOG_DIR/make-test-jobs-var.out" make -C "$DEFAULT_BUILD" test FILTER=runner/output.sh JOBS=2
+assert_status_zero
+assert_output_contains "discovered: 1"
+assert_output_contains "passed: 1"
+run_capture "$LOG_DIR/make-test-parallel-var.out" make -C "$DEFAULT_BUILD" test FILTER=runner/output.sh PARALLEL=2
+assert_status_zero
+assert_output_contains "discovered: 1"
+assert_output_contains "passed: 1"
+
 # A relative BUILD_DIR with a trailing slash should normalize to the same
 # absolute build directory so test-runner env vars remain stable, and `make
 # test` should also clear the default output tree before running tests.
@@ -485,6 +511,13 @@ say "configure error: invalid DEPFILES"
 run_capture "$LOG_DIR/cfg-bad-depfiles.out" sh "$ROOT_DIR/configure" --build-dir="$INVALID_DEPFILES_BUILD" DEPFILES=MAYBE
 assert_status_nonzero
 assert_output_contains "error: DEPFILES must be ON or OFF (got: MAYBE)"
+
+# Pass an invalid default test parallelism and verify the dedicated validation
+# error.
+say "configure error: invalid TEST_JOBS"
+run_capture "$LOG_DIR/cfg-bad-test-jobs.out" sh "$ROOT_DIR/configure" --build-dir="$INVALID_TEST_JOBS_BUILD" TEST_JOBS=0
+assert_status_nonzero
+assert_output_contains "error: TEST_JOBS must be a positive integer (got: 0)"
 
 # Ask for --comp-db-mj with compiler flags that force the probe to fail and
 # print a first stderr line, which should be echoed in the custom error.

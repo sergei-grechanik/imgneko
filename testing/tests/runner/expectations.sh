@@ -76,7 +76,7 @@ trap cleanup EXIT
 
 assert_file_exists "$RUNNER"
 
-"$RUNNER" --list --filter "$FILTER" >"$LIST_LOG" 2>&1 ||
+"$RUNNER" --jobs=1 --list --filter "$FILTER" >"$LIST_LOG" 2>&1 ||
     fail "nested list run failed"
 
 assert_file_contains "$LIST_LOG" "runner/markers.c/marked_disabled DISABLED"
@@ -84,7 +84,7 @@ assert_file_contains "$LIST_LOG" "runner/markers.c/marked_xfail XFAIL"
 assert_file_contains "$LIST_LOG" "runner/xfail.sh XFAIL"
 assert_file_contains "$LIST_LOG" "runner/disabled.sh DISABLED"
 
-"$RUNNER" --output-dir "$SUMMARY_OUTPUT_ROOT" --filter "$FILTER" >"$SUMMARY_LOG" 2>&1 ||
+"$RUNNER" --jobs=1 --output-dir "$SUMMARY_OUTPUT_ROOT" --filter "$FILTER" >"$SUMMARY_LOG" 2>&1 ||
     fail "nested marker run failed"
 
 assert_file_contains "$SUMMARY_LOG" "XFAIL: runner/markers.c/marked_xfail"
@@ -100,7 +100,7 @@ assert_path_absent "$SUMMARY_OUTPUT_ROOT/runner/markers.c/marked_disabled"
 assert_path_absent "$SUMMARY_OUTPUT_ROOT/runner/disabled.sh"
 
 set +e
-IMGNEKO_TEST_FORCE_SUCCESS=1 "$RUNNER" --output-dir "$XPASS_OUTPUT_ROOT" \
+IMGNEKO_TEST_FORCE_SUCCESS=1 "$RUNNER" --jobs=1 --output-dir "$XPASS_OUTPUT_ROOT" \
     --filter "runner/markers.c/marked_xfail|runner/xfail.sh" \
     >"$XPASS_LOG" 2>&1
 status=$?
@@ -121,7 +121,7 @@ assert_file_contains "$XPASS_LOG" "Result: FAILURE"
 assert_file_not_contains "$XPASS_LOG" "failed:"
 
 set +e
-"$RUNNER" --output-dir "$FLIP_OUTPUT_ROOT" --debug-flip-exit-probability=1 \
+"$RUNNER" --jobs=1 --output-dir "$FLIP_OUTPUT_ROOT" --debug-flip-exit-probability=1 \
     --filter runner/output.sh >"$FLIP_LOG" 2>&1
 status=$?
 set -e
@@ -141,7 +141,7 @@ assert_file_contains "$FLIP_LOG" "Time:"
 assert_file_contains "$FLIP_LOG" "Result: FAILURE"
 
 set +e
-"$RUNNER" --output-dir "$TIMEOUT_OUTPUT_ROOT" --timeout 1 \
+"$RUNNER" --jobs=1 --output-dir "$TIMEOUT_OUTPUT_ROOT" --timeout 1 \
     --filter runner/timeout.sh >"$TIMEOUT_LOG" 2>&1
 status=$?
 set -e
@@ -159,7 +159,7 @@ assert_file_contains "$TIMEOUT_LOG" "Result: FAILURE"
 
 set +e
 IMGNEKO_TEST_TIMEOUT_CLOSED_FDS_SLEEP_SECONDS=30 \
-    "$RUNNER" --output-dir "$TIMEOUT_CLOSED_FDS_OUTPUT_ROOT" --timeout 2 \
+    "$RUNNER" --jobs=1 --output-dir "$TIMEOUT_CLOSED_FDS_OUTPUT_ROOT" --timeout 2 \
     --filter runner/timeout-closed-fds.sh >"$TIMEOUT_CLOSED_FDS_LOG" 2>&1
 status=$?
 set -e
@@ -181,7 +181,7 @@ assert_file_exists "$TIMEOUT_CLOSED_FDS_OUTPUT"
 detached_start=$(date +%s)
 set +e
 IMGNEKO_TEST_TIMEOUT_DETACHED_OUTPUT_SLEEP_SECONDS=5 \
-    "$RUNNER" --output-dir "$TIMEOUT_DETACHED_OUTPUT_ROOT" --timeout 1 \
+    "$RUNNER" --jobs=1 --output-dir "$TIMEOUT_DETACHED_OUTPUT_ROOT" --timeout 1 \
     --filter runner/timeout-detached-output.sh \
     >"$TIMEOUT_DETACHED_OUTPUT_LOG" 2>&1
 status=$?
@@ -205,7 +205,7 @@ assert_file_exists "$TIMEOUT_DETACHED_OUTPUT"
 assert_file_contains "$TIMEOUT_DETACHED_OUTPUT" \
     "timeout detached output script started"
 
-"$RUNNER" --output-dir "$TIMEOUT_DISABLED_OUTPUT_ROOT" --timeout 0 \
+"$RUNNER" --jobs=1 --output-dir "$TIMEOUT_DISABLED_OUTPUT_ROOT" --timeout 0 \
     --filter runner/timeout.sh >"$TIMEOUT_DISABLED_LOG" 2>&1 ||
     fail "timeout-disabled run unexpectedly failed"
 

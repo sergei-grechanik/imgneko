@@ -4,6 +4,7 @@
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <float.h>
 #include <fnmatch.h>
 #include <limits.h>
 #include <signal.h>
@@ -31,6 +32,14 @@
 
 #ifndef TEST_RUNNER_BUILD_DIR
 #error "TEST_RUNNER_BUILD_DIR must be defined at compile time"
+#endif
+
+#ifndef TEST_RUNNER_DEFAULT_JOBS
+#error "TEST_RUNNER_DEFAULT_JOBS must be defined at compile time"
+#endif
+
+#if TEST_RUNNER_DEFAULT_JOBS <= 0
+#error "TEST_RUNNER_DEFAULT_JOBS must be a positive integer"
 #endif
 
 typedef enum TestKind {
@@ -93,19 +102,137 @@ typedef struct TestRunResult {
     double elapsed_seconds;
 } TestRunResult;
 
-// Per-test runtime configuration shared by executable and C test launches.
+typedef enum TestOutcomeKind {
+    TEST_OUTCOME_PASS,
+    TEST_OUTCOME_XFAIL,
+    TEST_OUTCOME_DISABLED,
+    TEST_OUTCOME_XPASS,
+    TEST_OUTCOME_TIMEOUT,
+    TEST_OUTCOME_FAIL,
+} TestOutcomeKind;
+
+// A combination of a test case's run result and its outcome classification.
+typedef struct ClassifiedTestResult {
+    TestRunResult run_result;
+    TestOutcomeKind outcome;
+} ClassifiedTestResult;
+
+// Per-test launch configuration shared by executable and C test child startup.
 typedef struct TestRunConfig {
     const char *test_output_dir;
-    const char *output_path;
+    const char *output_file_path;
     double timeout_seconds;
-    bool output_passthrough;
     double debug_parent_setpgid_delay_seconds;
-    double debug_parent_output_chunk_delay_seconds;
 } TestRunConfig;
 
+// Parsed command-line options plus their derived filter/path state.
+typedef struct CliOptions {
+    StringArray raw_filters;
+    StringArray filters;
+    bool list_only;
+    bool run_all;
+    bool output_passthrough;
+    int jobs;
+    String tests_dir;
+    String output_dir;
+    String test_bin_dir;
+    double timeout_seconds;
+    double debug_flip_exit_probability;
+    double debug_parent_setpgid_delay_seconds;
+    double debug_parent_output_chunk_delay_seconds;
+} CliOptions;
+
+// Signal state for the main wait loop while test children exist.
+//
+// The parent blocks SIGCHLD between waitpid(WNOHANG) polls and then passes
+// wait_mask to pselect() so SIGCHLD is temporarily unblocked during the sleep.
+// That avoids missing child exits in the small window between polling and
+// sleeping, while still restoring the caller's original signal state at exit.
+typedef struct TestSignalState {
+    // SIGCHLD action before the runner installed its wakeup handler.
+    struct sigaction old_sigchld_action;
+    // Signal mask before the runner blocked SIGCHLD in the parent.
+    sigset_t old_sigchld_mask;
+    // Mask used during pselect(): same as old_sigchld_mask, but with SIGCHLD
+    // unblocked so child exits interrupt the sleep immediately.
+    sigset_t wait_mask;
+    // Whether signal_state_init() ran successfully and cleanup must restore
+    // signal state.
+    bool installed;
+} TestSignalState;
+
+// One currently running/supervised test child plus its captured-output state.
+//
+// Lifecycle:
+// 1. start_test_process() fills this after fork/exec setup succeeds.
+// 2. wait_for_running_test_events() drains output and advances timeout state.
+// 3. reap_running_tests() stores the wait status once the child exits.
+// 4. finalize_completed_running_tests() records the result after the child is
+//    reaped and the merged output pipe reaches EOF.
+typedef struct RunningTest {
+    const TestCase *test_case;
+
+    // Per-test directory exposed to the child via IMGNEKO_TEST_OUTPUT_DIR and
+    // used as its working directory.
+    String test_output_dir;
+    // Captured merged stdout/stderr file under test_output_dir, usually
+    // `<test_output_dir>/output`.
+    String output_file_path;
+
+    pid_t pid;
+    // Writable file descriptor for output_file_path in the parent.
+    int output_fd;
+    // Read end of the merged stdout/stderr pipe from the child process.
+    int output_pipe_fd;
+
+    // waitpid() status once child_reaped becomes true.
+    int status;
+
+    double start_time_seconds;
+    // Initial timeout deadline for this test, or 0 when timeouts are disabled.
+    double deadline_seconds;
+    // Grace deadline after SIGTERM before escalating to SIGKILL.
+    double sigkill_deadline_seconds;
+    // Deadline for giving up on additional pipe output after a timeout.
+    double output_drain_deadline_seconds;
+
+    bool child_reaped;
+    bool output_pipe_closed;
+    bool timed_out;
+    bool sigkill_sent;
+} RunningTest;
+
+// Summary counters accumulated across a whole test run.
+typedef struct RunSummary {
+    size_t passed;
+    size_t xfailed;
+    size_t disabled;
+    size_t xpassed;
+    size_t timed_out;
+    size_t failed;
+    StringArray failed_tests;
+    StringArray xpassed_tests;
+    StringArray timed_out_tests;
+} RunSummary;
+
 DEFINE_ARRAY_TYPE(CSubtestArray, CSubtest)
+typedef const TestCase *TestCasePtr;
+DEFINE_ARRAY_TYPE(TestCasePtrArray, TestCasePtr)
+DEFINE_ARRAY_TYPE(RunningTestArray, RunningTest)
 DEFINE_ARRAY_TYPE(TestFileArray, TestFile)
 DEFINE_ARRAY_TYPE(TestCaseArray, TestCase)
+
+// Mutable process-wide state for one test-runner invocation.
+typedef struct TestRunnerState {
+    TestFileArray files;
+    TestCaseArray cases;
+    TestCasePtrArray selected_cases;
+    RunningTestArray running_tests;
+    RunSummary summary;
+    size_t discovered;
+    double run_start_seconds;
+    TestSignalState signal_state;
+} TestRunnerState;
 
 // Absolute path to the repository root (/path/to/imgneko).
 static const char *const root_dir = TEST_RUNNER_ROOT_DIR;
@@ -119,6 +246,8 @@ static const char *const tests_root_rel = "testing/tests";
 static const char *const default_test_output_dir_rel = "test-outputs";
 // Default per-test timeout in seconds.
 static const double default_test_timeout_seconds = 180.0;
+// After a timeout sends SIGTERM, wait briefly before escalating to SIGKILL.
+static const double timeout_sigkill_grace_seconds = 0.1;
 // After killing a timed-out test, keep draining buffered output only briefly so
 // a detached descendant that inherited the pipe cannot hang the runner forever.
 static const double timeout_output_drain_grace_seconds = 0.25;
@@ -597,6 +726,22 @@ static bool parse_timeout_seconds(const char *text, double *timeout_out) {
     return true;
 }
 
+// Parse a positive job count.
+static bool parse_positive_int(const char *text, int *value_out) {
+    char *end = NULL;
+    long value;
+
+    errno = 0;
+    value = strtol(text, &end, 10);
+    if (errno != 0 || end == text || *end != '\0' || value <= 0 ||
+        value > INT_MAX) {
+        return false;
+    }
+
+    *value_out = (int)value;
+    return true;
+}
+
 // Build the per-test output directory path under output_root. Executable tests
 // map to `<root>/<test-id>/`; C subtests map to
 // `<root>/<file-id>/<subtest>/`. The caller owns the returned string and must
@@ -616,7 +761,52 @@ static String test_output_file_path(const char *test_output_dir) {
 // pselect() only wakes for signals that are actually caught, so install a
 // no-op SIGCHLD handler purely to interrupt the sleep when the child changes
 // state. The main loop still does the real reap via waitpid().
-static void run_argv_sigchld_handler(int signum) { (void)signum; }
+static void signal_state_sigchld_handler(int signum) { (void)signum; }
+
+// Install the signal-handler and mask state needed for the parent event loop to
+// sleep in pselect() without racing against child exits.
+static void signal_state_init(TestSignalState *signal_state) {
+    struct sigaction sigchld_action = {0};
+    sigset_t sigchld_mask;
+
+    // Catch SIGCHLD with a no-op handler so pselect() wakes when a child exits.
+    sigemptyset(&sigchld_action.sa_mask);
+    sigchld_action.sa_handler = signal_state_sigchld_handler;
+    require(sigaction(SIGCHLD, &sigchld_action,
+                      &signal_state->old_sigchld_action) == 0,
+            "sigaction failed: %errno");
+
+    // Block SIGCHLD in the parent outside pselect() so a child exit cannot
+    // slip between waitpid(WNOHANG) and the next sleep. Without this, the
+    // runner can observe "no exited children", lose the SIGCHLD in the gap
+    // before pselect(), and then sleep until some unrelated fd activity or
+    // timeout.
+    sigemptyset(&sigchld_mask);
+    sigaddset(&sigchld_mask, SIGCHLD);
+    require(sigprocmask(SIG_BLOCK, &sigchld_mask,
+                        &signal_state->old_sigchld_mask) == 0,
+            "sigprocmask failed: %errno");
+
+    // During pselect() we want the caller's original mask, except SIGCHLD must
+    // be unblocked so child exits interrupt the sleep.
+    signal_state->wait_mask = signal_state->old_sigchld_mask;
+    sigdelset(&signal_state->wait_mask, SIGCHLD);
+    signal_state->installed = true;
+}
+
+// Restore the caller's signal state after the wait loop finishes.
+static void signal_state_deinit(TestSignalState *signal_state) {
+    // IMGNEKO_UNCOVERED_OK[2 lines]: Defensive. We always install it first.
+    if (!signal_state->installed)
+        return;
+
+    require(sigprocmask(SIG_SETMASK, &signal_state->old_sigchld_mask, NULL) ==
+                0,
+            "sigprocmask restore failed: %errno");
+    require(sigaction(SIGCHLD, &signal_state->old_sigchld_action, NULL) == 0,
+            "sigaction restore failed: %errno");
+    signal_state->installed = false;
+}
 
 // Write the full byte range to fd, retrying short writes and EINTR. Fatal on
 // failure because the runner cannot recover from losing captured output.
@@ -638,14 +828,36 @@ static void write_all_or_die(int fd, const char *data, size_t len,
     }
 }
 
+// Close a running test's output pipe once the runner has reached EOF or has
+// given up draining it after a timeout.
+static void close_running_test_output_pipe(RunningTest *running_test) {
+    // IMGNEKO_UNCOVERED_OK[2 lines]: Defensive. We always close it here once.
+    if (running_test->output_pipe_closed || running_test->output_pipe_fd < 0)
+        return;
+
+    close(running_test->output_pipe_fd);
+    running_test->output_pipe_fd = -1;
+    running_test->output_pipe_closed = true;
+}
+
+// Release the captured output file descriptor once the test no longer needs
+// additional output appended to it.
+static void close_running_test_output_file(RunningTest *running_test) {
+    // IMGNEKO_UNCOVERED_OK[2 lines]: Defensive. We always close it here once.
+    if (running_test->output_fd < 0)
+        return;
+
+    close(running_test->output_fd);
+    running_test->output_fd = -1;
+}
+
 // Read one chunk from the merged child-output pipe, append it to the captured
 // output file, and optionally mirror it to the user's terminal. Returns
 // whether a non-empty chunk was consumed.
-static bool pump_child_output(int output_pipe_fd, int output_fd,
-                              bool output_passthrough,
-                              bool *output_pipe_closed) {
+static bool pump_running_test_output(RunningTest *running_test,
+                                     bool output_passthrough) {
     char buffer[4096];
-    ssize_t count = read(output_pipe_fd, buffer, sizeof(buffer));
+    ssize_t count = read(running_test->output_pipe_fd, buffer, sizeof(buffer));
 
     // IMGNEKO_UNCOVERED_OK_START
     if (count < 0) {
@@ -656,12 +868,11 @@ static bool pump_child_output(int output_pipe_fd, int output_fd,
     // IMGNEKO_UNCOVERED_OK_END
 
     if (count == 0) {
-        close(output_pipe_fd);
-        *output_pipe_closed = true;
+        close_running_test_output_pipe(running_test);
         return false;
     }
 
-    write_all_or_die(output_fd, buffer, (size_t)count,
+    write_all_or_die(running_test->output_fd, buffer, (size_t)count,
                      "failed to write captured output");
     if (output_passthrough) {
         write_all_or_die(STDOUT_FILENO, buffer, (size_t)count,
@@ -670,113 +881,66 @@ static bool pump_child_output(int output_pipe_fd, int output_fd,
     return true;
 }
 
-// After a timeout, a detached descendant may keep the inherited output pipe
-// open even though the timed-out process group has already been killed. Drain
-// anything that becomes readable before the deadline, then stop waiting so the
-// runner cannot hang forever on that still-open pipe.
-static void drain_child_output_pipe_until_deadline(int output_pipe_fd,
-                                                   int output_fd,
-                                                   bool output_passthrough,
-                                                   double deadline_seconds) {
-    bool output_pipe_closed = false;
-
-    while (!output_pipe_closed) {
-        fd_set read_fds;
-        struct timespec wait_timeout = time_timeout_until_deadline(
-            deadline_seconds, time_monotonic_seconds());
-        int rc;
-
-        // IMGNEKO_UNCOVERED_OK_START
-        if (wait_timeout.tv_sec == 0 && wait_timeout.tv_nsec == 0)
-            break;
-        // IMGNEKO_UNCOVERED_OK_END
-
-        FD_ZERO(&read_fds);
-        FD_SET(output_pipe_fd, &read_fds);
-        rc = pselect(output_pipe_fd + 1, &read_fds, NULL, NULL, &wait_timeout,
-                     NULL);
-
-        if (rc == 0)
-            break;
-        // IMGNEKO_UNCOVERED_OK_START
-        if (rc < 0) {
-            if (errno == EINTR)
-                continue;
-            die_errno("pselect failed while draining timed-out child output");
-        }
-        // IMGNEKO_UNCOVERED_OK_END
-
-        if (FD_ISSET(output_pipe_fd, &read_fds)) {
-            pump_child_output(output_pipe_fd, output_fd, output_passthrough,
-                              &output_pipe_closed);
-        }
-    }
-
-    if (!output_pipe_closed)
-        close(output_pipe_fd);
+// Release a running test's dynamically allocated paths and open file
+// descriptors. The child process, if any, must already have been reaped.
+static void running_test_deinit(RunningTest *running_test) {
+    assert(running_test->pid <= 0 || running_test->child_reaped);
+    close_running_test_output_pipe(running_test);
+    close_running_test_output_file(running_test);
+    str_free(running_test->test_output_dir);
+    str_free(running_test->output_file_path);
 }
 
-// Run argv in a child process with stdout/stderr captured into output_path.
-// The child also receives its per-test output directory and runs from it.
-//
-// When `config->output_passthrough` is true, mirror the merged child output to
-// the user while still writing the same bytes into `config->output_path`.
-//
-// When `config->timeout_seconds` enables a timeout, place the child in its own
-// process group so timeout cleanup can terminate the whole test subtree, not
-// just the direct exec'd process.
-static TestRunResult run_argv(char *const *argv, const TestRunConfig *config) {
-    TestRunResult result = {.exit_code = 1, .timed_out = false};
-    bool timeout_enabled = config->timeout_seconds > 0.0;
-    bool deadline_expired = false;
-    bool child_reaped = false;
-    bool output_pipe_closed = false;
-    struct sigaction old_sigchld_action = {0};
-    sigset_t old_sigchld_mask;
-    sigset_t wait_mask;
+// Locate the running-test entry for a pid, or NULL when it is no longer
+// tracked.
+static RunningTest *find_running_test_by_pid(RunningTestArray *running_tests,
+                                             pid_t pid) {
+    // IMGNEKO_UNCOVERED_OK: We always find the pid.
+    for (size_t i = 0; i < running_tests->size; ++i) {
+        if (running_tests->data[i].pid == pid)
+            return &running_tests->data[i];
+    }
+
+    // This defensive fallback needs a reaped pid that is no longer tracked in
+    // running_tests. The current wait loop only reaps tracked children before
+    // finalization, so normal tests do not reach it.
+    // IMGNEKO_UNCOVERED_OK
+    return NULL;
+}
+
+// Fork and exec one test case, returning a fully initialized RunningTest that
+// the wait loop owns and later releases with running_test_deinit(). The input
+// path strings transfer ownership into the returned struct.
+static RunningTest start_test_process(const TestCase *test_case,
+                                      const TestRunConfig *config,
+                                      const TestSignalState *signal_state,
+                                      String test_output_dir,
+                                      String output_file_path) {
     int output_fd = -1;
     int output_pipe_fds[2] = {-1, -1};
     pid_t pid;
     double start_time;
-    double deadline_seconds = 0.0;
-    int status = 0;
-
-    if (timeout_enabled) {
-        struct sigaction sigchld_action = {0};
-        sigset_t sigchld_mask;
-
-        // Install a temporary SIGCHLD handler so pselect() can wake when this
-        // child exits. Save the old action so the runner does not leak its
-        // internal signal setup into later code.
-        sigemptyset(&sigchld_action.sa_mask);
-        sigchld_action.sa_handler = run_argv_sigchld_handler;
-        require(sigaction(SIGCHLD, &sigchld_action, &old_sigchld_action) == 0,
-                "sigaction failed: %errno");
-
-        // Block SIGCHLD in normal execution so a child exit cannot land in the
-        // tiny window between waitpid(WNOHANG) and pselect(). If that happens,
-        // the signal stays pending until pselect() temporarily unblocks it.
-        sigemptyset(&sigchld_mask);
-        sigaddset(&sigchld_mask, SIGCHLD);
-        require(sigprocmask(SIG_BLOCK, &sigchld_mask, &old_sigchld_mask) == 0,
-                "sigprocmask failed: %errno");
-
-        // pselect() takes a full replacement mask, not a "signals to unblock"
-        // set, so start from the caller's original mask and only make SIGCHLD
-        // unblocked while sleeping.
-        wait_mask = old_sigchld_mask;
-        sigdelset(&wait_mask, SIGCHLD);
-    }
+    char *argv[] = {
+        test_case->kind == TEST_KIND_C ? test_case->c_exe_path.cstr
+                                       : test_case->file_abs_path.cstr,
+        test_case->kind == TEST_KIND_C
+            ? (test_case->c_subtest.len != 0 ? test_case->c_subtest.cstr
+                                             : "--all")
+            : NULL,
+        NULL,
+    };
 
     require(mkdir_p(config->test_output_dir),
             "failed to create a directory: %errno");
-    output_fd = open(config->output_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    output_fd =
+        open(config->output_file_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
 
     require(output_fd >= 0, "failed to open a test output file: %errno");
 
     // Route both stdout and stderr through one pipe so the parent can always
-    // capture the full merged output stream into output_path, and optionally
-    // mirror the same bytes to the user's terminal in passthrough mode.
+    // capture the full merged output stream into output_file_path, and
+    // optionally mirror the same bytes to the user's terminal in passthrough
+    // mode.
     require(pipe(output_pipe_fds) == 0, "pipe failed: %errno");
 
     pid = fork();
@@ -787,8 +951,8 @@ static TestRunResult run_argv(char *const *argv, const TestRunConfig *config) {
         // The parent blocks SIGCHLD around its wait loop. Undo that in the
         // child before running the test so the test process inherits the
         // caller's original signal mask, not the runner's internal one.
-        if (timeout_enabled &&
-            sigprocmask(SIG_SETMASK, &old_sigchld_mask, NULL) != 0) {
+        if (sigprocmask(SIG_SETMASK, &signal_state->old_sigchld_mask, NULL) !=
+            0) {
             fprintf(stderr, "error: sigprocmask failed: %s\n", strerror(errno));
             _exit(127);
         }
@@ -848,165 +1012,246 @@ static TestRunResult run_argv(char *const *argv, const TestRunConfig *config) {
     }
 
     start_time = time_monotonic_seconds();
-    if (timeout_enabled)
-        deadline_seconds = start_time + config->timeout_seconds;
+    return (RunningTest){
+        .test_case = test_case,
+        .test_output_dir = test_output_dir,
+        .output_file_path = output_file_path,
+        .pid = pid,
+        .output_fd = output_fd,
+        .output_pipe_fd = output_pipe_fds[0],
+        .start_time_seconds = start_time,
+        .deadline_seconds = config->timeout_seconds > 0.0
+                                ? start_time + config->timeout_seconds
+                                : 0.0,
+        .sigkill_deadline_seconds = 0.0,
+        .output_drain_deadline_seconds = 0.0,
+        .child_reaped = false,
+        .output_pipe_closed = false,
+        .timed_out = false,
+        .sigkill_sent = false,
+    };
+}
 
-    // Loop until the child is reaped and the output pipe reaches EOF, or the
-    // deadline expires. The child can exit before the parent consumes the last
-    // buffered output bytes, so both conditions matter.
+// Reap any exited children without blocking and attach their statuses to the
+// corresponding running-test records.
+static void reap_running_tests(RunningTestArray *running_tests) {
     for (;;) {
-        if (!child_reaped) {
-            // WNOHANG turns waitpid() into a non-blocking probe: pid means the
-            // child already changed state, 0 means it is still running.
-            pid_t waited = waitpid(pid, &status, WNOHANG);
+        int status = 0;
+        pid_t waited = waitpid(-1, &status, WNOHANG);
 
-            // IMGNEKO_UNCOVERED_OK_START
-            if (waited < 0) {
-                // A caught signal can interrupt the probe; just retry.
-                if (errno == EINTR)
-                    continue;
-                die_errno("waitpid failed");
-            }
-            // IMGNEKO_UNCOVERED_OK_END
+        if (waited == 0)
+            return;
 
-            if (waited == pid)
-                child_reaped = true;
-        }
-
-        if (child_reaped && output_pipe_closed)
-            break;
-
-        fd_set read_fds;
-        struct timespec wait_timeout = {0};
-        struct timespec *wait_timeout_ptr = NULL;
-        int nfds = 0;
-        int rc;
-
-        FD_ZERO(&read_fds);
-        if (!output_pipe_closed) {
-            FD_SET(output_pipe_fds[0], &read_fds);
-            nfds = output_pipe_fds[0] + 1;
-        }
-
-        if (timeout_enabled && !child_reaped) {
-            wait_timeout = time_timeout_until_deadline(
-                deadline_seconds, time_monotonic_seconds());
-
-            // IMGNEKO_UNCOVERED_OK_START
-            if (wait_timeout.tv_sec == 0 && wait_timeout.tv_nsec == 0) {
-                deadline_expired = true;
-                break;
-            }
-            // IMGNEKO_UNCOVERED_OK_END
-
-            wait_timeout_ptr = &wait_timeout;
-        }
-
-        // Sleep until either output becomes readable, the deadline expires, or
-        // SIGCHLD arrives. When nfds is 0, this intentionally degenerates into
-        // an interruptible timed wait after the child has closed the pipe but
-        // before waitpid() has reported the exit yet.
-        rc = pselect(nfds, nfds == 0 ? NULL : &read_fds, NULL, NULL,
-                     wait_timeout_ptr, timeout_enabled ? &wait_mask : NULL);
-
-        if (rc == 0) {
-            // The timeout expired before any output readiness or SIGCHLD wakeup
-            deadline_expired = true;
-            break;
-        }
-        if (rc < 0) {
-            // EINTR is the normal wakeup path after SIGCHLD (or another caught
-            // signal); loop back and probe waitpid() again.
-            require(errno == EINTR, "pselect failed: %errno");
+        if (waited > 0) {
+            RunningTest *running_test =
+                find_running_test_by_pid(running_tests, waited);
+            require(running_test != NULL, "reaped untracked child");
+            running_test->child_reaped = true;
+            running_test->status = status;
             continue;
         }
 
-        // IMGNEKO_UNCOVERED_OK: output_pipe_closed is never true here
-        if (!output_pipe_closed && FD_ISSET(output_pipe_fds[0], &read_fds)) {
-            // Consume one available chunk, append it to the per-test output
-            // file, and optionally pass it through to the user immediately.
-            bool received_output_chunk = pump_child_output(
-                output_pipe_fds[0], output_fd, config->output_passthrough,
-                &output_pipe_closed);
+        // IMGNEKO_UNCOVERED_OK[2 lines]: EINTR is hard to trigger here.
+        if (errno == EINTR)
+            continue;
 
-            if (received_output_chunk &&
-                config->debug_parent_output_chunk_delay_seconds > 0.0) {
+        // ECHILD is possible and happens when there are currently no waitable
+        // children left.
+        require(errno == ECHILD, "waitpid failed: %errno");
+        return;
+    }
+}
+
+// Start timeout cleanup for a still-running child and bound the amount of time
+// the runner will keep waiting on its output pipe afterward.
+static void signal_running_test_process_group(const RunningTest *running_test,
+                                              int signal_number) {
+    // IMGNEKO_UNCOVERED_OK: ESRCH case is hard to trigger
+    require(kill(-running_test->pid, signal_number) == 0 || errno == ESRCH,
+            "kill failed: %errno");
+}
+
+// Escalate a timed-out test from SIGTERM to SIGKILL.
+static void sigkill_running_test_process(RunningTest *running_test) {
+    signal_running_test_process_group(running_test, SIGKILL);
+    running_test->sigkill_sent = true;
+}
+
+// Mark a test as timed out, send SIGTERM to its process group, and configure
+// the later SIGKILL/output-drain deadlines used by the event loop.
+static void sigterm_running_test_process(RunningTest *running_test,
+                                         double now_seconds) {
+    // IMGNEKO_UNCOVERED_OK[2 lines]: Defensive. Callers check timed_out.
+    if (running_test->timed_out)
+        return;
+
+    running_test->timed_out = true;
+    running_test->sigkill_deadline_seconds =
+        now_seconds + timeout_sigkill_grace_seconds;
+    running_test->output_drain_deadline_seconds =
+        now_seconds + timeout_output_drain_grace_seconds;
+
+    signal_running_test_process_group(running_test, SIGTERM);
+}
+
+// Advance timeout cleanup for every running child: start timeout handling,
+// escalate timed-out children from SIGTERM to SIGKILL, and eventually stop
+// waiting for lingering output pipes.
+static void update_running_test_timeouts(RunningTestArray *running_tests,
+                                         double now_seconds) {
+    for (size_t i = 0; i < running_tests->size; ++i) {
+        RunningTest *running_test = &running_tests->data[i];
+
+        // Start timeout cleanup once the test's main deadline has passed.
+        if (!running_test->timed_out && running_test->deadline_seconds > 0.0 &&
+            !running_test->child_reaped &&
+            now_seconds >= running_test->deadline_seconds) {
+            sigterm_running_test_process(running_test, now_seconds);
+        }
+
+        // If SIGTERM did not stop the test subtree quickly enough, force it
+        // down with SIGKILL after the grace period expires.
+        if (running_test->timed_out && !running_test->child_reaped &&
+            !running_test->sigkill_sent &&
+            now_seconds >= running_test->sigkill_deadline_seconds) {
+            sigkill_running_test_process(running_test);
+        }
+
+        // Detached descendants can keep the inherited pipe open after the main
+        // child is gone, so stop draining after a short post-timeout window.
+        if (running_test->timed_out && !running_test->output_pipe_closed &&
+            now_seconds >= running_test->output_drain_deadline_seconds) {
+            close_running_test_output_pipe(running_test);
+        }
+    }
+}
+
+// Return whether the child has been fully accounted for and no longer needs to
+// stay in the running set.
+static bool running_test_is_complete(const RunningTest *running_test) {
+    return running_test->child_reaped && running_test->output_pipe_closed;
+}
+
+// Compute the next deadline that should bound pselect(). Returns false when no
+// timeout-related deadline is currently pending.
+static bool next_running_test_deadline(const RunningTestArray *running_tests,
+                                       double *deadline_out) {
+    double deadline = DBL_MAX;
+
+    for (size_t i = 0; i < running_tests->size; ++i) {
+        const RunningTest *running_test = &running_tests->data[i];
+
+        // The deadline from the main timeout.
+        if (!running_test->timed_out && running_test->deadline_seconds > 0.0 &&
+            !running_test->child_reaped &&
+            running_test->deadline_seconds < deadline)
+            deadline = running_test->deadline_seconds;
+
+        // TODO: Cover the false branch here with a deterministic scenario
+        // that leaves multiple timed-out children racing with staggered
+        // SIGKILL deadlines. Current tests only hit the minimum case.
+        // The deadline from the SIGKILL escalation after a timeout.
+        if (running_test->timed_out && !running_test->child_reaped &&
+            !running_test->sigkill_sent &&
+            running_test->sigkill_deadline_seconds < deadline)
+            deadline = running_test->sigkill_deadline_seconds;
+
+        // TODO: Cover the ordering comparison here with multiple timed-out
+        // children that keep their output pipes open long enough to create
+        // different output-drain deadlines. Existing tests only hit the
+        // first-deadline case.
+        // The deadline for giving up on draining the output pipe.
+        if (running_test->timed_out && !running_test->output_pipe_closed &&
+            running_test->output_drain_deadline_seconds < deadline)
+            deadline = running_test->output_drain_deadline_seconds;
+    }
+
+    if (deadline == DBL_MAX)
+        return false;
+
+    *deadline_out = deadline;
+    return true;
+}
+
+// Sleep until one child emits output, exits, or reaches the next timeout
+// transition, then process the newly available events.
+static void wait_for_running_test_events(RunningTestArray *running_tests,
+                                         bool output_passthrough,
+                                         double output_chunk_delay_seconds,
+                                         const TestSignalState *signal_state) {
+    fd_set read_fds;
+    struct timespec wait_timeout = {0};
+    struct timespec *wait_timeout_ptr = NULL;
+    double next_deadline = 0.0;
+    double now_seconds = time_monotonic_seconds();
+    int max_fd = -1;
+    int rc;
+
+    // Bring timeout and reap state up to date before deciding whether we need
+    // to sleep at all.
+    update_running_test_timeouts(running_tests, now_seconds);
+    reap_running_tests(running_tests);
+
+    // Build the fd set for output pipes that still need draining.
+    FD_ZERO(&read_fds);
+    for (size_t i = 0; i < running_tests->size; ++i) {
+        RunningTest *running_test = &running_tests->data[i];
+
+        if (running_test->output_pipe_closed)
+            continue;
+
+        require(running_test->output_pipe_fd < FD_SETSIZE,
+                "too many open test output pipes; reduce -j");
+        FD_SET(running_test->output_pipe_fd, &read_fds);
+        // TODO: Cover the false branch by constructing a later running test
+        // with a smaller fd than an earlier one. The runner currently opens
+        // pipes monotonically, so max_fd only grows in practice.
+        if (running_test->output_pipe_fd > max_fd)
+            max_fd = running_test->output_pipe_fd;
+    }
+
+    // Bound the sleep by the earliest pending timeout transition, if any.
+    if (next_running_test_deadline(running_tests, &next_deadline)) {
+        wait_timeout = time_timeout_until_deadline(next_deadline, now_seconds);
+        wait_timeout_ptr = &wait_timeout;
+    }
+
+    // Sleep until output arrives, a child state change interrupts pselect(),
+    // or the next timeout deadline expires.
+    rc = pselect(max_fd + 1, max_fd >= 0 ? &read_fds : NULL, NULL, NULL,
+                 wait_timeout_ptr, &signal_state->wait_mask);
+
+    if (rc < 0) {
+        require(errno == EINTR, "pselect failed: %errno");
+    }
+
+    if (rc > 0) {
+        // Drain whichever output pipes became readable during this wakeup.
+        for (size_t i = 0; i < running_tests->size; ++i) {
+            RunningTest *running_test = &running_tests->data[i];
+
+            if (running_test->output_pipe_closed)
+                continue;
+            if (!FD_ISSET(running_test->output_pipe_fd, &read_fds))
+                continue;
+
+            if (pump_running_test_output(running_test, output_passthrough) &&
+                output_chunk_delay_seconds > 0.0) {
                 // Debug-only hook to slow output draining enough to exercise
                 // the state where the child is already reaped but unread bytes
                 // still remain buffered in the merged output pipe.
-                time_sleep_seconds(
-                    config->debug_parent_output_chunk_delay_seconds);
+                time_sleep_seconds(output_chunk_delay_seconds);
             }
         }
-
-        // Keep SIGCHLD blocked between the WNOHANG probe and pselect(). That
-        // way a child exit in that window becomes a pending SIGCHLD, and
-        // pselect() wakes immediately when it temporarily unblocks SIGCHLD via
-        // wait_mask.
     }
 
-    // Restore the caller's signal state now that this child is no longer being
-    // supervised by the pselect()/SIGCHLD timeout machinery.
-    if (timeout_enabled) {
-        require(sigprocmask(SIG_SETMASK, &old_sigchld_mask, NULL) == 0,
-                "sigprocmask restore failed: %errno");
-        require(sigaction(SIGCHLD, &old_sigchld_action, NULL) == 0,
-                "sigaction restore failed: %errno");
-    }
-
-    result.elapsed_seconds = time_monotonic_seconds() - start_time;
-    if (deadline_expired) {
-        result.timed_out = true;
-        // Use 124 as the synthetic timeout status. This matches the common
-        // shell convention used by tools like `timeout`.
-        result.exit_code = 124;
-        // Kill the whole process group in case the test spawned children that
-        // would otherwise outlive the direct runner child.
-        // IMGNEKO_UNCOVERED_OK: ESRCH case is hard to trigger
-        require(kill(-pid, SIGTERM) == 0 || errno == ESRCH,
-                "kill failed: %errno");
-        // Give the test subtree a brief chance to exit cleanly on SIGTERM
-        // before forcing it down with SIGKILL.
-        struct timespec grace = {.tv_sec = 0, .tv_nsec = 100000000};
-        nanosleep(&grace, NULL);
-        // IMGNEKO_UNCOVERED_OK: ESRCH case is hard to trigger
-        require(kill(-pid, SIGKILL) == 0 || errno == ESRCH,
-                "kill failed: %errno");
-        // Reap the direct child so we do not leave a zombie behind after the
-        // timeout path finishes. ECHILD means it was already reaped elsewhere
-        // in the timeout race, which is fine.
-        // IMGNEKO_UNCOVERED_OK[2 lines]: ECHILD case is hard to trigger
-        require(child_reaped || waitpid(pid, &status, 0) >= 0 ||
-                    errno == ECHILD,
-                "waitpid failed after timeout: %errno");
-        // A timeout can kill the child before the parent has drained all bytes
-        // already buffered in the pipe, so finish draining them before closing
-        // the output file. Bound that drain in case a detached descendant kept
-        // the inherited pipe open after escaping the timed-out process group.
-        if (!output_pipe_closed) {
-            drain_child_output_pipe_until_deadline(
-                output_pipe_fds[0], output_fd, config->output_passthrough,
-                time_monotonic_seconds() + timeout_output_drain_grace_seconds);
-        }
-        close(output_fd);
-        result.elapsed_seconds = time_monotonic_seconds() - start_time;
-        return result;
-    }
-
-    close(output_fd);
-
-    if (WIFEXITED(status)) {
-        result.exit_code = WEXITSTATUS(status);
-        return result;
-    }
-
-    if (WIFSIGNALED(status)) {
-        result.exit_code = 128 + WTERMSIG(status);
-        return result;
-    }
-
-    // IMGNEKO_UNCOVERED_OK
-    return result;
+    // A timeout wakeup, a signal wakeup, or readable output can all change the
+    // observed child/timeout state, so refresh once at the end regardless of
+    // how pselect() returned.
+    // NOTE: This is not strictly necessary because we do it at the beginning of
+    // the function, but it helps finalizing children a bit earlier.
+    reap_running_tests(running_tests);
+    update_running_test_timeouts(running_tests, time_monotonic_seconds());
 }
 
 // Run argv, capture the child's stdout lines, and return an exit-like status.
@@ -1069,25 +1314,25 @@ static int run_argv_capture_stdout_lines(char *const *argv,
     return 1;
 }
 
-// Print the failing output path and the last max_lines lines so users do not
-// need to open the full file just to see the failure context.
-static void print_output_tail(const char *output_path, size_t max_lines) {
+// Print the failing output file path and the last max_lines lines so users do
+// not need to open the full file just to see the failure context.
+static void print_output_tail(const char *output_file_path, size_t max_lines) {
     StringArray lines = arr_empty;
 
-    if (!file_read_lines(&lines, output_path, (ptrdiff_t)max_lines)) {
+    if (!file_read_lines(&lines, output_file_path, (ptrdiff_t)max_lines)) {
         fprintf(stderr, "error: failed to read captured output %s: %s\n\n",
-                output_path, strerror(errno));
+                output_file_path, strerror(errno));
         return;
     }
 
     if (lines.size == 0) {
-        fprintf(stderr, "output is empty: %s\n", output_path);
+        fprintf(stderr, "output is empty: %s\n", output_file_path);
         str_array_free(&lines);
         return;
     }
 
     fprintf(stderr, "===== LAST %zu LINES OF TEST OUTPUT %s {{{ =====\n",
-            max_lines, output_path);
+            max_lines, output_file_path);
     for (size_t i = 0; i < lines.size; ++i) {
         str_trim_trailing_chars(&lines.data[i], "\r\n");
         String escaped =
@@ -1314,32 +1559,6 @@ static void discover_test_cases(const TestFileArray *files,
     qsort(cases->data, cases->size, sizeof(cases->data[0]), compare_test_cases);
 }
 
-// Run one executable test file directly.
-static TestRunResult run_executable_test(const TestCase *test_case,
-                                         const TestRunConfig *config) {
-    char *argv[] = {test_case->file_abs_path.cstr, NULL};
-
-    if (access(test_case->file_abs_path.cstr, X_OK) != 0) {
-        fprintf(stderr, "error: test file is not executable: %s\n",
-                test_case->file_abs_path.cstr);
-        return (TestRunResult){.exit_code = 1};
-    }
-
-    return run_argv(argv, config);
-}
-
-// Run one compiled C test, either a selected subtest or all subtests.
-static TestRunResult run_c_test(const TestCase *test_case,
-                                const TestRunConfig *config) {
-    char *argv[] = {
-        test_case->c_exe_path.cstr,
-        test_case->c_subtest.len != 0 ? test_case->c_subtest.cstr : "--all",
-        NULL,
-    };
-
-    return run_argv(argv, config);
-}
-
 // Print one discovered test id, appending its marker when present.
 static void print_listed_test(const TestCase *test_case) {
     const char *marker_name = test_marker_name(test_case->marker);
@@ -1397,6 +1616,178 @@ static int maybe_flip_exit_code(const TestCase *test_case, int test_exit_code,
     return flipped_exit_code;
 }
 
+// Translate a completed running-test record into the final exit status and
+// elapsed time reported to the summary logic.
+static TestRunResult
+test_run_result_from_running_test(const RunningTest *running_test) {
+    TestRunResult result = {
+        .exit_code = 1,
+        .timed_out = running_test->timed_out,
+        .elapsed_seconds =
+            time_monotonic_seconds() - running_test->start_time_seconds,
+    };
+
+    if (running_test->timed_out) {
+        // Use 124 as the synthetic timeout status. This matches the common
+        // shell convention used by tools like `timeout`.
+        result.exit_code = 124;
+        return result;
+    }
+
+    if (WIFEXITED(running_test->status)) {
+        result.exit_code = WEXITSTATUS(running_test->status);
+        return result;
+    }
+
+    if (WIFSIGNALED(running_test->status)) {
+        result.exit_code = 128 + WTERMSIG(running_test->status);
+        return result;
+    }
+
+    // IMGNEKO_UNCOVERED_OK
+    return result;
+}
+
+// Classify the finished test into the user-visible outcome categories.
+static ClassifiedTestResult classify_test_result(const TestCase *test_case,
+                                                 TestRunResult run_result,
+                                                 double flip_exit_probability) {
+    ClassifiedTestResult classified = {.run_result = run_result};
+
+    if (!run_result.timed_out) {
+        run_result.exit_code = maybe_flip_exit_code(
+            test_case, run_result.exit_code, flip_exit_probability);
+    }
+    classified.run_result = run_result;
+
+    if (run_result.timed_out) {
+        classified.outcome = TEST_OUTCOME_TIMEOUT;
+    } else if (run_result.exit_code == 0 &&
+               test_case->marker == TEST_MARKER_XFAIL) {
+        classified.outcome = TEST_OUTCOME_XPASS;
+    } else if (run_result.exit_code == 0) {
+        classified.outcome = TEST_OUTCOME_PASS;
+    } else if (test_case->marker == TEST_MARKER_XFAIL) {
+        classified.outcome = TEST_OUTCOME_XFAIL;
+    } else {
+        classified.outcome = TEST_OUTCOME_FAIL;
+    }
+
+    return classified;
+}
+
+// Update the aggregate summary counters and per-outcome test lists using a
+// pre-classified result.
+static void
+update_summary_for_classified_result(RunSummary *summary,
+                                     const TestCase *test_case,
+                                     const ClassifiedTestResult *classified) {
+    // IMGNEKO_UNCOVERED_OK
+    switch (classified->outcome) {
+    case TEST_OUTCOME_PASS:
+        summary->passed++;
+        return;
+    case TEST_OUTCOME_XFAIL:
+        summary->xfailed++;
+        return;
+    case TEST_OUTCOME_DISABLED:
+        summary->disabled++;
+        return;
+    case TEST_OUTCOME_XPASS:
+        summary->xpassed++;
+        string_array_push_copy(&summary->xpassed_tests, test_case->id.cstr);
+        return;
+    case TEST_OUTCOME_TIMEOUT:
+        summary->timed_out++;
+        string_array_push_copy(&summary->timed_out_tests, test_case->id.cstr);
+        return;
+    case TEST_OUTCOME_FAIL:
+        summary->failed++;
+        string_array_push_copy(&summary->failed_tests, test_case->id.cstr);
+        return;
+    }
+}
+
+// Print the final status line for one classified test result and, for failures
+// and timeouts, include the captured output tail unless passthrough already
+// showed the full stream live.
+static void print_classified_test_result(const TestCase *test_case,
+                                         const ClassifiedTestResult *classified,
+                                         const char *output_file_path,
+                                         bool output_passthrough) {
+    // IMGNEKO_UNCOVERED_OK
+    switch (classified->outcome) {
+    case TEST_OUTCOME_PASS:
+        printf("PASS: %s\n", test_case->id.cstr);
+        break;
+    case TEST_OUTCOME_XFAIL:
+        printf("XFAIL: %s\n", test_case->id.cstr);
+        break;
+    case TEST_OUTCOME_DISABLED:
+        printf("DISABLED: %s\n", test_case->id.cstr);
+        break;
+    case TEST_OUTCOME_XPASS:
+        printf("XPASS: %s\n", test_case->id.cstr);
+        break;
+    case TEST_OUTCOME_TIMEOUT:
+        printf("\nTIMEOUT: %s\n", test_case->id.cstr);
+        if (!output_passthrough)
+            print_output_tail(output_file_path, 20);
+        break;
+    case TEST_OUTCOME_FAIL:
+        printf("\nFAIL: %s\n", test_case->id.cstr);
+        if (!output_passthrough)
+            print_output_tail(output_file_path, 20);
+        break;
+    }
+
+    fflush(stdout);
+}
+
+// Update the run summary and user-facing status output for one completed test.
+static void record_test_result(RunSummary *summary, const TestCase *test_case,
+                               TestRunResult run_result,
+                               const char *output_file_path,
+                               bool output_passthrough,
+                               double flip_exit_probability) {
+    ClassifiedTestResult classified =
+        classify_test_result(test_case, run_result, flip_exit_probability);
+
+    update_summary_for_classified_result(summary, test_case, &classified);
+    print_classified_test_result(test_case, &classified, output_file_path,
+                                 output_passthrough);
+}
+
+// Release one completed running test and remove it from the dense running-test
+// array while preserving the order of the remaining entries.
+static void remove_running_test_at(RunningTestArray *running_tests,
+                                   size_t index) {
+    running_test_deinit(&running_tests->data[index]);
+    arr_remove_at(*running_tests, index);
+}
+
+// Flush all running tests that have reached a terminal state into the summary
+// and remove them from the running set.
+static void finalize_completed_running_tests(RunningTestArray *running_tests,
+                                             RunSummary *summary,
+                                             bool output_passthrough,
+                                             double flip_exit_probability) {
+    for (size_t i = 0; i < running_tests->size;) {
+        RunningTest *running_test = &running_tests->data[i];
+
+        if (!running_test_is_complete(running_test)) {
+            i++;
+            continue;
+        }
+
+        record_test_result(summary, running_test->test_case,
+                           test_run_result_from_running_test(running_test),
+                           running_test->output_file_path.cstr,
+                           output_passthrough, flip_exit_probability);
+        remove_running_test_at(running_tests, i);
+    }
+}
+
 // Prepend build/bin to PATH and export stable test-runner environment
 // variables.
 static void prepare_env_vars(void) {
@@ -1446,8 +1837,8 @@ static void usage(FILE *stream) {
     String tests_dir = default_tests_dir();
 
     fprintf(stream,
-            "Usage: %s [--list] [--all] [--output-dir DIR] [--filter PATTERN]\n"
-            "       [--tests-dir DIR] [--test-bin-dir DIR]\n"
+            "Usage: %s [--list] [--all] [-j JOBS] [--output-dir DIR]\n"
+            "       [--filter PATTERN] [--tests-dir DIR] [--test-bin-dir DIR]\n"
             "       [--timeout SECONDS] [-p|--output-passthrough]\n"
             "       [--debug-flip-exit-probability P]\n"
             "       [--debug-parent-setpgid-delay SECONDS]\n"
@@ -1455,128 +1846,183 @@ static void usage(FILE *stream) {
             "       [PATTERN ...]\n"
             "\n"
             "Use -p/--output-passthrough to mirror test stdout/stderr live.\n"
+            "Use -j/--jobs to run multiple tests concurrently.\n"
             "Patterns use shell-style wildcards and may be joined with '|'.\n"
             "Default tests dir: %s\n"
             "Default C test bin dir: %s\n"
             "Default output dir: %s\n"
+            "Default jobs: %d\n"
             "Default timeout: %.0f seconds\n",
             "test-runner", tests_dir.cstr, default_test_bin_dir_path.cstr,
-            default_output_dir.cstr, default_test_timeout_seconds);
+            default_output_dir.cstr, TEST_RUNNER_DEFAULT_JOBS,
+            default_test_timeout_seconds);
 
     str_free(tests_dir);
     str_free(default_test_bin_dir_path);
     str_free(default_output_dir);
 }
 
-int main(int argc, char **argv) {
-    // User-specified filters and options.
-    StringArray raw_filters = arr_empty;
-    StringArray filters = arr_empty;
-    bool list_only = false;
-    bool run_all = false;
-    bool output_passthrough = false;
-    String tests_dir = str_empty;
-    String output_dir = str_empty;
-    String test_bin_dir = str_empty;
-    double timeout_seconds = default_test_timeout_seconds;
-    double debug_flip_exit_probability = 0.0;
-    double debug_parent_setpgid_delay_seconds = 0.0;
-    double debug_parent_output_chunk_delay_seconds = 0.0;
+static void cli_options_init(CliOptions *options) {
+    *options = (CliOptions){
+        .raw_filters = arr_empty,
+        .filters = arr_empty,
+        .jobs = TEST_RUNNER_DEFAULT_JOBS,
+        .tests_dir = str_empty,
+        .output_dir = str_empty,
+        .test_bin_dir = str_empty,
+        .timeout_seconds = default_test_timeout_seconds,
+    };
+}
 
-    // Collected files and test cases.
-    TestFileArray files = arr_empty;
-    TestCaseArray cases = arr_empty;
+static void cli_options_deinit(CliOptions *options) {
+    str_free(options->test_bin_dir);
+    str_free(options->output_dir);
+    str_free(options->tests_dir);
+    str_array_free(&options->filters);
+    str_array_free(&options->raw_filters);
+}
 
-    // Results
-    double run_start_seconds = time_monotonic_seconds();
-    int exit_code = 0;
-    size_t discovered = 0;
-    size_t passed = 0;
-    size_t xfailed = 0;
-    size_t disabled = 0;
-    size_t xpassed = 0;
-    size_t timed_out = 0;
-    size_t failed = 0;
-    StringArray failed_tests = arr_empty;
-    StringArray xpassed_tests = arr_empty;
-    StringArray timed_out_tests = arr_empty;
+static void test_runner_state_init(TestRunnerState *state) {
+    *state = (TestRunnerState){
+        .files = arr_empty,
+        .cases = arr_empty,
+        .selected_cases = arr_empty,
+        .running_tests = arr_empty,
+        .summary =
+            {
+                .failed_tests = arr_empty,
+                .xpassed_tests = arr_empty,
+                .timed_out_tests = arr_empty,
+            },
+        .run_start_seconds = time_monotonic_seconds(),
+    };
+}
 
-    // Parse CLI arguments.
+static void test_runner_state_deinit(TestRunnerState *state) {
+    // By the time teardown runs, every started child must already have been
+    // finalized and removed from running_tests.
+    assert(state->running_tests.size == 0);
+    arr_free(state->running_tests);
+    arr_free(state->selected_cases);
+    str_array_free(&state->summary.timed_out_tests);
+    str_array_free(&state->summary.xpassed_tests);
+    str_array_free(&state->summary.failed_tests);
+    test_case_array_free(&state->cases);
+    test_file_array_free(&state->files);
+}
 
+// Parse argv into CliOptions. Returns false when the caller should exit
+// immediately, with exit_code_out already set and any diagnostics printed.
+static bool parse_cli_args(int argc, char **argv, CliOptions *options,
+                           int *exit_code_out) {
     for (int i = 1; i < argc; ++i) {
         if (strcmp(argv[i], "--list") == 0) {
-            list_only = true;
+            options->list_only = true;
             continue;
         }
         if (strcmp(argv[i], "--all") == 0) {
-            run_all = true;
+            options->run_all = true;
             continue;
         }
         if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
             usage(stdout);
-            exit_code = 0;
-            goto cleanup;
+            *exit_code_out = 0;
+            return false;
         }
         if (strcmp(argv[i], "-p") == 0 ||
             strcmp(argv[i], "--output-passthrough") == 0) {
-            output_passthrough = true;
+            options->output_passthrough = true;
+            continue;
+        }
+        if (strcmp(argv[i], "-j") == 0 || strcmp(argv[i], "--jobs") == 0) {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "error: --jobs requires a value\n");
+                usage(stderr);
+                *exit_code_out = 2;
+                return false;
+            }
+            if (!parse_positive_int(argv[++i], &options->jobs)) {
+                fprintf(stderr, "error: invalid jobs value: %s\n", argv[i]);
+                usage(stderr);
+                *exit_code_out = 2;
+                return false;
+            }
+            continue;
+        }
+        if (strncmp(argv[i], "--jobs=", 7) == 0) {
+            if (!parse_positive_int(argv[i] + 7, &options->jobs)) {
+                fprintf(stderr, "error: invalid jobs value: %s\n", argv[i] + 7);
+                usage(stderr);
+                *exit_code_out = 2;
+                return false;
+            }
+            continue;
+        }
+        // IMGNEKO_UNCOVERED_OK: The argv[i][2] == '\0' is handled earlier.
+        if (strncmp(argv[i], "-j", 2) == 0 && argv[i][2] != '\0') {
+            if (!parse_positive_int(argv[i] + 2, &options->jobs)) {
+                fprintf(stderr, "error: invalid jobs value: %s\n", argv[i] + 2);
+                usage(stderr);
+                *exit_code_out = 2;
+                return false;
+            }
             continue;
         }
         if (strcmp(argv[i], "--output-dir") == 0) {
             if (i + 1 >= argc) {
                 usage(stderr);
-                exit_code = 1;
-                goto cleanup;
+                *exit_code_out = 2;
+                return false;
             }
-            require(path_resolve_absolute(&output_dir, argv[++i]),
+            require(path_resolve_absolute(&options->output_dir, argv[++i]),
                     "failed to resolve output directory: %errno");
             continue;
         }
         if (strncmp(argv[i], "--output-dir=", 13) == 0) {
-            require(path_resolve_absolute(&output_dir, argv[i] + 13),
+            require(path_resolve_absolute(&options->output_dir, argv[i] + 13),
                     "failed to resolve output directory: %errno");
             continue;
         }
         if (strcmp(argv[i], "--filter") == 0) {
             if (i + 1 >= argc) {
                 usage(stderr);
-                exit_code = 1;
-                goto cleanup;
+                *exit_code_out = 2;
+                return false;
             }
-            string_array_push_copy(&raw_filters, argv[++i]);
+            string_array_push_copy(&options->raw_filters, argv[++i]);
             continue;
         }
         if (strncmp(argv[i], "--filter=", 9) == 0) {
-            string_array_push_copy(&raw_filters, argv[i] + 9);
+            string_array_push_copy(&options->raw_filters, argv[i] + 9);
             continue;
         }
         if (strcmp(argv[i], "--tests-dir") == 0) {
             if (i + 1 >= argc) {
                 usage(stderr);
-                exit_code = 1;
-                goto cleanup;
+                *exit_code_out = 2;
+                return false;
             }
-            require(path_resolve_absolute(&tests_dir, argv[++i]),
+            require(path_resolve_absolute(&options->tests_dir, argv[++i]),
                     "failed to resolve tests directory: %errno");
             continue;
         }
         if (strncmp(argv[i], "--tests-dir=", 12) == 0) {
-            require(path_resolve_absolute(&tests_dir, argv[i] + 12),
+            require(path_resolve_absolute(&options->tests_dir, argv[i] + 12),
                     "failed to resolve tests directory: %errno");
             continue;
         }
         if (strcmp(argv[i], "--test-bin-dir") == 0) {
             if (i + 1 >= argc) {
                 usage(stderr);
-                exit_code = 1;
-                goto cleanup;
+                *exit_code_out = 2;
+                return false;
             }
-            require(path_resolve_absolute(&test_bin_dir, argv[++i]),
+            require(path_resolve_absolute(&options->test_bin_dir, argv[++i]),
                     "failed to resolve test-bin directory: %errno");
             continue;
         }
         if (strncmp(argv[i], "--test-bin-dir=", 15) == 0) {
-            require(path_resolve_absolute(&test_bin_dir, argv[i] + 15),
+            require(path_resolve_absolute(&options->test_bin_dir, argv[i] + 15),
                     "failed to resolve test-bin directory: %errno");
             continue;
         }
@@ -1584,25 +2030,26 @@ int main(int argc, char **argv) {
             if (i + 1 >= argc) {
                 fprintf(stderr, "error: --timeout requires a value\n");
                 usage(stderr);
-                exit_code = 1;
-                goto cleanup;
+                *exit_code_out = 2;
+                return false;
             }
-            if (!parse_timeout_seconds(argv[++i], &timeout_seconds)) {
+            if (!parse_timeout_seconds(argv[++i], &options->timeout_seconds)) {
                 fprintf(stderr, "error: invalid --timeout value: %s\n",
                         argv[i]);
                 usage(stderr);
-                exit_code = 1;
-                goto cleanup;
+                *exit_code_out = 2;
+                return false;
             }
             continue;
         }
         if (strncmp(argv[i], "--timeout=", 10) == 0) {
-            if (!parse_timeout_seconds(argv[i] + 10, &timeout_seconds)) {
+            if (!parse_timeout_seconds(argv[i] + 10,
+                                       &options->timeout_seconds)) {
                 fprintf(stderr, "error: invalid --timeout value: %s\n",
                         argv[i] + 10);
                 usage(stderr);
-                exit_code = 1;
-                goto cleanup;
+                *exit_code_out = 2;
+                return false;
             }
             continue;
         }
@@ -1611,30 +2058,31 @@ int main(int argc, char **argv) {
                 fprintf(
                     stderr,
                     "error: --debug-flip-exit-probability requires a value\n");
-                exit_code = 1;
-                goto cleanup;
+                *exit_code_out = 2;
+                return false;
             }
-            if (!parse_probability(argv[++i], &debug_flip_exit_probability)) {
+            if (!parse_probability(argv[++i],
+                                   &options->debug_flip_exit_probability)) {
                 fprintf(stderr,
                         "error: invalid --debug-flip-exit-probability value: "
                         "%s\n",
                         argv[i]);
                 usage(stderr);
-                exit_code = 1;
-                goto cleanup;
+                *exit_code_out = 2;
+                return false;
             }
             continue;
         }
         if (strncmp(argv[i], "--debug-flip-exit-probability=", 30) == 0) {
             if (!parse_probability(argv[i] + 30,
-                                   &debug_flip_exit_probability)) {
+                                   &options->debug_flip_exit_probability)) {
                 fprintf(stderr,
                         "error: invalid --debug-flip-exit-probability value: "
                         "%s\n",
                         argv[i] + 30);
                 usage(stderr);
-                exit_code = 1;
-                goto cleanup;
+                *exit_code_out = 2;
+                return false;
             }
             continue;
         }
@@ -1643,32 +2091,33 @@ int main(int argc, char **argv) {
                 fprintf(stderr,
                         "error: --debug-parent-setpgid-delay requires a "
                         "value\n");
-                exit_code = 1;
-                goto cleanup;
+                *exit_code_out = 2;
+                return false;
             }
-            if (!parse_timeout_seconds(argv[++i],
-                                       &debug_parent_setpgid_delay_seconds)) {
+            if (!parse_timeout_seconds(
+                    argv[++i], &options->debug_parent_setpgid_delay_seconds)) {
                 fprintf(stderr,
                         "error: invalid --debug-parent-setpgid-delay value: "
                         "%s\n",
                         argv[i]);
                 usage(stderr);
-                exit_code = 1;
-                goto cleanup;
+                *exit_code_out = 2;
+                return false;
             }
             continue;
         }
         if (strncmp(argv[i], "--debug-parent-setpgid-delay=", 29) == 0) {
             // IMGNEKO_UNCOVERED_OK_START
-            if (!parse_timeout_seconds(argv[i] + 29,
-                                       &debug_parent_setpgid_delay_seconds)) {
+            if (!parse_timeout_seconds(
+                    argv[i] + 29,
+                    &options->debug_parent_setpgid_delay_seconds)) {
                 fprintf(stderr,
                         "error: invalid --debug-parent-setpgid-delay value: "
                         "%s\n",
                         argv[i] + 29);
                 usage(stderr);
-                exit_code = 1;
-                goto cleanup;
+                *exit_code_out = 2;
+                return false;
             }
             continue;
             // IMGNEKO_UNCOVERED_OK_END
@@ -1678,211 +2127,281 @@ int main(int argc, char **argv) {
                 fprintf(stderr,
                         "error: --debug-parent-output-chunk-delay requires "
                         "a value\n");
-                exit_code = 1;
-                goto cleanup;
+                *exit_code_out = 2;
+                return false;
             }
             if (!parse_timeout_seconds(
-                    argv[++i], &debug_parent_output_chunk_delay_seconds)) {
+                    argv[++i],
+                    &options->debug_parent_output_chunk_delay_seconds)) {
                 fprintf(stderr,
                         "error: invalid --debug-parent-output-chunk-delay "
                         "value: %s\n",
                         argv[i]);
                 usage(stderr);
-                exit_code = 1;
-                goto cleanup;
+                *exit_code_out = 2;
+                return false;
             }
             continue;
         }
         if (strncmp(argv[i], "--debug-parent-output-chunk-delay=", 34) == 0) {
             if (!parse_timeout_seconds(
-                    argv[i] + 34, &debug_parent_output_chunk_delay_seconds)) {
+                    argv[i] + 34,
+                    &options->debug_parent_output_chunk_delay_seconds)) {
                 fprintf(stderr,
                         "error: invalid --debug-parent-output-chunk-delay "
                         "value: %s\n",
                         argv[i] + 34);
                 usage(stderr);
-                exit_code = 1;
-                goto cleanup;
+                *exit_code_out = 2;
+                return false;
             }
             continue;
         }
         if (argv[i][0] == '-') {
             fprintf(stderr, "error: unknown option: %s\n", argv[i]);
             usage(stderr);
-            exit_code = 1;
-            goto cleanup;
+            *exit_code_out = 2;
+            return false;
         }
-        string_array_push_copy(&raw_filters, argv[i]);
+        string_array_push_copy(&options->raw_filters, argv[i]);
     }
 
-    if (run_all && raw_filters.size != 0) {
+    if (options->run_all && options->raw_filters.size != 0) {
         fprintf(stderr, "error: --all cannot be combined with --filter or "
                         "positional patterns\n");
         usage(stderr);
-        exit_code = 1;
-        goto cleanup;
+        *exit_code_out = 2;
+        return false;
     }
 
-    if (!flatten_filters(&raw_filters, &filters)) {
-        exit_code = 1;
-        goto cleanup;
+    return true;
+}
+
+// Fill in defaults and validate the parsed command-line options.
+static bool finalize_cli_options(CliOptions *options, int *exit_code_out) {
+    if (!flatten_filters(&options->raw_filters, &options->filters)) {
+        *exit_code_out = 2;
+        return false;
     }
 
-    if (output_dir.len == 0)
-        output_dir = default_test_output_dir();
-    if (tests_dir.len == 0)
-        tests_dir = default_tests_dir();
-    if (test_bin_dir.len == 0)
-        test_bin_dir = default_test_bin_dir();
-    validate_output_dir(output_dir.cstr);
-    if (!list_only)
-        require_empty_output_dir(output_dir.cstr);
-    if (debug_flip_exit_probability > 0.0)
+    if (options->output_dir.len == 0)
+        options->output_dir = default_test_output_dir();
+    if (options->tests_dir.len == 0)
+        options->tests_dir = default_tests_dir();
+    if (options->test_bin_dir.len == 0)
+        options->test_bin_dir = default_test_bin_dir();
+    validate_output_dir(options->output_dir.cstr);
+    if (!options->list_only)
+        require_empty_output_dir(options->output_dir.cstr);
+    if (options->debug_flip_exit_probability > 0.0)
         seed_debug_random();
+    return true;
+}
 
-    // Discover tests.
-
+// Export the nested-test environment and switch to the repository root so test
+// discovery and spawned commands see consistent relative paths.
+static void prepare_test_run_environment(void) {
     prepare_env_vars();
+    require(chdir(root_dir) == 0, "failed to chdir to repository root: %errno");
+}
 
-    // IMGNEKO_UNCOVERED_OK[4 lines]
-    if (chdir(root_dir) != 0) {
-        str_free(tests_dir);
-        die_errno("failed to chdir to repository root");
+// Discover the full runnable test set after option parsing has established the
+// tests directory and C binary directory roots.
+static bool discover_tests_for_run(const CliOptions *options,
+                                   TestRunnerState *state, int *exit_code_out) {
+    discover_test_files(options->tests_dir.cstr, &state->files);
+    if (state->files.size == 0) {
+        fprintf(stderr, "error: no tests found under %s\n",
+                options->tests_dir.cstr);
+        *exit_code_out = 2;
+        return false;
     }
 
-    discover_test_files(tests_dir.cstr, &files);
-    if (files.size == 0) {
-        fprintf(stderr, "error: no tests found under %s\n", tests_dir.cstr);
-        exit_code = 1;
-        goto cleanup;
-    }
-
-    discover_test_cases(&files, test_bin_dir.cstr, &cases);
+    discover_test_cases(&state->files, options->test_bin_dir.cstr,
+                        &state->cases);
     // IMGNEKO_UNCOVERED_OK_START
-    if (cases.size == 0) {
+    if (state->cases.size == 0) {
         fprintf(stderr, "error: no runnable tests found under %s\n",
-                tests_dir.cstr);
-        exit_code = 1;
-        goto cleanup;
+                options->tests_dir.cstr);
+        *exit_code_out = 2;
+        return false;
     }
     // IMGNEKO_UNCOVERED_OK_END
+    return true;
+}
 
-    for (size_t i = 0; i < cases.size; ++i) {
-        TestCase *test_case = &cases.data[i];
-        if (!test_matches_filters(test_case, &filters))
+// Append every discovered test case that matches the active filters to
+// selected_cases, preserving discovery order.
+static void collect_selected_test_cases(const TestCaseArray *cases,
+                                        const StringArray *filters,
+                                        TestCasePtrArray *selected_cases) {
+    for (size_t i = 0; i < cases->size; ++i) {
+        const TestCase *test_case = &cases->data[i];
+
+        if (!test_matches_filters(test_case, filters))
             continue;
 
-        discovered++;
-        if (list_only) {
-            print_listed_test(test_case);
-            continue;
-        }
+        arr_push(*selected_cases, test_case);
+    }
+}
 
-        if (test_case->marker == TEST_MARKER_DISABLED) {
-            disabled++;
-            printf("DISABLED: %s\n", test_case->id.cstr);
-            fflush(stdout);
-            continue;
-        }
+// Print the already-selected tests in discovery order for `--list`.
+static void list_selected_tests(const TestRunnerState *state) {
+    for (size_t i = 0; i < state->selected_cases.size; ++i)
+        print_listed_test(state->selected_cases.data[i]);
+}
 
-        printf("RUN: %s\n", test_case->id.cstr);
-        fflush(stdout);
+// Record a disabled test without spawning a child process.
+static void record_disabled_test(RunSummary *summary,
+                                 const TestCase *test_case) {
+    ClassifiedTestResult classified = {.outcome = TEST_OUTCOME_DISABLED};
 
-        TestRunResult run_result = {.exit_code = 1};
-        String test_output_dir =
-            test_output_dir_path(test_case, output_dir.cstr);
-        String output_path = test_output_file_path(test_output_dir.cstr);
-        TestRunConfig run_config = {
-            .test_output_dir = test_output_dir.cstr,
-            .output_path = output_path.cstr,
-            .timeout_seconds = timeout_seconds,
-            .output_passthrough = output_passthrough,
-            .debug_parent_setpgid_delay_seconds =
-                debug_parent_setpgid_delay_seconds,
-            .debug_parent_output_chunk_delay_seconds =
-                debug_parent_output_chunk_delay_seconds,
-        };
+    update_summary_for_classified_result(summary, test_case, &classified);
+    print_classified_test_result(test_case, &classified, NULL, false);
+}
 
-        if (test_case->kind == TEST_KIND_C) {
-            run_result = run_c_test(test_case, &run_config);
-        } else {
-            // Everything else is expected to be executable.
-            assert(test_case->kind == TEST_KIND_EXECUTABLE);
-            run_result = run_executable_test(test_case, &run_config);
-        }
-        if (!run_result.timed_out) {
-            run_result.exit_code = maybe_flip_exit_code(
-                test_case, run_result.exit_code, debug_flip_exit_probability);
-        }
+// Start one selected test or, for disabled entries, record the synthetic result
+// immediately without consuming a job slot.
+static void start_selected_test(const CliOptions *options,
+                                TestRunnerState *state,
+                                const TestCase *test_case) {
+    String test_output_dir;
+    String output_file_path;
+    TestRunConfig config;
+    RunningTest running_test;
 
-        if (run_result.timed_out) {
-            timed_out++;
-            string_array_push_copy(&timed_out_tests, test_case->id.cstr);
-            printf("\nTIMEOUT: %s\n", test_case->id.cstr);
-            if (!output_passthrough)
-                print_output_tail(output_path.cstr, 20);
-        } else if (run_result.exit_code == 0 &&
-                   test_case->marker == TEST_MARKER_XFAIL) {
-            xpassed++;
-            string_array_push_copy(&xpassed_tests, test_case->id.cstr);
-            printf("XPASS: %s\n", test_case->id.cstr);
-        } else if (run_result.exit_code == 0) {
-            passed++;
-            printf("PASS: %s\n", test_case->id.cstr);
-        } else if (test_case->marker == TEST_MARKER_XFAIL) {
-            xfailed++;
-            printf("XFAIL: %s\n", test_case->id.cstr);
-        } else {
-            failed++;
-            string_array_push_copy(&failed_tests, test_case->id.cstr);
-            printf("\nFAIL: %s\n", test_case->id.cstr);
-            if (!output_passthrough)
-                print_output_tail(output_path.cstr, 20);
-        }
-        str_free(test_output_dir);
-        str_free(output_path);
-        fflush(stdout);
+    if (test_case->marker == TEST_MARKER_DISABLED) {
+        record_disabled_test(&state->summary, test_case);
+        return;
     }
 
-    if (discovered == 0) {
-        if (!list_only) {
+    printf("RUN: %s\n", test_case->id.cstr);
+    fflush(stdout);
+
+    test_output_dir = test_output_dir_path(test_case, options->output_dir.cstr);
+    output_file_path = test_output_file_path(test_output_dir.cstr);
+    config = (TestRunConfig){
+        .test_output_dir = test_output_dir.cstr,
+        .output_file_path = output_file_path.cstr,
+        .timeout_seconds = options->timeout_seconds,
+        .debug_parent_setpgid_delay_seconds =
+            options->debug_parent_setpgid_delay_seconds,
+    };
+    running_test = start_test_process(test_case, &config, &state->signal_state,
+                                      test_output_dir, output_file_path);
+    arr_push(state->running_tests, running_test);
+}
+
+// Start more selected tests until all job slots are full or
+// *next_selected_index reaches the end of state->selected_cases. The function
+// advances *next_selected_index for every test it consumes from the selected
+// list.
+static void start_ready_tests(const CliOptions *options, TestRunnerState *state,
+                              size_t *next_selected_index) {
+    while (state->running_tests.size < (size_t)options->jobs &&
+           *next_selected_index < state->selected_cases.size) {
+        const TestCase *test_case =
+            state->selected_cases.data[(*next_selected_index)++];
+
+        start_selected_test(options, state, test_case);
+    }
+}
+
+// Run the selected tests under the single-threaded event loop until every test
+// has either been recorded immediately or started, reaped, and finalized.
+static void run_selected_tests(const CliOptions *options,
+                               TestRunnerState *state) {
+    size_t next_selected_index = 0;
+
+    signal_state_init(&state->signal_state);
+    while (next_selected_index < state->selected_cases.size ||
+           state->running_tests.size != 0) {
+        // First launch as many new tests as we can. Disabled tests are
+        // accounted for synchronously here and do not enter running_tests.
+        start_ready_tests(options, state, &next_selected_index);
+
+        // Then wait until some running test produces output, exits, or reaches
+        // its next timeout transition. The wait helper may return immediately
+        // if a child already completed before we went to sleep.
+        wait_for_running_test_events(
+            &state->running_tests, options->output_passthrough,
+            options->debug_parent_output_chunk_delay_seconds,
+            &state->signal_state);
+
+        // Finally, flush every completed child into the summary and free its
+        // slot so the next loop iteration can start more work.
+        finalize_completed_running_tests(&state->running_tests, &state->summary,
+                                         options->output_passthrough,
+                                         options->debug_flip_exit_probability);
+    }
+    signal_state_deinit(&state->signal_state);
+}
+
+// Finish the run by checking whether any test matched and printing the final
+// summary for execution mode.
+static void finalize_run_result(const CliOptions *options,
+                                TestRunnerState *state, int *exit_code_out) {
+    if (state->discovered == 0) {
+        if (!options->list_only) {
             fprintf(stderr, "error: no tests matched the requested filters\n");
-            exit_code = 1;
+            *exit_code_out = 2;
         }
+        return;
+    }
+
+    if (options->list_only)
+        return;
+
+    print_named_test_list("timed out tests", &state->summary.timed_out_tests);
+    print_named_test_list("failed tests", &state->summary.failed_tests);
+    print_named_test_list("xpassed tests", &state->summary.xpassed_tests);
+    printf("\nSummary:\n");
+    print_summary_count("discovered", state->discovered);
+    print_summary_count("passed", state->summary.passed);
+    print_summary_count("xfailed", state->summary.xfailed);
+    print_summary_count("disabled", state->summary.disabled);
+    print_summary_count("xpassed", state->summary.xpassed);
+    print_summary_count("timeout", state->summary.timed_out);
+    print_summary_count("failed", state->summary.failed);
+    if (state->summary.failed != 0 || state->summary.xpassed != 0 ||
+        state->summary.timed_out != 0) {
+        *exit_code_out = 1;
+    }
+    printf("\n");
+    printf("Time: %.3f s\n",
+           time_monotonic_seconds() - state->run_start_seconds);
+    printf("Result: %s\n", *exit_code_out == 0 ? "SUCCESS" : "FAILURE");
+}
+
+int main(int argc, char **argv) {
+    CliOptions options;
+    TestRunnerState state;
+    int exit_code = 0;
+
+    cli_options_init(&options);
+    test_runner_state_init(&state);
+
+    if (!parse_cli_args(argc, argv, &options, &exit_code))
         goto cleanup;
-    }
+    if (!finalize_cli_options(&options, &exit_code))
+        goto cleanup;
 
-    if (!list_only) {
-        double total_run_seconds = time_monotonic_seconds() - run_start_seconds;
+    prepare_test_run_environment();
+    if (!discover_tests_for_run(&options, &state, &exit_code))
+        goto cleanup;
+    collect_selected_test_cases(&state.cases, &options.filters,
+                                &state.selected_cases);
+    state.discovered = state.selected_cases.size;
 
-        print_named_test_list("timed out tests", &timed_out_tests);
-        print_named_test_list("failed tests", &failed_tests);
-        print_named_test_list("xpassed tests", &xpassed_tests);
-        printf("\nSummary:\n");
-        print_summary_count("discovered", discovered);
-        print_summary_count("passed", passed);
-        print_summary_count("xfailed", xfailed);
-        print_summary_count("disabled", disabled);
-        print_summary_count("xpassed", xpassed);
-        print_summary_count("timeout", timed_out);
-        print_summary_count("failed", failed);
-        if (failed != 0 || xpassed != 0 || timed_out != 0)
-            exit_code = 1;
-        printf("\n");
-        printf("Time: %.3f s\n", total_run_seconds);
-        printf("Result: %s\n", exit_code == 0 ? "SUCCESS" : "FAILURE");
-    }
+    if (options.list_only)
+        list_selected_tests(&state);
+    else
+        run_selected_tests(&options, &state);
+
+    finalize_run_result(&options, &state, &exit_code);
 
 cleanup:
-    str_array_free(&timed_out_tests);
-    str_array_free(&xpassed_tests);
-    str_array_free(&failed_tests);
-    str_free(test_bin_dir);
-    str_free(output_dir);
-    str_free(tests_dir);
-    str_array_free(&raw_filters);
-    str_array_free(&filters);
-    test_case_array_free(&cases);
-    test_file_array_free(&files);
+    test_runner_state_deinit(&state);
+    cli_options_deinit(&options);
     return exit_code;
 }
