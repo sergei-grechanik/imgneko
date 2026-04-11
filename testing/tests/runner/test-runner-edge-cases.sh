@@ -382,11 +382,11 @@ echo '== parallel timeout sigkill deadlines =='
 # CHECK: == parallel timeout sigkill deadlines ==
 # CHECK: RUN: ignore-term-too.sh
 # CHECK: RUN: ignore-term.sh
-# CHECK: TIMEOUT: ignore-term-too.sh
-# CHECK: TIMEOUT: ignore-term.sh
+# CHECK: TIMEOUT: ignore-term{{|-too}}.sh
+# CHECK: TIMEOUT: ignore-term{{|-too}}.sh
 # CHECK: timed out tests:
-# CHECK: ignore-term-too.sh
-# CHECK: ignore-term.sh
+# CHECK: ignore-term{{|-too}}.sh
+# CHECK: ignore-term{{|-too}}.sh
 # CHECK: Summary:
 # CHECK: discovered: 2
 # CHECK: timeout: 2

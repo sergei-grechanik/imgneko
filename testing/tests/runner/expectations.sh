@@ -10,6 +10,21 @@ fail() {
     exit 1
 }
 
+wait_for_process_gone() {
+    pid=$1
+    i=0
+
+    while [ "$i" -lt 200 ]; do
+        if ! kill -0 "$pid" >/dev/null 2>&1; then
+            return 0
+        fi
+        sleep 0.05
+        i=$((i + 1))
+    done
+
+    return 1
+}
+
 assert_file_exists() {
     path=$1
 
@@ -54,6 +69,7 @@ TIMEOUT_OUTPUT_ROOT=$IMGNEKO_TEST_OUTPUT_DIR/markers-timeout
 TIMEOUT_CLOSED_FDS_OUTPUT_ROOT=$IMGNEKO_TEST_OUTPUT_DIR/markers-timeout-closed-fds
 TIMEOUT_DETACHED_OUTPUT_ROOT=$IMGNEKO_TEST_OUTPUT_DIR/markers-timeout-detached
 TIMEOUT_DISABLED_OUTPUT_ROOT=$IMGNEKO_TEST_OUTPUT_DIR/markers-timeout-disabled
+DISABLED_ONLY_OUTPUT_ROOT=$IMGNEKO_TEST_OUTPUT_DIR/markers-disabled-only
 LIST_LOG=$(mktemp /tmp/imgneko-runner-list.XXXXXX)
 SUMMARY_LOG=$(mktemp /tmp/imgneko-runner-summary.XXXXXX)
 XPASS_LOG=$(mktemp /tmp/imgneko-runner-xpass.XXXXXX)
@@ -62,6 +78,7 @@ TIMEOUT_LOG=$(mktemp /tmp/imgneko-runner-timeout.XXXXXX)
 TIMEOUT_CLOSED_FDS_LOG=$(mktemp /tmp/imgneko-runner-timeout-closed-fds.XXXXXX)
 TIMEOUT_DETACHED_OUTPUT_LOG=$(mktemp /tmp/imgneko-runner-timeout-detached-output.XXXXXX)
 TIMEOUT_DISABLED_LOG=$(mktemp /tmp/imgneko-runner-timeout-disabled.XXXXXX)
+DISABLED_ONLY_LOG=$(mktemp /tmp/imgneko-runner-disabled-only.XXXXXX)
 TIMEOUT_CLOSED_FDS_OUTPUT=$TIMEOUT_CLOSED_FDS_OUTPUT_ROOT/runner/timeout-closed-fds.sh/output
 TIMEOUT_DETACHED_OUTPUT=$TIMEOUT_DETACHED_OUTPUT_ROOT/runner/timeout-detached-output.sh/output
 FILTER=runner/markers.c\|runner/xfail.sh\|runner/disabled.sh
@@ -69,7 +86,8 @@ FILTER=runner/markers.c\|runner/xfail.sh\|runner/disabled.sh
 cleanup() {
     rm -f "$LIST_LOG" "$SUMMARY_LOG" "$XPASS_LOG" "$FLIP_LOG" \
         "$TIMEOUT_LOG" "$TIMEOUT_CLOSED_FDS_LOG" \
-        "$TIMEOUT_DETACHED_OUTPUT_LOG" "$TIMEOUT_DISABLED_LOG"
+        "$TIMEOUT_DETACHED_OUTPUT_LOG" "$TIMEOUT_DISABLED_LOG" \
+        "$DISABLED_ONLY_LOG"
 }
 
 trap cleanup EXIT
@@ -98,6 +116,29 @@ assert_file_contains "$SUMMARY_LOG" "Time:"
 assert_file_contains "$SUMMARY_LOG" "Result: SUCCESS"
 assert_path_absent "$SUMMARY_OUTPUT_ROOT/runner/markers.c/marked_disabled"
 assert_path_absent "$SUMMARY_OUTPUT_ROOT/runner/disabled.sh"
+
+# Disabled tests never enter running_tests, so a disabled-only run must still
+# exit promptly instead of blocking in the event-loop wait path.
+"$RUNNER" --jobs=1 --output-dir "$DISABLED_ONLY_OUTPUT_ROOT" \
+    --filter "runner/markers.c/marked_disabled|runner/disabled.sh" \
+    >"$DISABLED_ONLY_LOG" 2>&1 &
+disabled_only_pid=$!
+
+wait_for_process_gone "$disabled_only_pid" || {
+    kill "$disabled_only_pid" >/dev/null 2>&1 || true
+    wait "$disabled_only_pid" || true
+    fail "disabled-only run hung"
+}
+
+wait "$disabled_only_pid" ||
+    fail "disabled-only run unexpectedly failed"
+
+assert_file_contains "$DISABLED_ONLY_LOG" "DISABLED: runner/markers.c/marked_disabled"
+assert_file_contains "$DISABLED_ONLY_LOG" "DISABLED: runner/disabled.sh"
+assert_file_contains "$DISABLED_ONLY_LOG" "Summary:"
+assert_file_contains "$DISABLED_ONLY_LOG" "discovered: 2"
+assert_file_contains "$DISABLED_ONLY_LOG" "disabled: 2"
+assert_file_contains "$DISABLED_ONLY_LOG" "Result: SUCCESS"
 
 set +e
 IMGNEKO_TEST_FORCE_SUCCESS=1 "$RUNNER" --jobs=1 --output-dir "$XPASS_OUTPUT_ROOT" \

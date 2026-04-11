@@ -98,6 +98,7 @@ typedef struct TestCase {
 // Result of running one test case in a child process.
 typedef struct TestRunResult {
     int exit_code;
+    bool interrupted;
     bool timed_out;
     double elapsed_seconds;
 } TestRunResult;
@@ -109,6 +110,7 @@ typedef enum TestOutcomeKind {
     TEST_OUTCOME_XPASS,
     TEST_OUTCOME_TIMEOUT,
     TEST_OUTCOME_FAIL,
+    TEST_OUTCOME_INTERRUPTED,
 } TestOutcomeKind;
 
 // A combination of a test case's run result and its outcome classification.
@@ -144,17 +146,24 @@ typedef struct CliOptions {
 
 // Signal state for the main wait loop while test children exist.
 //
-// The parent blocks SIGCHLD between waitpid(WNOHANG) polls and then passes
-// wait_mask to pselect() so SIGCHLD is temporarily unblocked during the sleep.
-// That avoids missing child exits in the small window between polling and
-// sleeping, while still restoring the caller's original signal state at exit.
+// The parent blocks SIGCHLD, SIGINT, and SIGTERM between wait-loop iterations
+// and then passes wait_mask to pselect() so those signals are temporarily
+// unblocked during the sleep. That avoids missing child exits or shutdown
+// requests in the small window between updating state and going to sleep, while
+// still restoring the caller's original signal state at exit.
 typedef struct TestSignalState {
     // SIGCHLD action before the runner installed its wakeup handler.
     struct sigaction old_sigchld_action;
-    // Signal mask before the runner blocked SIGCHLD in the parent.
-    sigset_t old_sigchld_mask;
-    // Mask used during pselect(): same as old_sigchld_mask, but with SIGCHLD
-    // unblocked so child exits interrupt the sleep immediately.
+    // SIGINT action before the runner installed its shutdown handler.
+    struct sigaction old_sigint_action;
+    // SIGTERM action before the runner installed its shutdown handler.
+    struct sigaction old_sigterm_action;
+    // Signal mask before the runner blocked its internal wakeup/shutdown
+    // signals in the parent.
+    sigset_t old_signal_mask;
+    // Mask used during pselect(): same as old_signal_mask, but with SIGCHLD,
+    // SIGINT, and SIGTERM unblocked so those events interrupt the sleep
+    // immediately.
     sigset_t wait_mask;
     // Whether signal_state_init() ran successfully and cleanup must restore
     // signal state.
@@ -200,6 +209,10 @@ typedef struct RunningTest {
     bool output_pipe_closed;
     bool timed_out;
     bool sigkill_sent;
+
+    // The runner interrupted this test after receiving SIGINT/SIGTERM, so the
+    // final status should be reported as interrupted rather than timeout/fail.
+    bool interrupted;
 } RunningTest;
 
 // Summary counters accumulated across a whole test run.
@@ -210,6 +223,7 @@ typedef struct RunSummary {
     size_t xpassed;
     size_t timed_out;
     size_t failed;
+    size_t interrupted;
     StringArray failed_tests;
     StringArray xpassed_tests;
     StringArray timed_out_tests;
@@ -230,8 +244,11 @@ typedef struct TestRunnerState {
     RunningTestArray running_tests;
     RunSummary summary;
     size_t discovered;
+    size_t next_selected_index;
     double run_start_seconds;
     TestSignalState signal_state;
+    int shutdown_signal_number;
+    bool shutdown_requested;
 } TestRunnerState;
 
 // Absolute path to the repository root (/path/to/imgneko).
@@ -255,6 +272,9 @@ static const double timeout_output_drain_grace_seconds = 0.25;
 // Per-test environment variable that points tests at their own output
 // directory.
 static const char *const test_output_dir_env = "IMGNEKO_TEST_OUTPUT_DIR";
+
+// The first SIGINT/SIGTERM received while test children are running.
+static volatile sig_atomic_t pending_shutdown_signal = 0;
 
 // Intentionally never called. The coverage-ignore regression keeps this helper
 // uncovered so the repo-level ignore list can prove that it suppresses branch
@@ -763,11 +783,22 @@ static String test_output_file_path(const char *test_output_dir) {
 // state. The main loop still does the real reap via waitpid().
 static void signal_state_sigchld_handler(int signum) { (void)signum; }
 
+// Record the first SIGINT/SIGTERM so the main loop can stop scheduling work
+// and begin shutting down running tests.
+static void signal_state_shutdown_handler(int signum) {
+    // IMGNEKO_UNCOVERED_OK: It's hard to call the handler twice
+    if (pending_shutdown_signal == 0)
+        pending_shutdown_signal = signum;
+}
+
 // Install the signal-handler and mask state needed for the parent event loop to
 // sleep in pselect() without racing against child exits.
 static void signal_state_init(TestSignalState *signal_state) {
     struct sigaction sigchld_action = {0};
-    sigset_t sigchld_mask;
+    struct sigaction shutdown_action = {0};
+    sigset_t blocked_signals;
+
+    pending_shutdown_signal = 0;
 
     // Catch SIGCHLD with a no-op handler so pselect() wakes when a child exits.
     sigemptyset(&sigchld_action.sa_mask);
@@ -776,21 +807,35 @@ static void signal_state_init(TestSignalState *signal_state) {
                       &signal_state->old_sigchld_action) == 0,
             "sigaction failed: %errno");
 
-    // Block SIGCHLD in the parent outside pselect() so a child exit cannot
-    // slip between waitpid(WNOHANG) and the next sleep. Without this, the
-    // runner can observe "no exited children", lose the SIGCHLD in the gap
-    // before pselect(), and then sleep until some unrelated fd activity or
-    // timeout.
-    sigemptyset(&sigchld_mask);
-    sigaddset(&sigchld_mask, SIGCHLD);
-    require(sigprocmask(SIG_BLOCK, &sigchld_mask,
-                        &signal_state->old_sigchld_mask) == 0,
+    // Catch SIGINT/SIGTERM so the runner can stop early, terminate its
+    // children, and still print the partial summary before exiting.
+    sigemptyset(&shutdown_action.sa_mask);
+    shutdown_action.sa_handler = signal_state_shutdown_handler;
+    require(sigaction(SIGINT, &shutdown_action,
+                      &signal_state->old_sigint_action) == 0,
+            "sigaction failed: %errno");
+    require(sigaction(SIGTERM, &shutdown_action,
+                      &signal_state->old_sigterm_action) == 0,
+            "sigaction failed: %errno");
+
+    // Block SIGCHLD, SIGINT, and SIGTERM in the parent outside pselect() so
+    // those events cannot slip between the current poll/update step and the
+    // next sleep.
+    sigemptyset(&blocked_signals);
+    sigaddset(&blocked_signals, SIGCHLD);
+    sigaddset(&blocked_signals, SIGINT);
+    sigaddset(&blocked_signals, SIGTERM);
+    require(sigprocmask(SIG_BLOCK, &blocked_signals,
+                        &signal_state->old_signal_mask) == 0,
             "sigprocmask failed: %errno");
 
-    // During pselect() we want the caller's original mask, except SIGCHLD must
-    // be unblocked so child exits interrupt the sleep.
-    signal_state->wait_mask = signal_state->old_sigchld_mask;
+    // During pselect() we want the caller's original mask, except SIGCHLD,
+    // SIGINT, and SIGTERM must be unblocked so those events interrupt the
+    // sleep.
+    signal_state->wait_mask = signal_state->old_signal_mask;
     sigdelset(&signal_state->wait_mask, SIGCHLD);
+    sigdelset(&signal_state->wait_mask, SIGINT);
+    sigdelset(&signal_state->wait_mask, SIGTERM);
     signal_state->installed = true;
 }
 
@@ -800,11 +845,15 @@ static void signal_state_deinit(TestSignalState *signal_state) {
     if (!signal_state->installed)
         return;
 
-    require(sigprocmask(SIG_SETMASK, &signal_state->old_sigchld_mask, NULL) ==
-                0,
+    require(sigprocmask(SIG_SETMASK, &signal_state->old_signal_mask, NULL) == 0,
             "sigprocmask restore failed: %errno");
     require(sigaction(SIGCHLD, &signal_state->old_sigchld_action, NULL) == 0,
             "sigaction restore failed: %errno");
+    require(sigaction(SIGINT, &signal_state->old_sigint_action, NULL) == 0,
+            "sigaction restore failed: %errno");
+    require(sigaction(SIGTERM, &signal_state->old_sigterm_action, NULL) == 0,
+            "sigaction restore failed: %errno");
+    pending_shutdown_signal = 0;
     signal_state->installed = false;
 }
 
@@ -951,7 +1000,7 @@ static RunningTest start_test_process(const TestCase *test_case,
         // The parent blocks SIGCHLD around its wait loop. Undo that in the
         // child before running the test so the test process inherits the
         // caller's original signal mask, not the runner's internal one.
-        if (sigprocmask(SIG_SETMASK, &signal_state->old_sigchld_mask, NULL) !=
+        if (sigprocmask(SIG_SETMASK, &signal_state->old_signal_mask, NULL) !=
             0) {
             fprintf(stderr, "error: sigprocmask failed: %s\n", strerror(errno));
             _exit(127);
@@ -1027,6 +1076,7 @@ static RunningTest start_test_process(const TestCase *test_case,
         .output_drain_deadline_seconds = 0.0,
         .child_reaped = false,
         .output_pipe_closed = false,
+        .interrupted = false,
         .timed_out = false,
         .sigkill_sent = false,
     };
@@ -1092,6 +1142,51 @@ static void sigterm_running_test_process(RunningTest *running_test,
         now_seconds + timeout_output_drain_grace_seconds;
 
     signal_running_test_process_group(running_test, SIGTERM);
+}
+
+// Stop scheduling new tests after SIGINT/SIGTERM and gracefully terminate the
+// currently running children through the same timeout/escalation machinery used
+// for ordinary per-test timeouts.
+static void maybe_begin_test_run_shutdown(TestRunnerState *state) {
+    double now_seconds;
+    sigset_t pending_signals;
+    int shutdown_signal_number = (int)pending_shutdown_signal;
+
+    // If shutdown has already begun, nothing to do.
+    if (state->shutdown_requested)
+        return;
+
+    // Check for a pending shutdown signal.
+    if (shutdown_signal_number == 0) {
+        require(sigpending(&pending_signals) == 0, "sigpending failed: %errno");
+        if (sigismember(&pending_signals, SIGINT) == 1)
+            shutdown_signal_number = SIGINT;
+        else if (sigismember(&pending_signals, SIGTERM) == 1)
+            shutdown_signal_number = SIGTERM;
+    }
+
+    if (shutdown_signal_number == 0)
+        return;
+
+    state->shutdown_requested = true;
+    state->shutdown_signal_number = shutdown_signal_number;
+    state->summary.interrupted +=
+        state->selected_cases.size - state->next_selected_index;
+    now_seconds = time_monotonic_seconds();
+
+    // Mark running tests as interrupted.
+    for (size_t i = 0; i < state->running_tests.size; ++i) {
+        RunningTest *running_test = &state->running_tests.data[i];
+
+        // IMGNEKO_UNCOVERED_OK[2 lines]
+        if (running_test->child_reaped && running_test->output_pipe_closed)
+            continue;
+
+        running_test->interrupted = true;
+
+        if (!running_test->child_reaped && !running_test->timed_out)
+            sigterm_running_test_process(running_test, now_seconds);
+    }
 }
 
 // Advance timeout cleanup for every running child: start timeout handling,
@@ -1191,6 +1286,12 @@ static void wait_for_running_test_events(RunningTestArray *running_tests,
     // to sleep at all.
     update_running_test_timeouts(running_tests, now_seconds);
     reap_running_tests(running_tests);
+
+    // If there are no running tests, pselect() will wait forever (since there
+    // are no events to wake it up), so skip it and return immediately to let
+    // the caller handle this.
+    if (running_tests->size == 0)
+        return;
 
     // Build the fd set for output pipes that still need draining.
     FD_ZERO(&read_fds);
@@ -1586,6 +1687,22 @@ static void print_summary_count(const char *label, size_t count) {
         printf("  %s: %zu\n", label, count);
 }
 
+// Print the user-facing shutdown message for one runner-shutdown signal.
+static void print_shutdown_signal_message(int signal_number) {
+    switch (signal_number) {
+    case SIGINT:
+        puts("Interrupted by SIGINT.");
+        return;
+    case SIGTERM:
+        puts("Terminated by SIGTERM.");
+        return;
+    // IMGNEKO_UNCOVERED_OK[3 lines]
+    default:
+        printf("Interrupted by signal %d.\n", signal_number);
+        return;
+    }
+}
+
 // Seed the debug-only pseudo-random exit-code perturbation once per process.
 static void seed_debug_random(void) {
     static bool seeded = false;
@@ -1622,6 +1739,7 @@ static TestRunResult
 test_run_result_from_running_test(const RunningTest *running_test) {
     TestRunResult result = {
         .exit_code = 1,
+        .interrupted = running_test->interrupted,
         .timed_out = running_test->timed_out,
         .elapsed_seconds =
             time_monotonic_seconds() - running_test->start_time_seconds,
@@ -1654,13 +1772,15 @@ static ClassifiedTestResult classify_test_result(const TestCase *test_case,
                                                  double flip_exit_probability) {
     ClassifiedTestResult classified = {.run_result = run_result};
 
-    if (!run_result.timed_out) {
+    if (!run_result.interrupted && !run_result.timed_out) {
         run_result.exit_code = maybe_flip_exit_code(
             test_case, run_result.exit_code, flip_exit_probability);
     }
     classified.run_result = run_result;
 
-    if (run_result.timed_out) {
+    if (run_result.interrupted) {
+        classified.outcome = TEST_OUTCOME_INTERRUPTED;
+    } else if (run_result.timed_out) {
         classified.outcome = TEST_OUTCOME_TIMEOUT;
     } else if (run_result.exit_code == 0 &&
                test_case->marker == TEST_MARKER_XFAIL) {
@@ -1705,6 +1825,9 @@ update_summary_for_classified_result(RunSummary *summary,
         summary->failed++;
         string_array_push_copy(&summary->failed_tests, test_case->id.cstr);
         return;
+    case TEST_OUTCOME_INTERRUPTED:
+        summary->interrupted++;
+        return;
     }
 }
 
@@ -1739,22 +1862,26 @@ static void print_classified_test_result(const TestCase *test_case,
         if (!output_passthrough)
             print_output_tail(output_file_path, 20);
         break;
+    case TEST_OUTCOME_INTERRUPTED:
+        break;
     }
 
     fflush(stdout);
 }
 
 // Update the run summary and user-facing status output for one completed test.
-static void record_test_result(RunSummary *summary, const TestCase *test_case,
-                               TestRunResult run_result,
-                               const char *output_file_path,
+static void record_test_result(RunSummary *summary,
+                               const RunningTest *running_test,
                                bool output_passthrough,
                                double flip_exit_probability) {
-    ClassifiedTestResult classified =
-        classify_test_result(test_case, run_result, flip_exit_probability);
+    const TestCase *test_case = running_test->test_case;
+    ClassifiedTestResult classified = classify_test_result(
+        test_case, test_run_result_from_running_test(running_test),
+        flip_exit_probability);
 
     update_summary_for_classified_result(summary, test_case, &classified);
-    print_classified_test_result(test_case, &classified, output_file_path,
+    print_classified_test_result(test_case, &classified,
+                                 running_test->output_file_path.cstr,
                                  output_passthrough);
 }
 
@@ -1780,10 +1907,8 @@ static void finalize_completed_running_tests(RunningTestArray *running_tests,
             continue;
         }
 
-        record_test_result(summary, running_test->test_case,
-                           test_run_result_from_running_test(running_test),
-                           running_test->output_file_path.cstr,
-                           output_passthrough, flip_exit_probability);
+        record_test_result(summary, running_test, output_passthrough,
+                           flip_exit_probability);
         remove_running_test_at(running_tests, i);
     }
 }
@@ -1894,7 +2019,9 @@ static void test_runner_state_init(TestRunnerState *state) {
                 .xpassed_tests = arr_empty,
                 .timed_out_tests = arr_empty,
             },
+        .next_selected_index = 0,
         .run_start_seconds = time_monotonic_seconds(),
+        .shutdown_signal_number = 0,
     };
 }
 
@@ -2293,16 +2420,15 @@ static void start_selected_test(const CliOptions *options,
 }
 
 // Start more selected tests until all job slots are full or
-// *next_selected_index reaches the end of state->selected_cases. The function
-// advances *next_selected_index for every test it consumes from the selected
-// list.
-static void start_ready_tests(const CliOptions *options, TestRunnerState *state,
-                              size_t *next_selected_index) {
+// state->next_selected_index reaches the end of state->selected_cases. The
+// function advances state->next_selected_index for every test it consumes from
+// the selected list.
+static void start_ready_tests(const CliOptions *options,
+                              TestRunnerState *state) {
     while (state->running_tests.size < (size_t)options->jobs &&
-           *next_selected_index < state->selected_cases.size) {
+           state->next_selected_index < state->selected_cases.size) {
         const TestCase *test_case =
-            state->selected_cases.data[(*next_selected_index)++];
-
+            state->selected_cases.data[state->next_selected_index++];
         start_selected_test(options, state, test_case);
     }
 }
@@ -2311,14 +2437,16 @@ static void start_ready_tests(const CliOptions *options, TestRunnerState *state,
 // has either been recorded immediately or started, reaped, and finalized.
 static void run_selected_tests(const CliOptions *options,
                                TestRunnerState *state) {
-    size_t next_selected_index = 0;
+    require(state->signal_state.installed,
+            "signal state must be initialized before running tests");
 
-    signal_state_init(&state->signal_state);
-    while (next_selected_index < state->selected_cases.size ||
+    while ((!state->shutdown_requested &&
+            state->next_selected_index < state->selected_cases.size) ||
            state->running_tests.size != 0) {
         // First launch as many new tests as we can. Disabled tests are
         // accounted for synchronously here and do not enter running_tests.
-        start_ready_tests(options, state, &next_selected_index);
+        if (!state->shutdown_requested)
+            start_ready_tests(options, state);
 
         // Then wait until some running test produces output, exits, or reaches
         // its next timeout transition. The wait helper may return immediately
@@ -2328,29 +2456,26 @@ static void run_selected_tests(const CliOptions *options,
             options->debug_parent_output_chunk_delay_seconds,
             &state->signal_state);
 
+        // Check if we received a shutdown signal and switch to shutdown mode if
+        // so (signal running tests to terminate, stop running new tests).
+        maybe_begin_test_run_shutdown(state);
+
         // Finally, flush every completed child into the summary and free its
         // slot so the next loop iteration can start more work.
         finalize_completed_running_tests(&state->running_tests, &state->summary,
                                          options->output_passthrough,
                                          options->debug_flip_exit_probability);
     }
-    signal_state_deinit(&state->signal_state);
 }
 
 // Finish the run by checking whether any test matched and printing the final
 // summary for execution mode.
-static void finalize_run_result(const CliOptions *options,
-                                TestRunnerState *state, int *exit_code_out) {
+static void finalize_run_result(TestRunnerState *state, int *exit_code_out) {
     if (state->discovered == 0) {
-        if (!options->list_only) {
-            fprintf(stderr, "error: no tests matched the requested filters\n");
-            *exit_code_out = 2;
-        }
+        fprintf(stderr, "error: no tests matched the requested filters\n");
+        *exit_code_out = 2;
         return;
     }
-
-    if (options->list_only)
-        return;
 
     print_named_test_list("timed out tests", &state->summary.timed_out_tests);
     print_named_test_list("failed tests", &state->summary.failed_tests);
@@ -2363,14 +2488,22 @@ static void finalize_run_result(const CliOptions *options,
     print_summary_count("xpassed", state->summary.xpassed);
     print_summary_count("timeout", state->summary.timed_out);
     print_summary_count("failed", state->summary.failed);
-    if (state->summary.failed != 0 || state->summary.xpassed != 0 ||
-        state->summary.timed_out != 0) {
+    print_summary_count("interrupted", state->summary.interrupted);
+    printf("\n");
+
+    if (state->shutdown_requested) {
+        *exit_code_out = 128 + state->shutdown_signal_number;
+        print_shutdown_signal_message(state->shutdown_signal_number);
+    } else if (state->summary.failed != 0 || state->summary.xpassed != 0 ||
+               state->summary.timed_out != 0) {
         *exit_code_out = 1;
     }
-    printf("\n");
+
     printf("Time: %.3f s\n",
            time_monotonic_seconds() - state->run_start_seconds);
-    printf("Result: %s\n", *exit_code_out == 0 ? "SUCCESS" : "FAILURE");
+    printf("Result: %s\n", state->shutdown_requested
+                               ? "INTERRUPTED"
+                               : (*exit_code_out == 0 ? "SUCCESS" : "FAILURE"));
 }
 
 int main(int argc, char **argv) {
@@ -2393,12 +2526,15 @@ int main(int argc, char **argv) {
                                 &state.selected_cases);
     state.discovered = state.selected_cases.size;
 
-    if (options.list_only)
+    if (options.list_only) {
         list_selected_tests(&state);
-    else
-        run_selected_tests(&options, &state);
+        goto cleanup;
+    }
 
-    finalize_run_result(&options, &state, &exit_code);
+    signal_state_init(&state.signal_state);
+    run_selected_tests(&options, &state);
+    finalize_run_result(&state, &exit_code);
+    signal_state_deinit(&state.signal_state);
 
 cleanup:
     test_runner_state_deinit(&state);
