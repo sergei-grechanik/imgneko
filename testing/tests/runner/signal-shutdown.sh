@@ -30,13 +30,14 @@ wait_for_path() {
 wait_for_file_contains() {
     path=$1
     needle=$2
+    poll_interval=${3:-0.05}
     i=0
 
     while [ "$i" -lt 200 ]; do
         if [ -f "$path" ] && grep -F -- "$needle" "$path" >/dev/null 2>&1; then
             return 0
         fi
-        sleep 0.05
+        sleep "$poll_interval"
         i=$((i + 1))
     done
 
@@ -116,7 +117,9 @@ run_runner_pending_signal_shutdown_test() {
     # its own stdout before sleeping in the debug output-drain delay, so a
     # signal sent here remains pending until the next shutdown poll instead of
     # being handled directly in pselect().
-    wait_for_file_contains "$log_path" "pending stop marker"
+    # Poll tightly here so the signal lands while the runner is still inside
+    # the debug output-drain delay triggered by the passthrough chunk.
+    wait_for_file_contains "$log_path" "pending stop marker" 0.01
     kill "-$signal_name" "$runner_pid"
 
     set +e
@@ -154,7 +157,10 @@ run_runner_pending_signal_mixed_state_test() {
     # - h has already exited and closed its pipe, and
     # - i has already crossed its timeout deadline.
     wait_for_path "$state_dir/i.started"
-    wait_for_file_contains "$log_path" "mixed state marker"
+    # The mixed-state assertions depend on interrupting the runner before it
+    # finalizes the already-completed children, so use a shorter poll interval
+    # than the generic helper default to reduce scheduling drift.
+    wait_for_file_contains "$log_path" "mixed state marker" 0.01
     kill "-$signal_name" "$runner_pid"
 
     set +e
