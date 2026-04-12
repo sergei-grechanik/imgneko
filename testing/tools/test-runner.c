@@ -243,6 +243,8 @@ typedef struct TestRunnerState {
     TestCasePtrArray selected_cases;
     RunningTestArray running_tests;
     RunSummary summary;
+    String timing_file_path;
+    FILE *timing_file;
     size_t discovered;
     size_t num_recorded_results;
     size_t next_selected_index;
@@ -262,6 +264,8 @@ static const char *const build_dir = TEST_RUNNER_BUILD_DIR;
 static const char *const tests_root_rel = "testing/tests";
 // Default directory under the build tree for per-test captured output.
 static const char *const default_test_output_dir_rel = "test-outputs";
+// Root-level file inside the output directory that records per-test timings.
+static const char *const timing_file_name = "test-times.txt";
 // Default per-test timeout in seconds.
 static const double default_test_timeout_seconds = 180.0;
 // After a timeout sends SIGTERM, wait briefly before escalating to SIGKILL.
@@ -338,6 +342,31 @@ static const char *test_marker_name(TestMarker marker) {
 
     // IMGNEKO_UNCOVERED_OK
     return NULL;
+}
+
+// Return the lowercase outcome name written to the machine-readable timing
+// file.
+static const char *test_outcome_record_name(TestOutcomeKind outcome) {
+    // IMGNEKO_UNCOVERED_OK
+    switch (outcome) {
+    case TEST_OUTCOME_PASS:
+        return "pass";
+    case TEST_OUTCOME_XFAIL:
+        return "xfail";
+    case TEST_OUTCOME_DISABLED:
+        return "disabled";
+    case TEST_OUTCOME_XPASS:
+        return "xpass";
+    case TEST_OUTCOME_TIMEOUT:
+        return "timeout";
+    case TEST_OUTCOME_FAIL:
+        return "fail";
+    case TEST_OUTCOME_INTERRUPTED:
+        return "interrupted";
+    }
+
+    // IMGNEKO_UNCOVERED_OK
+    return "unknown";
 }
 
 static void test_case_array_free(TestCaseArray *array) {
@@ -777,6 +806,12 @@ static String test_output_dir_path(const TestCase *test_case,
 // it with str_free.
 static String test_output_file_path(const char *test_output_dir) {
     return path_join(test_output_dir, "output");
+}
+
+// Build the root-level timing file path (`<output-root>/test-times.txt`).
+// The caller owns the returned string and must free it with str_free.
+static String timing_file_path(const char *output_root) {
+    return path_join(output_root, timing_file_name);
 }
 
 // pselect() only wakes for signals that are actually caught, so install a
@@ -1894,6 +1929,46 @@ static void print_classified_test_result(const TestRunnerState *state,
     fflush(stdout);
 }
 
+// Open the root-level timing file before the run starts so every recorded test
+// can append one machine-readable line immediately.
+static void open_timing_file(TestRunnerState *state, const char *output_dir) {
+    require(mkdir_p(output_dir), "failed to create a directory: %errno");
+    state->timing_file_path = timing_file_path(output_dir);
+    state->timing_file = fopen(state->timing_file_path.cstr, "w");
+    require(state->timing_file != NULL,
+            "failed to open the timing file: %errno");
+}
+
+// Append one finalized test result to the timing file in
+// `time outcome test_name` order.
+static void append_timing_file_record(const TestRunnerState *state,
+                                      const TestCase *test_case,
+                                      const ClassifiedTestResult *classified) {
+    require(state->timing_file != NULL, "timing file must be open");
+    require(fprintf(state->timing_file, "%.2f %s %s\n",
+                    classified->run_result.elapsed_seconds,
+                    test_outcome_record_name(classified->outcome),
+                    test_case->id.cstr) >= 0,
+            "failed to write the timing file: %errno");
+    require(fflush(state->timing_file) == 0,
+            "failed to flush the timing file: %errno");
+}
+
+// Update the summary, print the terminal status line, and record the
+// timing entry for one already-classified test result.
+static void
+record_classified_test_result(TestRunnerState *state, const TestCase *test_case,
+                              const ClassifiedTestResult *classified,
+                              const char *output_file_path,
+                              bool output_passthrough) {
+    update_summary_for_classified_result(&state->summary, test_case,
+                                         classified);
+    print_classified_test_result(state, test_case, classified, output_file_path,
+                                 output_passthrough);
+    append_timing_file_record(state, test_case, classified);
+    state->num_recorded_results++;
+}
+
 // Update state for one completed test: summary counters, status output, and the
 // next result index.
 static void record_test_result(TestRunnerState *state,
@@ -1905,12 +1980,9 @@ static void record_test_result(TestRunnerState *state,
         test_case, test_run_result_from_running_test(running_test),
         flip_exit_probability);
 
-    update_summary_for_classified_result(&state->summary, test_case,
-                                         &classified);
-    print_classified_test_result(state, test_case, &classified,
-                                 running_test->output_file_path.cstr,
-                                 output_passthrough);
-    state->num_recorded_results++;
+    record_classified_test_result(state, test_case, &classified,
+                                  running_test->output_file_path.cstr,
+                                  output_passthrough);
 }
 
 // Release one completed running test and remove it from the dense running-test
@@ -2046,6 +2118,8 @@ static void test_runner_state_init(TestRunnerState *state) {
                 .xpassed_tests = arr_empty,
                 .timed_out_tests = arr_empty,
             },
+        .timing_file_path = str_empty,
+        .timing_file = NULL,
         .next_selected_index = 0,
         .run_start_seconds = time_monotonic_seconds(),
         .shutdown_signal_number = 0,
@@ -2056,6 +2130,12 @@ static void test_runner_state_deinit(TestRunnerState *state) {
     // By the time teardown runs, every started child must already have been
     // finalized and removed from running_tests.
     assert(state->running_tests.size == 0);
+    if (state->timing_file != NULL) {
+        require(fclose(state->timing_file) == 0,
+                "failed to close the timing file: %errno");
+        state->timing_file = NULL;
+    }
+    str_free(state->timing_file_path);
     arr_free(state->running_tests);
     arr_free(state->selected_cases);
     str_array_free(&state->summary.timed_out_tests);
@@ -2408,12 +2488,16 @@ static void list_selected_tests(const TestRunnerState *state) {
 // Record a disabled test without spawning a child process.
 static void record_disabled_test(TestRunnerState *state,
                                  const TestCase *test_case) {
-    ClassifiedTestResult classified = {.outcome = TEST_OUTCOME_DISABLED};
+    ClassifiedTestResult classified = {
+        .run_result =
+            {
+                .exit_code = 0,
+                .elapsed_seconds = 0.0,
+            },
+        .outcome = TEST_OUTCOME_DISABLED,
+    };
 
-    update_summary_for_classified_result(&state->summary, test_case,
-                                         &classified);
-    print_classified_test_result(state, test_case, &classified, NULL, false);
-    state->num_recorded_results++;
+    record_classified_test_result(state, test_case, &classified, NULL, false);
 }
 
 // Start one selected test or, for disabled entries, record the synthetic result
@@ -2523,6 +2607,7 @@ static void finalize_run_result(TestRunnerState *state, int *exit_code_out) {
 
     printf("Time: %.3f s\n",
            time_monotonic_seconds() - state->run_start_seconds);
+    printf("Timing file: %s\n", state->timing_file_path.cstr);
     printf("Result: %s\n", state->shutdown_requested
                                ? "INTERRUPTED"
                                : (*exit_code_out == 0 ? "SUCCESS" : "FAILURE"));
@@ -2559,6 +2644,7 @@ int main(int argc, char **argv) {
         goto cleanup;
     }
 
+    open_timing_file(&state, options.output_dir.cstr);
     print_run_start_message(&options, &state);
     signal_state_init(&state.signal_state);
     run_selected_tests(&options, &state);
