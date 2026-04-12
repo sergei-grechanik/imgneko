@@ -106,8 +106,9 @@ IMGNEKO_VERSION := $(strip $(file <$(VERSION_FILE)))
 
 # These targets do not need config.mk:
 #   - help: should always work
+#   - clean-test-output: should remove stale test logs without requiring configure
 #   - clean: should remove outputs even if the build dir was never configured
-NO_CONFIG_TARGETS := help clean
+NO_CONFIG_TARGETS := help clean clean-test-output
 
 # Use the requested goals, or "all" if the user did not name one explicitly.
 REQUESTED_GOALS := $(if $(MAKECMDGOALS),$(MAKECMDGOALS),all)
@@ -391,7 +392,7 @@ test-list: check-config-date test-tools test-c-bins
 	"$(BIN_TEST_RUNNER)" "$$@"
 
 # Remove captured per-test output files so each `make test` run starts fresh.
-clean-test-output: check-config-date
+clean-test-output:
 	rm -rf "$(TEST_OUTPUT_DIR)"
 
 # Remove build outputs but keep the saved configuration and wrapper Makefile.

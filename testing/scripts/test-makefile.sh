@@ -475,6 +475,26 @@ assert_output_contains "error: ./build/stale/config.mk is older than ./configure
 assert_output_contains "rerun: ./configure --build-dir=./build/stale --force"
 assert_path_absent "$STALE_REPO/build/stale/bin/imgneko"
 
+# clean-test-output should still work when the saved configuration is stale so
+# users can discard stale test logs before rerunning configure.
+mkdir -p "$STALE_REPO/build/stale/bin" "$STALE_REPO/build/stale/test-outputs"
+touch "$STALE_REPO/build/stale/bin/imgneko" "$STALE_REPO/build/stale/test-outputs/stale.log"
+
+run_capture "$LOG_DIR/stale-clean-test-output.out" make -C "$STALE_REPO/build/stale" clean-test-output
+assert_status_zero
+assert_file_exists "$STALE_REPO/build/stale/bin/imgneko"
+assert_path_absent "$STALE_REPO/build/stale/test-outputs/stale.log"
+
+mkdir -p "$STALE_REPO/build/stale/test-outputs"
+touch "$STALE_REPO/build/stale/test-outputs/stale.log"
+
+# clean should keep delegating to clean-test-output while also removing other
+# build outputs when the saved configuration is stale.
+run_capture "$LOG_DIR/stale-clean.out" make -C "$STALE_REPO/build/stale" clean
+assert_status_zero
+assert_path_absent "$STALE_REPO/build/stale/bin/imgneko"
+assert_path_absent "$STALE_REPO/build/stale/test-outputs/stale.log"
+
 # Remove VERSION in a copied repository so the top-level Makefile parse-time
 # check fails before any target logic runs.
 say "Makefile parse error when VERSION is missing"
