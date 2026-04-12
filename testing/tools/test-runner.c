@@ -1687,6 +1687,16 @@ static void print_summary_count(const char *label, size_t count) {
         printf("  %s: %zu\n", label, count);
 }
 
+// Print the selected test count and parallelism once discovery is complete and
+// before any test-specific status lines begin.
+static void print_run_start_message(const CliOptions *options,
+                                    const TestRunnerState *state) {
+    printf("Starting test run: %d job%s, %zu discovered test%s\n",
+           options->jobs, options->jobs == 1 ? "" : "s", state->discovered,
+           state->discovered == 1 ? "" : "s");
+    fflush(stdout);
+}
+
 // Print the user-facing shutdown message for one runner-shutdown signal.
 static void print_shutdown_signal_message(int signal_number) {
     switch (signal_number) {
@@ -2471,12 +2481,6 @@ static void run_selected_tests(const CliOptions *options,
 // Finish the run by checking whether any test matched and printing the final
 // summary for execution mode.
 static void finalize_run_result(TestRunnerState *state, int *exit_code_out) {
-    if (state->discovered == 0) {
-        fprintf(stderr, "error: no tests matched the requested filters\n");
-        *exit_code_out = 2;
-        return;
-    }
-
     print_named_test_list("timed out tests", &state->summary.timed_out_tests);
     print_named_test_list("failed tests", &state->summary.failed_tests);
     print_named_test_list("xpassed tests", &state->summary.xpassed_tests);
@@ -2531,6 +2535,13 @@ int main(int argc, char **argv) {
         goto cleanup;
     }
 
+    if (state.discovered == 0) {
+        fprintf(stderr, "error: no tests matched the requested filters\n");
+        exit_code = 2;
+        goto cleanup;
+    }
+
+    print_run_start_message(&options, &state);
     signal_state_init(&state.signal_state);
     run_selected_tests(&options, &state);
     finalize_run_result(&state, &exit_code);

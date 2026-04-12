@@ -361,10 +361,14 @@ echo '== end list no matches =='
 # CHECK-NEXT: == end list no matches ==
 
 echo '== run no matches =='
-"$RUNNER" --output-dir "$NO_MATCH_OUTPUT_DIR" \
-    --filter does/not/exist 2>&1 || true
+set +e
+"$RUNNER" --output-dir "$NO_MATCH_OUTPUT_DIR" --filter does/not/exist 2>&1
+run_no_matches_status=$?
+set -e
+printf 'status=%d\n' "$run_no_matches_status"
 # CHECK: == run no matches ==
 # CHECK: error: no tests matched the requested filters
+# CHECK: status=2
 
 echo '== nonempty output dir =='
 "$RUNNER" --output-dir "$NONEMPTY_OUTPUT_DIR" \

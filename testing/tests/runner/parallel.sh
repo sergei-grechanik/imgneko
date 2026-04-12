@@ -53,6 +53,7 @@ echo '== serial jobs =='
 "$RUNNER" --tests-dir "$PARALLEL_TEST_DIR" --output-dir "$SERIAL_OUTPUT_DIR" \
     -j 1 2>&1 || true
 # CHECK: == serial jobs ==
+# CHECK: Starting test run: 1 job, 2 discovered tests
 # CHECK: RUN: a-waits-for-b.sh
 # CHECK: FAIL: a-waits-for-b.sh
 # CHECK: RUN: b-starts.sh
@@ -66,6 +67,7 @@ echo '== parallel jobs =='
 "$RUNNER" --tests-dir "$PARALLEL_TEST_DIR" --output-dir "$PARALLEL_OUTPUT_DIR" \
     -j 2 2>&1
 # CHECK: == parallel jobs ==
+# CHECK: Starting test run: 2 jobs, 2 discovered tests
 # CHECK: RUN: a-waits-for-b.sh
 # CHECK: RUN: b-starts.sh
 # CHECK: PASS: a-waits-for-b.sh
