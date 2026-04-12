@@ -345,7 +345,7 @@ ifeq ($(COVERAGE_REPORT),ON)
 # Run the full instrumented test suite only when any instrumented binary
 # changed, then regenerate the merged coverage artifacts only when the raw
 # profiles or reporting inputs changed.
-$(COVERAGE_TESTS_STAMP): $(BIN_IMGNEKO) $(TEST_TOOLS) $(TEST_C_BINS) | check-config-date
+$(COVERAGE_TESTS_STAMP): $(BIN_IMGNEKO) $(TEST_TOOLS) $(TEST_C_BINS) $(TEST_SOURCES) | check-config-date
 	@rm -rf "$(COVERAGE_PROFILE_DIR)" "$(TEST_OUTPUT_DIR)"
 	@mkdir -p "$(COVERAGE_PROFILE_DIR)"
 	@LLVM_PROFILE_FILE="$(COVERAGE_PROFILE_DIR)/%m-%p.profraw" "$(BIN_TEST_RUNNER)" -j "$(TEST_RUNNER_JOBS)" --all

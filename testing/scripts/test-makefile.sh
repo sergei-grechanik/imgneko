@@ -621,12 +621,20 @@ coverage_tests_repeat_mtime=$(stat -c %Y "$COVERAGE_BUILD/coverage/tests.stamp")
 assert_equal "$coverage_tests_initial_mtime" "$coverage_tests_repeat_mtime"
 
 sleep 1
+touch "$ROOT_DIR/testing/tests/runner/test-runner-cli.sh"
+run_capture "$LOG_DIR/coverage-rerun-on-test-change.out" make -C "$COVERAGE_BUILD" coverage
+assert_status_zero
+coverage_changed_mtime=$(stat -c %Y "$COVERAGE_BUILD/coverage/uncovered.qf")
+coverage_tests_changed_mtime=$(stat -c %Y "$COVERAGE_BUILD/coverage/tests.stamp")
+assert_greater "$coverage_tests_repeat_mtime" "$coverage_tests_changed_mtime"
+
+sleep 1
 run_capture "$LOG_DIR/coverage-report-repeat.out" make -C "$COVERAGE_BUILD" coverage-report
 assert_status_zero
 coverage_report_repeat_mtime=$(stat -c %Y "$COVERAGE_BUILD/coverage/uncovered.qf")
 coverage_tests_report_mtime=$(stat -c %Y "$COVERAGE_BUILD/coverage/tests.stamp")
-assert_greater "$coverage_repeat_mtime" "$coverage_report_repeat_mtime"
-assert_equal "$coverage_tests_initial_mtime" "$coverage_tests_report_mtime"
+assert_greater "$coverage_changed_mtime" "$coverage_report_repeat_mtime"
+assert_equal "$coverage_tests_changed_mtime" "$coverage_tests_report_mtime"
 
 # The checked-in suppressions may leave `uncovered.qf` empty. Remove the
 # copied repo's ignore rule and inline suppression comments from test-runner.c,
@@ -651,7 +659,7 @@ assert_status_zero
 coverage_report_rebuild_mtime=$(stat -c %Y "$COVERAGE_BUILD/coverage/uncovered.qf")
 coverage_tests_rebuild_mtime=$(stat -c %Y "$COVERAGE_BUILD/coverage/tests.stamp")
 assert_greater "$coverage_report_repeat_mtime" "$coverage_report_rebuild_mtime"
-assert_equal "$coverage_tests_initial_mtime" "$coverage_tests_rebuild_mtime"
+assert_equal "$coverage_tests_changed_mtime" "$coverage_tests_rebuild_mtime"
 
 run_capture "$LOG_DIR/coverage-filter-error.out" make -C "$COVERAGE_BUILD" coverage FILTER=runner/expectations.sh
 assert_status_nonzero
