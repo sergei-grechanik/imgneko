@@ -375,7 +375,7 @@ echo '== nonempty output dir =='
     --filter runner/output.sh 2>&1 || true
 # CHECK: == nonempty output dir ==
 # CHECK: error: test output directory is not empty: {{.*nonempty-output}}
-# CHECK: remove it first with rm -r '{{.*nonempty-output}}'
+# CHECK: remove it first with rm -rf '{{.*nonempty-output}}'
 
 echo '== unsafe slash =='
 "$RUNNER" --list --output-dir / 2>&1 || true

@@ -92,8 +92,8 @@ echo '== empty output tail =='
     --filter empty-output-fail.sh 2>&1 || true
 # CHECK: == empty output tail ==
 # CHECK: RUN: empty-output-fail.sh
-# CHECK: output is empty: {{.*empty-output-fail\.sh/output}}
 # CHECK: FAIL: empty-output-fail.sh
+# CHECK: output is empty: {{.*empty-output-fail\.sh/output}}
 # CHECK: failed tests:
 # CHECK: empty-output-fail.sh
 # CHECK: Result: FAILURE
@@ -103,8 +103,8 @@ echo '== missing output tail =='
     --filter missing-output-fail.sh 2>&1 || true
 # CHECK: == missing output tail ==
 # CHECK: RUN: missing-output-fail.sh
-# CHECK: error: failed to read captured output {{.*missing-output-fail\.sh/output}}: No such file or directory
 # CHECK: FAIL: missing-output-fail.sh
+# CHECK: error: failed to read captured output {{.*missing-output-fail\.sh/output}}: No such file or directory
 # CHECK: failed tests:
 # CHECK: missing-output-fail.sh
 # CHECK: Result: FAILURE
@@ -114,8 +114,8 @@ echo '== signaled executable =='
     --filter signaled.sh 2>&1 || true
 # CHECK: == signaled executable ==
 # CHECK: RUN: signaled.sh
-# CHECK: output is empty: {{.*signaled\.sh/output}}
 # CHECK: FAIL: signaled.sh
+# CHECK: output is empty: {{.*signaled\.sh/output}}
 # CHECK: failed tests:
 # CHECK: signaled.sh
 # CHECK: Result: FAILURE

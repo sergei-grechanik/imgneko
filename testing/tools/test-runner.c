@@ -1478,6 +1478,7 @@ static void print_output_tail(const char *output_file_path, size_t max_lines) {
         str_free(escaped);
     }
     fprintf(stderr, "===== }}} END TEST OUTPUT =====\n\n");
+    fflush(stderr);
 
     str_array_free(&lines);
 }
@@ -1912,6 +1913,7 @@ static void print_classified_test_result(const TestRunnerState *state,
         printf("\n");
         print_test_result_prefix(state);
         printf("TIMEOUT: %s\n", test_case->id.cstr);
+        fflush(stdout);
         if (!output_passthrough)
             print_output_tail(output_file_path, 20);
         break;
@@ -1919,6 +1921,7 @@ static void print_classified_test_result(const TestRunnerState *state,
         printf("\n");
         print_test_result_prefix(state);
         printf("FAIL: %s\n", test_case->id.cstr);
+        fflush(stdout);
         if (!output_passthrough)
             print_output_tail(output_file_path, 20);
         break;

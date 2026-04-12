@@ -203,10 +203,10 @@ echo '== exec permission race =='
 # CHECK: RUN: a-remove-exec.sh
 # CHECK: PASS: a-remove-exec.sh
 # CHECK: RUN: b-target.sh
+# CHECK: FAIL: b-target.sh
 # CHECK: LAST 20 LINES OF TEST OUTPUT {{.*b-target\.sh/output}}
 # CHECK: error: failed to exec {{.*b-target\.sh}}: Permission denied
 # CHECK: ===== }}} END TEST OUTPUT =====
-# CHECK: FAIL: b-target.sh
 # CHECK: failed tests:
 # CHECK: b-target.sh
 # CHECK: Summary:
