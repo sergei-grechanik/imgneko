@@ -244,6 +244,7 @@ typedef struct TestRunnerState {
     RunningTestArray running_tests;
     RunSummary summary;
     size_t discovered;
+    size_t num_recorded_results;
     size_t next_selected_index;
     double run_start_seconds;
     TestSignalState signal_state;
@@ -1687,6 +1688,11 @@ static void print_summary_count(const char *label, size_t count) {
         printf("  %s: %zu\n", label, count);
 }
 
+// Print the [current/total] prefix for one recorded test result line.
+static void print_test_result_prefix(const TestRunnerState *state) {
+    printf("[%zu/%zu] ", state->num_recorded_results + 1, state->discovered);
+}
+
 // Print the selected test count and parallelism once discovery is complete and
 // before any test-specific status lines begin.
 static void print_run_start_message(const CliOptions *options,
@@ -1844,31 +1850,40 @@ update_summary_for_classified_result(RunSummary *summary,
 // Print the final status line for one classified test result and, for failures
 // and timeouts, include the captured output tail unless passthrough already
 // showed the full stream live.
-static void print_classified_test_result(const TestCase *test_case,
+static void print_classified_test_result(const TestRunnerState *state,
+                                         const TestCase *test_case,
                                          const ClassifiedTestResult *classified,
                                          const char *output_file_path,
                                          bool output_passthrough) {
     // IMGNEKO_UNCOVERED_OK
     switch (classified->outcome) {
     case TEST_OUTCOME_PASS:
+        print_test_result_prefix(state);
         printf("PASS: %s\n", test_case->id.cstr);
         break;
     case TEST_OUTCOME_XFAIL:
+        print_test_result_prefix(state);
         printf("XFAIL: %s\n", test_case->id.cstr);
         break;
     case TEST_OUTCOME_DISABLED:
+        print_test_result_prefix(state);
         printf("DISABLED: %s\n", test_case->id.cstr);
         break;
     case TEST_OUTCOME_XPASS:
+        print_test_result_prefix(state);
         printf("XPASS: %s\n", test_case->id.cstr);
         break;
     case TEST_OUTCOME_TIMEOUT:
-        printf("\nTIMEOUT: %s\n", test_case->id.cstr);
+        printf("\n");
+        print_test_result_prefix(state);
+        printf("TIMEOUT: %s\n", test_case->id.cstr);
         if (!output_passthrough)
             print_output_tail(output_file_path, 20);
         break;
     case TEST_OUTCOME_FAIL:
-        printf("\nFAIL: %s\n", test_case->id.cstr);
+        printf("\n");
+        print_test_result_prefix(state);
+        printf("FAIL: %s\n", test_case->id.cstr);
         if (!output_passthrough)
             print_output_tail(output_file_path, 20);
         break;
@@ -1879,8 +1894,9 @@ static void print_classified_test_result(const TestCase *test_case,
     fflush(stdout);
 }
 
-// Update the run summary and user-facing status output for one completed test.
-static void record_test_result(RunSummary *summary,
+// Update state for one completed test: summary counters, status output, and the
+// next result index.
+static void record_test_result(TestRunnerState *state,
                                const RunningTest *running_test,
                                bool output_passthrough,
                                double flip_exit_probability) {
@@ -1889,10 +1905,12 @@ static void record_test_result(RunSummary *summary,
         test_case, test_run_result_from_running_test(running_test),
         flip_exit_probability);
 
-    update_summary_for_classified_result(summary, test_case, &classified);
-    print_classified_test_result(test_case, &classified,
+    update_summary_for_classified_result(&state->summary, test_case,
+                                         &classified);
+    print_classified_test_result(state, test_case, &classified,
                                  running_test->output_file_path.cstr,
                                  output_passthrough);
+    state->num_recorded_results++;
 }
 
 // Release one completed running test and remove it from the dense running-test
@@ -1905,21 +1923,20 @@ static void remove_running_test_at(RunningTestArray *running_tests,
 
 // Flush all running tests that have reached a terminal state into the summary
 // and remove them from the running set.
-static void finalize_completed_running_tests(RunningTestArray *running_tests,
-                                             RunSummary *summary,
+static void finalize_completed_running_tests(TestRunnerState *state,
                                              bool output_passthrough,
                                              double flip_exit_probability) {
-    for (size_t i = 0; i < running_tests->size;) {
-        RunningTest *running_test = &running_tests->data[i];
+    for (size_t i = 0; i < state->running_tests.size;) {
+        RunningTest *running_test = &state->running_tests.data[i];
 
         if (!running_test_is_complete(running_test)) {
             i++;
             continue;
         }
 
-        record_test_result(summary, running_test, output_passthrough,
+        record_test_result(state, running_test, output_passthrough,
                            flip_exit_probability);
-        remove_running_test_at(running_tests, i);
+        remove_running_test_at(&state->running_tests, i);
     }
 }
 
@@ -2389,12 +2406,14 @@ static void list_selected_tests(const TestRunnerState *state) {
 }
 
 // Record a disabled test without spawning a child process.
-static void record_disabled_test(RunSummary *summary,
+static void record_disabled_test(TestRunnerState *state,
                                  const TestCase *test_case) {
     ClassifiedTestResult classified = {.outcome = TEST_OUTCOME_DISABLED};
 
-    update_summary_for_classified_result(summary, test_case, &classified);
-    print_classified_test_result(test_case, &classified, NULL, false);
+    update_summary_for_classified_result(&state->summary, test_case,
+                                         &classified);
+    print_classified_test_result(state, test_case, &classified, NULL, false);
+    state->num_recorded_results++;
 }
 
 // Start one selected test or, for disabled entries, record the synthetic result
@@ -2408,7 +2427,7 @@ static void start_selected_test(const CliOptions *options,
     RunningTest running_test;
 
     if (test_case->marker == TEST_MARKER_DISABLED) {
-        record_disabled_test(&state->summary, test_case);
+        record_disabled_test(state, test_case);
         return;
     }
 
@@ -2472,8 +2491,7 @@ static void run_selected_tests(const CliOptions *options,
 
         // Finally, flush every completed child into the summary and free its
         // slot so the next loop iteration can start more work.
-        finalize_completed_running_tests(&state->running_tests, &state->summary,
-                                         options->output_passthrough,
+        finalize_completed_running_tests(state, options->output_passthrough,
                                          options->debug_flip_exit_probability);
     }
 }

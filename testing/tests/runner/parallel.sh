@@ -3,7 +3,8 @@
 
 # Verify that -j schedules more than one test child at a time. The `a-*` test
 # waits for the `b-*` test to announce that it started, so `-j 1` must fail and
-# `-j 2` must pass.
+# `-j 2` must pass. The parallel run also checks that indexed result lines
+# follow completion order.
 
 set -eu
 
@@ -24,16 +25,15 @@ mkdir -p "$PARALLEL_TEST_DIR"
 cat >"$PARALLEL_TEST_DIR/a-waits-for-b.sh" <<EOF
 #!/bin/sh
 set -eu
-
 i=0
 while [ "\$i" -lt 40 ]; do
     if [ -f "$START_MARKER" ]; then
+        sleep 0.2
         exit 0
     fi
     sleep 0.05
     i=\$((i + 1))
 done
-
 printf '%s\n' 'b did not start in time' >&2
 exit 1
 EOF
@@ -42,9 +42,7 @@ chmod +x "$PARALLEL_TEST_DIR/a-waits-for-b.sh"
 cat >"$PARALLEL_TEST_DIR/b-starts.sh" <<EOF
 #!/bin/sh
 set -eu
-
 : >"$START_MARKER"
-sleep 0.2
 EOF
 chmod +x "$PARALLEL_TEST_DIR/b-starts.sh"
 
@@ -55,9 +53,9 @@ echo '== serial jobs =='
 # CHECK: == serial jobs ==
 # CHECK: Starting test run: 1 job, 2 discovered tests
 # CHECK: RUN: a-waits-for-b.sh
-# CHECK: FAIL: a-waits-for-b.sh
+# CHECK: [1/2] FAIL: a-waits-for-b.sh
 # CHECK: RUN: b-starts.sh
-# CHECK: PASS: b-starts.sh
+# CHECK: [2/2] PASS: b-starts.sh
 # CHECK: failed tests:
 # CHECK: a-waits-for-b.sh
 # CHECK: Result: FAILURE
@@ -70,8 +68,8 @@ echo '== parallel jobs =='
 # CHECK: Starting test run: 2 jobs, 2 discovered tests
 # CHECK: RUN: a-waits-for-b.sh
 # CHECK: RUN: b-starts.sh
-# CHECK: PASS: a-waits-for-b.sh
-# CHECK: PASS: b-starts.sh
+# CHECK: [1/2] PASS: b-starts.sh
+# CHECK: [2/2] PASS: a-waits-for-b.sh
 # CHECK: Summary:
 # CHECK: discovered: 2
 # CHECK: passed: 2
