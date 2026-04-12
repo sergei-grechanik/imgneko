@@ -60,6 +60,7 @@ DEPFILES_WITH_MESSAGE_BUILD=$ROOT_DIR/build/test-depfiles-with-message
 DEPFILES_WITHOUT_MESSAGE_BUILD=$ROOT_DIR/build/test-depfiles-without-message
 COMPDB_CLANG_BUILD=$ROOT_DIR/build/test-compdb-clang
 COVERAGE_BUILD=$ROOT_DIR/build/test-coverage
+COVERAGE_TEST_FILTER='runner/output.sh|unit/util/path.c/append_segment'
 SPACE_BUILD="$ROOT_DIR/build/test bad dir"
 RECONFIGURE_BUILD=$ROOT_DIR/build/test-reconfigure-check
 RELATIVE_BUILD_DIR_TEST=$ROOT_DIR/build/test-relative-builddir
@@ -179,6 +180,17 @@ unsuppress_coverage_test_probes() {
     sed -i '/^testing\/tools\/test-runner\.c coverage_ignore_\*$/d' \
         "$ROOT_DIR/coverage-ignore"
     sed -i '/IMGNEKO_UNCOVERED_OK/d' "$ROOT_DIR/testing/tools/test-runner.c"
+}
+
+# Narrow the copied repo's coverage recipe so this Makefile test runs only a
+# small representative subset instead of the whole test suite.
+restrict_coverage_run_to_subset() {
+    if ! grep -Fqx '	@LLVM_PROFILE_FILE="$(COVERAGE_PROFILE_DIR)/%m-%p.profraw" "$(BIN_TEST_RUNNER)" -j "$(TEST_RUNNER_JOBS)" --all' "$ROOT_DIR/Makefile"; then
+        fail "missing expected coverage test-runner recipe in $ROOT_DIR/Makefile"
+    fi
+
+    sed -i "/^\$(COVERAGE_TESTS_STAMP):/,/COMPILE_DB_REFRESH/ s#--all#--filter '$COVERAGE_TEST_FILTER'#" \
+        "$ROOT_DIR/Makefile"
 }
 
 # Verify that two strings are exactly equal.
@@ -585,9 +597,11 @@ assert_status_zero
 assert_file_exists "$COMPDB_CLANG_BUILD/compile_commands.json"
 assert_file_contains "$COMPDB_CLANG_BUILD/compile_commands.json" "test-runner.c"
 
-# Enable coverage reporting, run one targeted test through `make coverage`, and
-# confirm the build metadata and summary file reflect the configured mode.
+# Enable coverage reporting, patch the copied Makefile to run only a tiny
+# representative subset, and confirm the resulting report still reflects the
+# configured mode.
 say "Coverage report generation writes an incremental summary for instrumented source files"
+restrict_coverage_run_to_subset
 sh "$ROOT_DIR/configure" --build-dir="$COVERAGE_BUILD" --profile=debug --cc=clang --coverage-report
 
 run_capture "$LOG_DIR/coverage-report-missing.out" make -C "$COVERAGE_BUILD" coverage-report
