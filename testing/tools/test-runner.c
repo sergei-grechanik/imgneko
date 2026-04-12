@@ -664,7 +664,7 @@ static void require_empty_output_dir(const char *output_dir) {
     DIR *dir;
     bool has_entries = false;
     int readdir_errno = 0;
-    String rm_command = str_from_cstr("rm -r ");
+    String rm_command = str_from_cstr("rm -rf ");
 
     if (stat(output_dir, &st) != 0) {
         require(errno == ENOENT, "failed to stat output directory: %errno");
