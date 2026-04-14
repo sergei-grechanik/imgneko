@@ -31,6 +31,12 @@ src/util/klib/*
 src/util/array.h make_*
 src/util/array.h copy_*
 
+# OPT_DEFINE_STRUCT emits tiny init/deinit wrappers around opt_schema_init() and
+# opt_schema_deinit(). Those wrappers are convenience boilerplate, and their
+# exact function-level coverage is not meaningful.
+src/util/options.h *_init
+src/util/options.h *_deinit
+
 # We don't care about coverage of the tests themselves.
 testing/tests/*
 

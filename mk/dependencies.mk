@@ -11,6 +11,13 @@ $(BUILD_DIR)/obj/src/util/file.o: \
 	$(ROOT_DIR)/src/util/file.c \
 	$(ROOT_DIR)/src/util/file.h \
 	$(ROOT_DIR)/src/util/string.h
+$(BUILD_DIR)/obj/src/util/options.o: \
+	$(ROOT_DIR)/src/util/array.h \
+	$(ROOT_DIR)/src/util/common.h \
+	$(ROOT_DIR)/src/util/error.h \
+	$(ROOT_DIR)/src/util/options.c \
+	$(ROOT_DIR)/src/util/options.h \
+	$(ROOT_DIR)/src/util/string.h
 $(BUILD_DIR)/obj/src/util/path.o: \
 	$(ROOT_DIR)/src/util/array.h \
 	$(ROOT_DIR)/src/util/path.c \
@@ -60,6 +67,14 @@ $(BUILD_DIR)/obj/test-bin/unit/util/file.c.bin: \
 	$(ROOT_DIR)/src/util/string.h \
 	$(ROOT_DIR)/testing/support/test_main.h \
 	$(ROOT_DIR)/testing/tests/unit/util/file.c
+$(BUILD_DIR)/obj/test-bin/unit/util/options.c.bin: \
+	$(ROOT_DIR)/src/util/array.h \
+	$(ROOT_DIR)/src/util/common.h \
+	$(ROOT_DIR)/src/util/error.h \
+	$(ROOT_DIR)/src/util/options.h \
+	$(ROOT_DIR)/src/util/string.h \
+	$(ROOT_DIR)/testing/support/test_main.h \
+	$(ROOT_DIR)/testing/tests/unit/util/options.c
 $(BUILD_DIR)/obj/test-bin/unit/util/path.c.bin: \
 	$(ROOT_DIR)/src/util/array.h \
 	$(ROOT_DIR)/src/util/common.h \
@@ -91,6 +106,55 @@ $(BUILD_DIR)/obj/testing/tools/run-and-check.o: \
 	$(ROOT_DIR)/src/util/path.h \
 	$(ROOT_DIR)/src/util/string.h \
 	$(ROOT_DIR)/testing/tools/run-and-check.c
+$(BUILD_DIR)/obj/testing/tools/run-in-pty.o: \
+	$(ROOT_DIR)/src/util/array.h \
+	$(ROOT_DIR)/src/util/common.h \
+	$(ROOT_DIR)/src/util/error.h \
+	$(ROOT_DIR)/src/util/options.h \
+	$(ROOT_DIR)/src/util/string.h \
+	$(ROOT_DIR)/testing/tools/run-in-pty.c
+$(BUILD_DIR)/obj/testing/tools/sample-cli-default-no-top-level.o: \
+	$(ROOT_DIR)/src/util/array.h \
+	$(ROOT_DIR)/src/util/common.h \
+	$(ROOT_DIR)/src/util/error.h \
+	$(ROOT_DIR)/src/util/options.h \
+	$(ROOT_DIR)/src/util/string.h \
+	$(ROOT_DIR)/testing/tools/sample-cli-default-no-top-level.c
+$(BUILD_DIR)/obj/testing/tools/sample-cli-no-default.o: \
+	$(ROOT_DIR)/src/util/array.h \
+	$(ROOT_DIR)/src/util/common.h \
+	$(ROOT_DIR)/src/util/options.h \
+	$(ROOT_DIR)/src/util/string.h \
+	$(ROOT_DIR)/testing/tools/sample-cli-no-default.c
+$(BUILD_DIR)/obj/testing/tools/sample-cli-nocmd.o: \
+	$(BUILD_DIR)/generated/build_info.h \
+	$(ROOT_DIR)/src/util/array.h \
+	$(ROOT_DIR)/src/util/common.h \
+	$(ROOT_DIR)/src/util/error.h \
+	$(ROOT_DIR)/src/util/options.h \
+	$(ROOT_DIR)/src/util/string.h \
+	$(ROOT_DIR)/testing/tools/sample-cli-nocmd.c
+$(BUILD_DIR)/obj/testing/tools/sample-cli-top-level-no-default.o: \
+	$(ROOT_DIR)/src/util/array.h \
+	$(ROOT_DIR)/src/util/common.h \
+	$(ROOT_DIR)/src/util/error.h \
+	$(ROOT_DIR)/src/util/options.h \
+	$(ROOT_DIR)/src/util/string.h \
+	$(ROOT_DIR)/testing/tools/sample-cli-top-level-no-default.c
+$(BUILD_DIR)/obj/testing/tools/sample-cli-top-level-positional.o: \
+	$(ROOT_DIR)/src/util/array.h \
+	$(ROOT_DIR)/src/util/common.h \
+	$(ROOT_DIR)/src/util/options.h \
+	$(ROOT_DIR)/src/util/string.h \
+	$(ROOT_DIR)/testing/tools/sample-cli-top-level-positional.c
+$(BUILD_DIR)/obj/testing/tools/sample-cli.o: \
+	$(BUILD_DIR)/generated/build_info.h \
+	$(ROOT_DIR)/src/util/array.h \
+	$(ROOT_DIR)/src/util/common.h \
+	$(ROOT_DIR)/src/util/error.h \
+	$(ROOT_DIR)/src/util/options.h \
+	$(ROOT_DIR)/src/util/string.h \
+	$(ROOT_DIR)/testing/tools/sample-cli.c
 $(BUILD_DIR)/obj/testing/tools/test-runner.o: \
 	$(ROOT_DIR)/src/util/array.h \
 	$(ROOT_DIR)/src/util/error.h \

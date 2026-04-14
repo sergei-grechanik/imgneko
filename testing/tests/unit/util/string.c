@@ -321,6 +321,72 @@ cleanup:
     return status;
 }
 
+// In-place helpers should keep the special empty-string representation stable
+// and accept no-op arguments without allocating or changing contents.
+static int test_special_empty_in_place_ops(TestContext *ctx) {
+    const char *name = ctx->test_name;
+    String cleared = str_empty;
+    String dropped_back = str_empty;
+    String dropped_front = str_empty;
+    String taken_back = str_empty;
+    String taken_front = str_empty;
+    String sliced = str_empty;
+    String no_op_drop_front = str_from_cstr("abc");
+    String full_slice = str_from_cstr("abc");
+    int status = 0;
+
+    str_clear(cleared);
+    status = expect_empty_string(name, cleared, false);
+    if (status != 0)
+        goto cleanup;
+
+    str_drop_back(dropped_back, 0);
+    status = expect_empty_string(name, dropped_back, false);
+    if (status != 0)
+        goto cleanup;
+
+    str_drop_front(dropped_front, 0);
+    status = expect_empty_string(name, dropped_front, false);
+    if (status != 0)
+        goto cleanup;
+
+    str_take_back(taken_back, 0);
+    status = expect_empty_string(name, taken_back, false);
+    if (status != 0)
+        goto cleanup;
+
+    str_take_front(taken_front, 0);
+    status = expect_empty_string(name, taken_front, false);
+    if (status != 0)
+        goto cleanup;
+
+    str_slice(sliced, 0, 0);
+    status = expect_empty_string(name, sliced, false);
+    if (status != 0)
+        goto cleanup;
+
+    str_drop_front(no_op_drop_front, 0);
+    status = expect_string_eq(name, no_op_drop_front.cstr, no_op_drop_front.len,
+                              STR("abc"));
+    if (status != 0)
+        goto cleanup;
+
+    str_slice(full_slice, 0, full_slice.len);
+    status =
+        expect_string_eq(name, full_slice.cstr, full_slice.len, STR("abc"));
+
+cleanup:
+    str_free(full_slice);
+    str_free(no_op_drop_front);
+    str_free(sliced);
+    str_free(taken_front);
+    str_free(taken_back);
+    str_free(dropped_front);
+    str_free(dropped_back);
+    str_free(cleared);
+    return status;
+}
+
 static int test_truncate_and_push(TestContext *ctx) {
     const char *name = ctx->test_name;
     String string = str_from_cstr("abcde");
@@ -520,6 +586,22 @@ cleanup:
     return status;
 }
 
+static int test_append_c_quoted_data(TestContext *ctx) {
+    const char *name = ctx->test_name;
+    const char input[] = {'a',  '\a', '\b', '\f', '\r',       '\t',
+                          '\v', '"',  '\\', '\n', (char)0x01, (char)0x80};
+    String quoted = str_from_cstr("prefix ");
+    int status = 0;
+
+    str_append_c_quoted_data(&quoted, input, sizeof(input));
+    status = expect_string_eq(
+        name, quoted.cstr, quoted.len,
+        STR("prefix \"a\\a\\b\\f\\r\\t\\v\\\"\\\\\\n\\x01\\x80\""));
+
+    str_free(quoted);
+    return status;
+}
+
 static int test_trim_trailing_chars(TestContext *ctx) {
     const char *name = ctx->test_name;
     char cstr_line[] = "alpha\r\n";
@@ -571,11 +653,13 @@ int main(int argc, char **argv) {
         PREFIXED_TEST(test_make_empty_string_array),
         PREFIXED_TEST(test_copy_empty_string_array),
         PREFIXED_TEST(test_in_place_slice_ops),
+        PREFIXED_TEST(test_special_empty_in_place_ops),
         PREFIXED_TEST(test_truncate_and_push),
         PREFIXED_TEST(test_append_and_insert),
         PREFIXED_TEST(test_predicates),
         PREFIXED_TEST(test_escape_bytes),
         PREFIXED_TEST(test_append_shell_quoted_word),
+        PREFIXED_TEST(test_append_c_quoted_data),
         PREFIXED_TEST(test_trim_trailing_chars),
     };
 

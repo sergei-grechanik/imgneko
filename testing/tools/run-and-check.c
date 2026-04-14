@@ -187,7 +187,7 @@ static size_t regex_capture_group_count(const char *regex_text) {
     return groups;
 }
 
-// Return one user-facing name for the directive kind.
+// Return the user-facing name for the directive kind.
 static const char *directive_kind_name(DirectiveKind kind) {
     switch (kind) { // IMGNEKO_UNCOVERED_OK
     case DIRECTIVE_CHECK:
@@ -309,7 +309,7 @@ static void check_directive_free(CheckDirective *directive) {
     pattern_segment_array_free(&directive->segments);
 }
 
-// Append one parsed pattern segment to the directive currently being built.
+// Append a parsed pattern segment to the directive currently being built.
 static void append_pattern_segment(PatternSegmentArray *segments,
                                    PatternSegmentKind kind, const char *name,
                                    const char *text, size_t text_len) {
@@ -327,7 +327,7 @@ static void append_pattern_segment(PatternSegmentArray *segments,
     arr_push(*segments, segment);
 }
 
-// Parse one `CHECK` pattern into a sequence of literal, regex, and variable
+// Parse a `CHECK` pattern into a sequence of literal, regex, and variable
 // fragments.
 static bool parse_pattern_segments(const char *path, int line_number,
                                    const char *pattern_text,
@@ -595,7 +595,7 @@ static String resolve_test_output_dir(void) {
     return output_dir;
 }
 
-// Build one regex from a parsed directive using the currently visible variable
+// Build a regex from a parsed directive using the currently visible variable
 // values and compile it for matching.
 static bool compile_pattern(const char *path, const CheckDirective *directive,
                             const VariableContext *variables,
@@ -872,7 +872,7 @@ static bool output_region_is_empty(const OutputLineArray *lines,
     return end.column == 0;
 }
 
-// Print one output line after escaping non-printable bytes so diagnostics stay
+// Print an output line after escaping non-printable bytes so diagnostics stay
 // readable and unambiguous even for binary output.
 static void print_escaped_line(FILE *stream, const char *text, size_t len) {
     String escaped = str_from_escaped_bytes(text, len);

@@ -21,6 +21,10 @@ purpose and behavior.
 Tests should also be commented, explaining what we are testing (and maybe why)
 and what the expected behavior is.
 
+Your comments should be clear and grammatically correct. Avoid using the word
+"one" instead of an article "the/a/an", i.e. instead of "print one error
+message" prefer "print an error message".
+
 ## C Style And Coding Recommendations
 
 - Use `CamelCase` for type names.
@@ -64,7 +68,7 @@ For owned dynamically allocated strings, use the `String` type from
 ## Addressing review comments
 
 If the user asks you to address review comments, search for the comments
-containing `REVIEW:` or `FIXME:` in the files you are working on.
+containing the `REVIEW:` marker in the files you are working on.
 
 ## Don't assume the code changes for no reason
 

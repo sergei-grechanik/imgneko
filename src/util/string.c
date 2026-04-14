@@ -102,6 +102,81 @@ void str_append_shell_quoted_word(String *out, const char *text) {
     str_push(*out, '\'');
 }
 
+void str_append_c_quoted_data(String *out, const char *data, size_t len) {
+    static char const hex_digits[] = "0123456789abcdef";
+
+    str_push(*out, '"');
+    for (size_t i = 0; i < len; ++i) {
+        unsigned char byte = (unsigned char)data[i];
+        char escaped[4];
+        size_t escaped_len = 0;
+
+        switch (byte) {
+        case '"':
+            escaped[0] = '\\';
+            escaped[1] = '"';
+            escaped_len = 2;
+            break;
+        case '\\':
+            escaped[0] = '\\';
+            escaped[1] = '\\';
+            escaped_len = 2;
+            break;
+        case '\a':
+            escaped[0] = '\\';
+            escaped[1] = 'a';
+            escaped_len = 2;
+            break;
+        case '\b':
+            escaped[0] = '\\';
+            escaped[1] = 'b';
+            escaped_len = 2;
+            break;
+        case '\f':
+            escaped[0] = '\\';
+            escaped[1] = 'f';
+            escaped_len = 2;
+            break;
+        case '\n':
+            escaped[0] = '\\';
+            escaped[1] = 'n';
+            escaped_len = 2;
+            break;
+        case '\r':
+            escaped[0] = '\\';
+            escaped[1] = 'r';
+            escaped_len = 2;
+            break;
+        case '\t':
+            escaped[0] = '\\';
+            escaped[1] = 't';
+            escaped_len = 2;
+            break;
+        case '\v':
+            escaped[0] = '\\';
+            escaped[1] = 'v';
+            escaped_len = 2;
+            break;
+        default:
+            if (0x20 <= byte && byte <= 0x7e) {
+                escaped[0] = (char)byte;
+                escaped_len = 1;
+                break;
+            }
+
+            escaped[0] = '\\';
+            escaped[1] = 'x';
+            escaped[2] = hex_digits[byte >> 4];
+            escaped[3] = hex_digits[byte & 0x0f];
+            escaped_len = 4;
+            break;
+        }
+
+        str_append_data(*out, escaped, escaped_len);
+    }
+    str_push(*out, '"');
+}
+
 void str_array_free(StringArray *strings) {
     for (size_t i = 0; i < strings->size; ++i)
         str_free(strings->data[i]);

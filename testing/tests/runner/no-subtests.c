@@ -5,7 +5,7 @@
 // runner falls back to invoking the binary with `--all`.
 static int list_subtests(void) { return 0; }
 
-// Run the one implicit test body used for the `--all` fallback.
+// Run the implicit test body used for the `--all` fallback.
 static int run_all(void) {
     puts("no-subtests ran");
     return 0;

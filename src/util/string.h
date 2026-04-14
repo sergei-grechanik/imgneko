@@ -205,7 +205,7 @@ ARRLIB_INLINE String copy_str(String str) {
     do {                                                                       \
         size_t str__n = (n);                                                   \
         assert(str__n <= (str).len);                                           \
-        if (str__n != 0 && (str).capacity != 0)                                \
+        if ((str).capacity != 0 && str__n != 0)                                \
             memmove((str).cstr, (str).cstr + str__n, (str).len - str__n + 1);  \
         (str).len -= str__n;                                                   \
     } while (0)
@@ -215,7 +215,7 @@ ARRLIB_INLINE String copy_str(String str) {
     do {                                                                       \
         size_t str__n = (n);                                                   \
         assert(str__n <= (str).len);                                           \
-        if (str__n != 0 && (str).capacity != 0)                                \
+        if ((str).capacity != 0 && str__n != 0)                                \
             memmove((str).cstr, (str).cstr + (str).len - str__n, str__n);      \
         (str).len = str__n;                                                    \
         if ((str).capacity != 0)                                               \
@@ -338,6 +338,16 @@ void str_trim_trailing_chars(String *text, const char *trim_chars);
 // Append one single-quoted shell word so a POSIX shell parses the original
 // bytes literally. The existing contents of `out` are preserved.
 void str_append_shell_quoted_word(String *out, const char *text);
+
+// Append one double-quoted C-style string literal fragment that preserves the
+// original bytes using common escapes where possible.
+void str_append_c_quoted_data(String *out, const char *data, size_t len);
+
+// Append one null-terminated C string as a double-quoted C-style literal
+// fragment.
+ARRLIB_INLINE void str_append_c_quoted_cstr(String *out, const char *text) {
+    str_append_c_quoted_data(out, text, strlen(text));
+}
 
 DEFINE_ARRAY_TYPE(StringArray, String)
 

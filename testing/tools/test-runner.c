@@ -1697,7 +1697,7 @@ static void discover_test_cases(const TestFileArray *files,
     qsort(cases->data, cases->size, sizeof(cases->data[0]), compare_test_cases);
 }
 
-// Print one discovered test id, appending its marker when present.
+// Print a discovered test id, appending its marker when present.
 static void print_listed_test(const TestCase *test_case) {
     const char *marker_name = test_marker_name(test_case->marker);
 
@@ -1718,7 +1718,7 @@ static void print_named_test_list(const char *heading,
         printf("  %s\n", tests->data[i].cstr);
 }
 
-// Print one non-zero summary counter.
+// Print a non-zero summary counter.
 static void print_summary_count(const char *label, size_t count) {
     if (count != 0)
         printf("  %s: %zu\n", label, count);
@@ -1942,7 +1942,7 @@ static void open_timing_file(TestRunnerState *state, const char *output_dir) {
             "failed to open the timing file: %errno");
 }
 
-// Append one finalized test result to the timing file in
+// Append a finalized test result to the timing file in
 // `time outcome test_name` order.
 static void append_timing_file_record(const TestRunnerState *state,
                                       const TestCase *test_case,
@@ -1988,7 +1988,7 @@ static void record_test_result(TestRunnerState *state,
                                   output_passthrough);
 }
 
-// Release one completed running test and remove it from the dense running-test
+// Release a completed running test and remove it from the dense running-test
 // array while preserving the order of the remaining entries.
 static void remove_running_test_at(RunningTestArray *running_tests,
                                    size_t index) {

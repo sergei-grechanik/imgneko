@@ -97,6 +97,36 @@ def read_source_lines(root_dir: str, relpath: str) -> List[str]:
         return stream.read().splitlines()
 
 
+def load_cached_source_lines(root_dir: str,
+                             relpath: str,
+                             source_cache: Dict[str, List[str]],
+                             suppressed_lines_by_path: Dict[str, Set[int]]
+                             ) -> Optional[List[str]]:
+    """Return cached source lines for one project file.
+
+    root_dir is the repository root used to resolve relpath on disk. relpath is
+    the repo-relative path to load, such as `src/util/options.c`. source_cache
+    memoizes previously read files so callers can reuse the same source text
+    across line, branch, and function passes. suppressed_lines_by_path stores
+    the precomputed `IMGNEKO_UNCOVERED_OK` suppression map for each cached file.
+
+    Returns the file's physical lines, without trailing newlines, or None when
+    the file cannot be read.
+    """
+    source_lines = source_cache.get(relpath)
+    if source_lines is not None:
+        return source_lines
+
+    try:
+        source_lines = read_source_lines(root_dir, relpath)
+    except OSError:
+        return None
+
+    source_cache[relpath] = source_lines
+    suppressed_lines_by_path[relpath] = suppressed_source_lines(source_lines)
+    return source_lines
+
+
 def source_line_text(source_lines: Sequence[str], lineno: int) -> str:
     """Normalize a single source line for compact quickfix output."""
     if lineno < 1 or lineno > len(source_lines):
@@ -144,12 +174,38 @@ def uncovered_entry_sort_key(entry: str) -> Tuple[str, int, int, str]:
 
 def function_rel_project_path(root_dir: str,
                               function: Dict[str, Any]) -> Optional[str]:
-    """Return the first project file associated with a function record."""
+    """Return the first project file referenced by one LLVM function record.
+
+    root_dir is the repository root used to filter out system and generated
+    files. function is one entry from `llvm-cov export`'s top-level `functions`
+    list and may name multiple files when inline headers participate in the
+    function body.
+
+    Returns the first repo-relative path under `src/` or `testing/`, or None
+    when the function record only references non-project files.
+    """
     for filename in function.get("filenames", []):
         relpath = rel_project_path(root_dir, filename)
         if relpath is not None:
             return relpath
     return None
+
+
+def indexed_rel_project_path(root_dir: str,
+                             filenames: Sequence[str],
+                             index: int) -> Optional[str]:
+    """Resolve one LLVM filename-table index to a repo-relative project path.
+
+    root_dir is the repository root used by rel_project_path(). filenames is
+    the `function["filenames"]` table from one LLVM function record, and index
+    is the zero-based filename id stored inside a branch tuple.
+
+    Returns the matching repo-relative path under `src/` or `testing/`, or None
+    when index is out of range or the referenced file is outside the project.
+    """
+    if index < 0 or index >= len(filenames):
+        return None
+    return rel_project_path(root_dir, filenames[index])
 
 
 def function_display_name(function_name: str) -> str:
@@ -332,12 +388,11 @@ def add_uncovered_lines(
 
 def collect_function_branches(
     branch_totals: Dict[BranchKey, Dict[str, Any]],
-    relpath: str,
-    display_name: str,
-    source_lines: Sequence[str],
-    branches: Sequence[Sequence[Any]],
+    root_dir: str,
+    function: Dict[str, Any],
+    source_cache: Dict[str, List[str]],
+    suppressed_lines_by_path: Dict[str, Set[int]],
     ignore_rules: Sequence[IgnoreRule],
-    suppressed_lines: Set[int],
 ) -> None:
     """Accumulate branch counts for one source branch site across functions.
 
@@ -346,15 +401,45 @@ def collect_function_branches(
     Aggregate those records by `(path, line, column, source_text)` so quickfix
     shows one branch site, not one line per translation unit. A branch is only
     uncovered if the merged counts still miss one side.
-    """
-    if is_ignored_file(ignore_rules, relpath):
-        return
 
-    for branch in branches:
+    branch_totals is the mutable accumulator keyed by the final quickfix source
+    location. root_dir is used to resolve per-branch filename ids back to
+    project-relative paths. function is one raw LLVM function record whose
+    `branches` array is being merged. source_cache and
+    suppressed_lines_by_path are shared caches populated on demand for whatever
+    file each branch record actually points at. ignore_rules suppress whole-file
+    findings from coverage-ignore.
+
+    The function mutates branch_totals in place and returns None.
+    """
+    filenames = function.get("filenames", [])
+
+    for branch in function.get("branches", []):
         if len(branch) < 6:
             continue
+
+        # LLVM branch tuples carry the source file index for the branch site.
+        # Respect it so inline macro/header branches are reported at the header
+        # definition instead of the instantiating .c file.
+        if len(branch) >= 7:
+            relpath = indexed_rel_project_path(root_dir, filenames, int(branch[6]))
+            if relpath is None:
+                continue
+        else:
+            relpath = function_rel_project_path(root_dir, function)
+            if relpath is None:
+                continue
+
+        if is_ignored_file(ignore_rules, relpath):
+            continue
+
+        source_lines = load_cached_source_lines(root_dir, relpath, source_cache,
+                                                suppressed_lines_by_path)
+        if source_lines is None:
+            continue
+
         lineno = int(branch[0])
-        if lineno in suppressed_lines:
+        if lineno in suppressed_lines_by_path.get(relpath, set()):
             continue
         column = int(branch[1])
         end_line = int(branch[2]) if len(branch) >= 4 else lineno
@@ -486,13 +571,11 @@ def main() -> int:
         if relpath is None:
             continue
 
-        try:
-            source_lines = read_source_lines(root_dir, relpath)
-        except OSError:
+        source_lines = load_cached_source_lines(root_dir, relpath, source_cache,
+                                                suppressed_lines_by_path)
+        if source_lines is None:
             continue
 
-        source_cache[relpath] = source_lines
-        suppressed_lines_by_path[relpath] = suppressed_source_lines(source_lines)
         summary_rows.append((relpath, file_data["summary"]))
         add_uncovered_lines(
             uncovered_entries,
@@ -507,22 +590,16 @@ def main() -> int:
         relpath = function_rel_project_path(root_dir, function)
         if relpath is None:
             continue
-        source_lines = source_cache.get(relpath)
-        if source_lines is None:
-            try:
-                source_lines = read_source_lines(root_dir, relpath)
-            except OSError:
-                continue
-            source_cache[relpath] = source_lines
-            suppressed_lines_by_path[relpath] = suppressed_source_lines(source_lines)
+        if load_cached_source_lines(root_dir, relpath, source_cache,
+                                    suppressed_lines_by_path) is None:
+            continue
         collect_function_branches(
             branch_totals,
-            relpath,
-            function_display_name(function.get("name", "<unknown>")),
-            source_lines,
-            function.get("branches", []),
+            root_dir,
+            function,
+            source_cache,
+            suppressed_lines_by_path,
             ignore_rules,
-            suppressed_lines_by_path[relpath],
         )
 
     add_merged_branches(uncovered_entries, branch_totals)

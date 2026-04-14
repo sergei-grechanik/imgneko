@@ -44,6 +44,15 @@ COVERAGE_PROFILE_DIR := $(COVERAGE_DIR)/profiles
 BIN_IMGNEKO     := $(BIN_DIR)/imgneko
 BIN_TEST_RUNNER := $(BIN_DIR)/test-runner
 BIN_RUN_AND_CHECK := $(BIN_DIR)/run-and-check
+TEST_TOOL_NAMES := \
+	sample-cli \
+	sample-cli-default-no-top-level \
+	sample-cli-nocmd \
+	sample-cli-no-default \
+	sample-cli-top-level-no-default \
+	sample-cli-top-level-positional \
+	run-in-pty
+TEST_TOOL_BINS := $(addprefix $(BIN_DIR)/,$(TEST_TOOL_NAMES))
 BUILD_INFO_H    := $(GEN_DIR)/build_info.h
 
 # Additional targets.
@@ -70,6 +79,7 @@ APP_SOURCES := src/main.c
 UTIL_SOURCES := $(shell if [ -d "$(ROOT_DIR)/src/util" ]; then cd "$(ROOT_DIR)" && find src/util -type f -name '*.c' -print | LC_ALL=C sort; fi)
 TEST_RUNNER_SOURCE := testing/tools/test-runner.c
 RUN_AND_CHECK_SOURCE := testing/tools/run-and-check.c
+TEST_TOOL_SOURCES := $(addprefix testing/tools/,$(addsuffix .c,$(TEST_TOOL_NAMES)))
 TEST_SUPPORT_SOURCES := $(shell if [ -d "$(ROOT_DIR)/testing/support" ]; then cd "$(ROOT_DIR)" && find testing/support -type f -name '*.c' -print | LC_ALL=C sort; fi)
 TEST_SOURCES := $(shell if [ -d "$(ROOT_DIR)/testing/tests" ]; then cd "$(ROOT_DIR)" && find testing/tests -type f -print | LC_ALL=C sort; fi)
 TEST_C_SOURCES := $(shell if [ -d "$(ROOT_DIR)/testing/tests" ]; then cd "$(ROOT_DIR)" && find testing/tests -type f -name '*.c' -print | LC_ALL=C sort; fi)
@@ -81,12 +91,14 @@ UTIL_OBJECTS := $(addprefix $(OBJ_DIR)/,$(UTIL_SOURCES:.c=.o))
 OBJECTS := $(APP_OBJECTS) $(UTIL_OBJECTS)
 TEST_RUNNER_OBJECT := $(OBJ_DIR)/$(TEST_RUNNER_SOURCE:.c=.o)
 RUN_AND_CHECK_OBJECT := $(OBJ_DIR)/$(RUN_AND_CHECK_SOURCE:.c=.o)
+TEST_TOOL_OBJECTS := $(addprefix $(OBJ_DIR)/,$(TEST_TOOL_SOURCES:.c=.o))
 TEST_SUPPORT_OBJECTS := $(addprefix $(OBJ_DIR)/,$(TEST_SUPPORT_SOURCES:.c=.o))
-TEST_TOOLS := $(BIN_TEST_RUNNER) $(BIN_RUN_AND_CHECK)
+TEST_TOOLS := $(BIN_TEST_RUNNER) $(BIN_RUN_AND_CHECK) $(TEST_TOOL_BINS)
 TEST_C_BINS := $(patsubst testing/tests/%.c,$(TEST_BIN_DIR)/%.c.bin,$(TEST_C_SOURCES))
 ALL_OBJECTS_AND_BINS := \
-	$(OBJECTS) $(TEST_RUNNER_OBJECT) $(RUN_AND_CHECK_OBJECT) \
-	$(TEST_SUPPORT_OBJECTS) $(TEST_C_BINS)
+		$(OBJECTS) $(TEST_RUNNER_OBJECT) $(RUN_AND_CHECK_OBJECT) \
+		$(TEST_TOOL_OBJECTS) \
+		$(TEST_SUPPORT_OBJECTS) $(TEST_C_BINS)
 
 ###############################################################################
 # Fixed project metadata
@@ -267,6 +279,14 @@ $(BIN_RUN_AND_CHECK): $(RUN_AND_CHECK_OBJECT) $(UTIL_OBJECTS) $(CONFIG_MK) $(BUI
 	@mkdir -p "$(dir $@)"
 	$(CC) $(COMMON_LINK_FLAGS) -o "$@" $(RUN_AND_CHECK_OBJECT) $(UTIL_OBJECTS) $(LDLIBS)
 
+# Link each helper listed in TEST_TOOL_NAMES against the shared utility
+# objects. This is a static pattern rule: make expands the explicit target list
+# in TEST_TOOL_BINS, then uses the `$(BIN_DIR)/%` pattern to derive the matching
+# tool object file path for each binary target.
+$(TEST_TOOL_BINS): $(BIN_DIR)/%: $(OBJ_DIR)/testing/tools/%.o $(UTIL_OBJECTS) $(CONFIG_MK) $(BUILD_INFO_H) | check-config-date
+	@mkdir -p "$(dir $@)"
+	$(CC) $(COMMON_LINK_FLAGS) -o "$@" "$<" $(UTIL_OBJECTS) $(LDLIBS)
+
 # Generate a header used by `--version` to print all build information.
 $(BUILD_INFO_H): $(CONFIG_MK) $(VERSION_FILE) | check-config-date
 	@mkdir -p "$(GEN_DIR)"
@@ -372,7 +392,7 @@ coverage-report: check-config-date
 	@"$(ROOT_DIR)/tools/build-coverage-report.sh" \
 		"$(ROOT_DIR)" "$(BUILD_DIR)" "$(COVERAGE_DIR)" \
 		"$(LLVM_PROFDATA)" "$(LLVM_COV)" \
-		"$(BIN_IMGNEKO)" "$(BIN_TEST_RUNNER)" "$(BIN_RUN_AND_CHECK)" $(TEST_C_BINS)
+		"$(BIN_IMGNEKO)" $(TEST_TOOLS) $(TEST_C_BINS)
 	@printf '%s\n' "Wrote $(call display_path,$(COVERAGE_SUMMARY))"
 	@printf '%s\n' "Wrote $(call display_path,$(COVERAGE_UNCOVERED))"
 endif
