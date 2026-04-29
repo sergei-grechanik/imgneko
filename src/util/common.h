@@ -12,4 +12,8 @@
 // Return the number of elements in a fixed-size C array.
 #define ARRAY_SIZE(arr) (sizeof(arr) / sizeof((arr)[0]))
 
+// Expand one macro argument and stringify the final token sequence.
+#define UTIL_STRINGIFY_IMPL(value) #value
+#define UTIL_STRINGIFY(value) UTIL_STRINGIFY_IMPL(value)
+
 #endif

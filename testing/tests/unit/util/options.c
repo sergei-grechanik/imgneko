@@ -1,5 +1,6 @@
 #define _POSIX_C_SOURCE 200809L
 
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -480,13 +481,17 @@ static int test_low_level_parse_helpers(TestContext *ctx) {
     String string_value = str_from_cstr("existing");
     StringArray string_list = arr_empty;
     bool bool_value = false;
+    double double_value = 0.0;
     int int_value = 0;
+    char huge_double[] = "1e5000";
     char huge_int[63];
+    char too_long_double[80];
     char too_long_int[80];
     int status = 0;
 
     memset(huge_int, '9', sizeof(huge_int) - 1);
     huge_int[sizeof(huge_int) - 1] = '\0';
+    memset(too_long_double, '7', sizeof(too_long_double));
     memset(too_long_int, '7', sizeof(too_long_int));
 
     if (strcmp(opt_provenance_name(OPT_PROVENANCE_NONE), "none") != 0)
@@ -525,6 +530,45 @@ static int test_low_level_parse_helpers(TestContext *ctx) {
         status = fail_message(name, "underflowing integer unexpectedly parsed");
         goto cleanup;
     }
+    if (opt_parse_double_span(NULL, 1, &double_value)) {
+        status = fail_message(name, "NULL double input unexpectedly parsed");
+        goto cleanup;
+    }
+    if (opt_parse_double_span("", 0, &double_value)) {
+        status = fail_message(name, "empty double input unexpectedly parsed");
+        goto cleanup;
+    }
+    if (opt_parse_double_span(too_long_double, sizeof(too_long_double),
+                              &double_value)) {
+        status =
+            fail_message(name, "oversized double input unexpectedly parsed");
+        goto cleanup;
+    }
+    if (opt_parse_double_span(huge_double, strlen(huge_double),
+                              &double_value)) {
+        status = fail_message(name, "ERANGE double input unexpectedly parsed");
+        goto cleanup;
+    }
+    if (!opt_parse_double_span("nan", strlen("nan"), &double_value) ||
+        !isnan(double_value)) {
+        status = fail_message(name, "failed to parse NaN");
+        goto cleanup;
+    }
+    if (!opt_parse_double_span("inf", strlen("inf"), &double_value) ||
+        !isinf(double_value) || signbit(double_value)) {
+        status = fail_message(name, "failed to parse positive infinity");
+        goto cleanup;
+    }
+    if (!opt_parse_double_span("-inf", strlen("-inf"), &double_value) ||
+        !isinf(double_value) || !signbit(double_value)) {
+        status = fail_message(name, "failed to parse negative infinity");
+        goto cleanup;
+    }
+    if (!opt_parse_double_span("1.25", strlen("1.25"), &double_value) ||
+        double_value != 1.25) {
+        status = fail_message(name, "failed to parse finite double");
+        goto cleanup;
+    }
 
     if (!opt_parse_bool_option(&bool_value, "yes", strlen("yes"), &error) ||
         !bool_value) {
@@ -553,6 +597,66 @@ static int test_low_level_parse_helpers(TestContext *ctx) {
     }
     if (opt_parse_positive_int_option(&int_value, "0", strlen("0"), &error)) {
         status = fail_message(name, "non-positive integer unexpectedly parsed");
+        goto cleanup;
+    }
+    if (!opt_parse_double_option(&double_value, "2.5", strlen("2.5"), &error) ||
+        double_value != 2.5) {
+        status = fail_message(name, "failed to parse generic double option");
+        goto cleanup;
+    }
+    if (opt_parse_double_option(&double_value, "bogus", strlen("bogus"),
+                                &error)) {
+        status = fail_message(name, "invalid double unexpectedly parsed");
+        goto cleanup;
+    }
+    if (strcmp(error.cstr, "expected a number") != 0) {
+        status = fail_message(name, "unexpected generic double parse error");
+        goto cleanup;
+    }
+    if (!opt_parse_non_negative_double_option(&double_value, "0", strlen("0"),
+                                              &error) ||
+        double_value != 0.0) {
+        status =
+            fail_message(name, "failed to parse non-negative double option");
+        goto cleanup;
+    }
+    if (opt_parse_non_negative_double_option(&double_value, "-0.5",
+                                             strlen("-0.5"), &error)) {
+        status = fail_message(
+            name, "negative double unexpectedly parsed as non-negative");
+        goto cleanup;
+    }
+    if (opt_parse_non_negative_double_option(&double_value, "inf",
+                                             strlen("inf"), &error)) {
+        status = fail_message(
+            name, "infinite double unexpectedly parsed as non-negative");
+        goto cleanup;
+    }
+    if (opt_parse_non_negative_double_option(&double_value, "nan",
+                                             strlen("nan"), &error)) {
+        status = fail_message(name, "NaN unexpectedly parsed as non-negative");
+        goto cleanup;
+    }
+    if (!opt_parse_probability_option(&double_value, "0.5", strlen("0.5"),
+                                      &error) ||
+        double_value != 0.5) {
+        status = fail_message(name, "failed to parse probability option");
+        goto cleanup;
+    }
+    if (opt_parse_probability_option(&double_value, "1.5", strlen("1.5"),
+                                     &error)) {
+        status =
+            fail_message(name, "out-of-range probability unexpectedly parsed");
+        goto cleanup;
+    }
+    if (opt_parse_probability_option(&double_value, "inf", strlen("inf"),
+                                     &error)) {
+        status = fail_message(name, "infinite probability unexpectedly parsed");
+        goto cleanup;
+    }
+    if (opt_parse_probability_option(&double_value, "nan", strlen("nan"),
+                                     &error)) {
+        status = fail_message(name, "NaN probability unexpectedly parsed");
         goto cleanup;
     }
 

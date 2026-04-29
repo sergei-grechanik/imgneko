@@ -21,9 +21,6 @@
 // is configured up front. This lets tests exercise TTY-sensitive behavior
 // without depending on external tools such as `script` or `stty`.
 
-#define RUN_IN_PTY_STRINGIFY_IMPL(value) #value
-#define RUN_IN_PTY_STRINGIFY(value) RUN_IN_PTY_STRINGIFY_IMPL(value)
-
 // CLI schema for the PTY helper. The child command and its arguments are only
 // accepted after a bare `--`, which keeps option-like child argv entries out
 // of the helper's own option space.
@@ -42,7 +39,7 @@
       OPT_CUSTOM(.parse = opt_parse_positive_int_option,                       \
                  .cli = "--write-chunk-size BYTES",                            \
                  .descr = "Maximum stdout forwarding write size.",             \
-                 .dflt = RUN_IN_PTY_STRINGIFY(PIPE_BUF)))                      \
+                 .dflt = UTIL_STRINGIFY(PIPE_BUF)))                            \
     X(S, command, OptString,                                                   \
       OPT_STRING(.cli = "COMMAND", .descr = "Command to run under the PTY.",   \
                  .positional = true, .double_dash_only = true))                \

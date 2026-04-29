@@ -2,6 +2,7 @@
 
 #include <errno.h>
 #include <limits.h>
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -1057,12 +1058,35 @@ bool opt_parse_int_span(const char *text, size_t text_len, int *out) {
 
     errno = 0;
     parsed = strtol(parsed_text, &end, 10);
-    if (errno != 0 || end == NULL || *end != '\0') // IMGNEKO_UNCOVERED_OK
+    if (errno != 0 || *end != '\0')
         return false;
     if (parsed < INT_MIN || parsed > INT_MAX)
         return false;
 
     *out = (int)parsed;
+    return true;
+}
+
+// Parse a strict floating-point value from raw text into out.
+bool opt_parse_double_span(const char *text, size_t text_len, double *out) {
+    char parsed_text[64];
+    char *end = NULL;
+    double parsed = 0.0;
+
+    if (text == NULL || text_len == 0)
+        return false;
+    if (text_len >= sizeof(parsed_text))
+        return false;
+
+    memcpy(parsed_text, text, text_len);
+    parsed_text[text_len] = '\0';
+
+    errno = 0;
+    parsed = strtod(parsed_text, &end);
+    if (errno != 0 || *end != '\0')
+        return false;
+
+    *out = parsed;
     return true;
 }
 
@@ -1095,6 +1119,14 @@ bool opt_parse_bool_option(void *value_ptr, const char *text, size_t text_len,
     return true;
 }
 
+// Parse a floating-point value from a textual number.
+bool opt_parse_double_option(void *value, const char *text, size_t text_len,
+                             String *error_out) {
+    if (!opt_parse_double_span(text, text_len, value))
+        return opt_parse_error(error_out, "expected a number");
+    return true;
+}
+
 // Parse an int value from a textual decimal integer.
 bool opt_parse_int_option(void *value, const char *text, size_t text_len,
                           String *error_out) {
@@ -1112,6 +1144,35 @@ bool opt_parse_positive_int_option(void *value, const char *text,
         return opt_parse_error(error_out, "expected a base-10 integer");
     if (*int_value <= 0)
         return opt_parse_error(error_out, "must be positive");
+    return true;
+}
+
+// Parse a finite non-negative floating-point value from a textual number.
+bool opt_parse_non_negative_double_option(void *value, const char *text,
+                                          size_t text_len, String *error_out) {
+    double *double_value = value;
+
+    if (!opt_parse_double_span(text, text_len, double_value))
+        return opt_parse_error(error_out, "expected a number");
+    if (!isfinite(*double_value))
+        return opt_parse_error(error_out, "must be finite");
+    if (*double_value < 0.0)
+        return opt_parse_error(error_out, "must be non-negative");
+    return true;
+}
+
+// Parse a finite probability in the inclusive range [0, 1].
+bool opt_parse_probability_option(void *value, const char *text,
+                                  size_t text_len, String *error_out) {
+    double *double_value = value;
+
+    if (!opt_parse_double_span(text, text_len, double_value))
+        return opt_parse_error(error_out, "expected a number");
+    if (!isfinite(*double_value))
+        return opt_parse_error(error_out, "must be finite");
+    if (*double_value < 0.0 || *double_value > 1.0) {
+        return opt_parse_error(error_out, "expected a number in the range 0-1");
+    }
     return true;
 }
 

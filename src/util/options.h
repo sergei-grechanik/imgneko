@@ -41,6 +41,7 @@ typedef enum OptBoolMode {
 
 // Option wrapper structs for the most common value types.
 OPT_DEFINE_WRAPPER_STRUCT(OptBool, bool);
+OPT_DEFINE_WRAPPER_STRUCT(OptDouble, double);
 OPT_DEFINE_WRAPPER_STRUCT(OptInt, int);
 OPT_DEFINE_WRAPPER_STRUCT(OptString, String);
 OPT_DEFINE_WRAPPER_STRUCT(OptStringList, StringArray);
@@ -187,6 +188,9 @@ enum {
 // Build built-in int field attrs with the default parser.
 #define OPT_INT(...) OPT_ATTRS(.parse = opt_parse_int_option, __VA_ARGS__)
 
+// Build built-in double field attrs with the default parser.
+#define OPT_DOUBLE(...) OPT_ATTRS(.parse = opt_parse_double_option, __VA_ARGS__)
+
 // Build built-in string field attrs with the default parser and ownership
 // hooks.
 #define OPT_STRING(...)                                                        \
@@ -212,17 +216,33 @@ enum {
 // and junk.
 bool opt_parse_int_span(const char *text, size_t text_len, int *out);
 
+// Parse a strict floating-point value from raw text, rejecting empty input,
+// overflow, and junk.
+bool opt_parse_double_span(const char *text, size_t text_len, double *out);
+
 // Parse a bool value from an explicit or synthesized true/false-like string.
 bool opt_parse_bool_option(void *value, const char *text, size_t text_len,
                            String *error_out);
+
+// Parse a floating-point value from a textual number.
+bool opt_parse_double_option(void *value, const char *text, size_t text_len,
+                             String *error_out);
 
 // Parse an int value from a textual decimal integer.
 bool opt_parse_int_option(void *value, const char *text, size_t text_len,
                           String *error_out);
 
+// Parse a finite non-negative floating-point value from a textual number.
+bool opt_parse_non_negative_double_option(void *value, const char *text,
+                                          size_t text_len, String *error_out);
+
 // Parse a positive int value from a textual decimal integer.
 bool opt_parse_positive_int_option(void *value, const char *text,
                                    size_t text_len, String *error_out);
+
+// Parse a finite probability in the inclusive range [0, 1].
+bool opt_parse_probability_option(void *value, const char *text,
+                                  size_t text_len, String *error_out);
 
 // Parse a string value from raw text, replacing any previous owned string.
 bool opt_parse_string_option(void *value, const char *text, size_t text_len,

@@ -157,8 +157,10 @@ $(BUILD_DIR)/obj/testing/tools/sample-cli.o: \
 	$(ROOT_DIR)/testing/tools/sample-cli.c
 $(BUILD_DIR)/obj/testing/tools/test-runner.o: \
 	$(ROOT_DIR)/src/util/array.h \
+	$(ROOT_DIR)/src/util/common.h \
 	$(ROOT_DIR)/src/util/error.h \
 	$(ROOT_DIR)/src/util/file.h \
+	$(ROOT_DIR)/src/util/options.h \
 	$(ROOT_DIR)/src/util/path.h \
 	$(ROOT_DIR)/src/util/string.h \
 	$(ROOT_DIR)/src/util/time.h \

@@ -22,6 +22,7 @@
 #include "util/array.h"
 #include "util/error.h"
 #include "util/file.h"
+#include "util/options.h"
 #include "util/path.h"
 #include "util/string.h"
 #include "util/time.h"
@@ -129,7 +130,6 @@ typedef struct TestRunConfig {
 
 // Parsed command-line options plus their derived filter/path state.
 typedef struct CliOptions {
-    StringArray raw_filters;
     StringArray filters;
     bool list_only;
     bool run_all;
@@ -260,14 +260,8 @@ static const char *const root_dir = TEST_RUNNER_ROOT_DIR;
 // /path/to/imgneko/build/default).
 static const char *const build_dir = TEST_RUNNER_BUILD_DIR;
 
-// Repository-relative directory containing runnable tests.
-static const char *const tests_root_rel = "testing/tests";
-// Default directory under the build tree for per-test captured output.
-static const char *const default_test_output_dir_rel = "test-outputs";
 // Root-level file inside the output directory that records per-test timings.
 static const char *const timing_file_name = "test-times.txt";
-// Default per-test timeout in seconds.
-static const double default_test_timeout_seconds = 180.0;
 // After a timeout sends SIGTERM, wait briefly before escalating to SIGKILL.
 static const double timeout_sigkill_grace_seconds = 0.1;
 // After killing a timed-out test, keep draining buffered output only briefly so
@@ -630,33 +624,6 @@ static void discover_test_files(const char *tests_root_abs,
     qsort(files->data, files->size, sizeof(files->data[0]), compare_test_files);
 }
 
-// Compute the default absolute directory that stores per-test output
-// directories. The caller owns the returned string and must free it with
-// str_free.
-static String default_test_output_dir(void) {
-    String build_dir_abs = absolute_build_dir();
-    String output_dir =
-        path_join(build_dir_abs.cstr, default_test_output_dir_rel);
-
-    path_trim_trailing_slashes(&output_dir);
-    str_free(build_dir_abs);
-    return output_dir;
-}
-
-// Compute the default absolute directory that stores discovered tests. The
-// caller owns the returned string and must free it with str_free.
-static String default_tests_dir(void) {
-    return path_join(root_dir, tests_root_rel);
-}
-
-// Compute the default absolute directory that stores compiled C test binaries.
-// The caller owns the returned string and must free it with str_free.
-static String default_test_bin_dir(void) {
-    String test_bin_dir = absolute_build_dir();
-    path_append(&test_bin_dir, "obj/test-bin");
-    return test_bin_dir;
-}
-
 // Require the selected output root to be absent or empty so a new run never
 // mixes fresh results with leftover files from an earlier invocation.
 static void require_empty_output_dir(const char *output_dir) {
@@ -746,51 +713,71 @@ static void validate_output_dir(const char *output_dir) {
     str_free(build_dir_abs);
 }
 
-// Parse a probability in the inclusive range [0, 1].
-static bool parse_probability(const char *text, double *probability_out) {
-    char *end = NULL;
-    double probability;
+// CLI schema for test-runner. Filters can be supplied either through repeated
+// `--filter` options or as positional patterns.
+#define TEST_RUNNER_CLI_OPTIONS(X, S)                                          \
+    X(S, list_only, OptBool,                                                   \
+      OPT_BOOL_FLAG(.cli = "--list",                                           \
+                    .descr = "List matching tests without running them."))     \
+    X(S, run_all, OptBool,                                                     \
+      OPT_BOOL_FLAG(.cli = "--all",                                            \
+                    .descr = "Run the entire discovered test set."))           \
+    X(S, jobs, OptInt,                                                         \
+      OPT_CUSTOM(.parse = opt_parse_positive_int_option,                       \
+                 .cli = "-j --jobs JOBS",                                      \
+                 .descr = "Run up to JOBS tests concurrently.",                \
+                 .dflt = UTIL_STRINGIFY(TEST_RUNNER_DEFAULT_JOBS)))            \
+    X(S, output_dir, OptString,                                                \
+      OPT_STRING(.cli = "--output-dir DIR",                                    \
+                 .descr = "Write captured test output under DIR.",             \
+                 .dflt = TEST_RUNNER_BUILD_DIR "/test-outputs"))               \
+    X(S, filter_patterns, OptStringList,                                       \
+      OPT_STRING_LIST(.cli = "--filter PATTERN",                               \
+                      .descr = "Match tests with shell-style wildcard "        \
+                               "PATTERN values. Use '|' for alternation."))    \
+    X(S, tests_dir, OptString,                                                 \
+      OPT_STRING(.cli = "--tests-dir DIR",                                     \
+                 .descr = "Discover runnable tests under DIR.",                \
+                 .dflt = TEST_RUNNER_ROOT_DIR "/testing/tests"))               \
+    X(S, test_bin_dir, OptString,                                              \
+      OPT_STRING(.cli = "--test-bin-dir DIR",                                  \
+                 .descr = "Read compiled C test binaries from DIR.",           \
+                 .dflt = TEST_RUNNER_BUILD_DIR "/obj/test-bin"))               \
+    X(S, timeout_seconds, OptDouble,                                           \
+      OPT_CUSTOM(.parse = opt_parse_non_negative_double_option,                \
+                 .cli = "--timeout SECONDS",                                   \
+                 .descr = "Set the per-test timeout in seconds. Use 0 to "     \
+                          "disable timeouts.",                                 \
+                 .dflt = "180.0"))                                             \
+    X(S, output_passthrough, OptBool,                                          \
+      OPT_BOOL_FLAG(.cli = "-p --output-passthrough",                          \
+                    .descr = "Mirror test stdout/stderr live while still "     \
+                             "capturing it."))                                 \
+    X(S, debug_flip_exit_probability, OptDouble,                               \
+      OPT_CUSTOM(.parse = opt_parse_probability_option,                        \
+                 .cli = "--debug-flip-exit-probability P",                     \
+                 .descr = "Flip child exit codes with probability P for "      \
+                          "debugging."))                                       \
+    X(S, debug_parent_setpgid_delay_seconds, OptDouble,                        \
+      OPT_CUSTOM(.parse = opt_parse_non_negative_double_option,                \
+                 .cli = "--debug-parent-setpgid-delay SECONDS",                \
+                 .descr = "Delay the parent-side setpgid() call to exercise "  \
+                          "timeout races."))                                   \
+    X(S, debug_parent_output_chunk_delay_seconds, OptDouble,                   \
+      OPT_CUSTOM(.parse = opt_parse_non_negative_double_option,                \
+                 .cli = "--debug-parent-output-chunk-delay SECONDS",           \
+                 .descr = "Sleep between captured-output chunks to exercise "  \
+                          "drain timing."))                                    \
+    X(S, positional_patterns, OptStringList,                                   \
+      OPT_STRING_LIST(.cli = "PATTERN",                                        \
+                      .descr = "Additional shell-style wildcard patterns.",    \
+                      .positional = true))
 
-    errno = 0;
-    probability = strtod(text, &end);
-    if (errno != 0 || end == text || *end != '\0' || probability < 0.0 ||
-        probability > 1.0) {
-        return false;
-    }
+OPT_DEFINE_STRUCT(TestRunnerCliArgs, TEST_RUNNER_CLI_OPTIONS)
 
-    *probability_out = probability;
-    return true;
-}
-
-// Parse a timeout in seconds. Zero disables the timeout.
-static bool parse_timeout_seconds(const char *text, double *timeout_out) {
-    char *end = NULL;
-    double timeout_seconds;
-
-    errno = 0;
-    timeout_seconds = strtod(text, &end);
-    if (errno != 0 || end == text || *end != '\0' || timeout_seconds < 0.0)
-        return false;
-
-    *timeout_out = timeout_seconds;
-    return true;
-}
-
-// Parse a positive job count.
-static bool parse_positive_int(const char *text, int *value_out) {
-    char *end = NULL;
-    long value;
-
-    errno = 0;
-    value = strtol(text, &end, 10);
-    if (errno != 0 || end == text || *end != '\0' || value <= 0 ||
-        value > INT_MAX) {
-        return false;
-    }
-
-    *value_out = (int)value;
-    return true;
-}
+OPT_DEFINE_PROGRAM_PARSER_NO_COMMANDS(
+    TestRunnerCli, OPT_PROGRAM(.program_name = "test-runner"),
+    TestRunnerCliArgs);
 
 // Build the per-test output directory path under output_root. Executable tests
 // map to `<root>/<test-id>/`; C subtests map to
@@ -2057,47 +2044,12 @@ static void prepare_env_vars(void) {
     str_free(new_path);
 }
 
-// Print CLI usage help.
-static void usage(FILE *stream) {
-    String default_output_dir = default_test_output_dir();
-    String default_test_bin_dir_path = default_test_bin_dir();
-    String tests_dir = default_tests_dir();
-
-    fprintf(stream,
-            "Usage: %s [--list] [--all] [-j JOBS] [--output-dir DIR]\n"
-            "       [--filter PATTERN] [--tests-dir DIR] [--test-bin-dir DIR]\n"
-            "       [--timeout SECONDS] [-p|--output-passthrough]\n"
-            "       [--debug-flip-exit-probability P]\n"
-            "       [--debug-parent-setpgid-delay SECONDS]\n"
-            "       [--debug-parent-output-chunk-delay SECONDS]\n"
-            "       [PATTERN ...]\n"
-            "\n"
-            "Use -p/--output-passthrough to mirror test stdout/stderr live.\n"
-            "Use -j/--jobs to run multiple tests concurrently.\n"
-            "Patterns use shell-style wildcards and may be joined with '|'.\n"
-            "Default tests dir: %s\n"
-            "Default C test bin dir: %s\n"
-            "Default output dir: %s\n"
-            "Default jobs: %d\n"
-            "Default timeout: %.0f seconds\n",
-            "test-runner", tests_dir.cstr, default_test_bin_dir_path.cstr,
-            default_output_dir.cstr, TEST_RUNNER_DEFAULT_JOBS,
-            default_test_timeout_seconds);
-
-    str_free(tests_dir);
-    str_free(default_test_bin_dir_path);
-    str_free(default_output_dir);
-}
-
 static void cli_options_init(CliOptions *options) {
     *options = (CliOptions){
-        .raw_filters = arr_empty,
         .filters = arr_empty,
-        .jobs = TEST_RUNNER_DEFAULT_JOBS,
         .tests_dir = str_empty,
         .output_dir = str_empty,
         .test_bin_dir = str_empty,
-        .timeout_seconds = default_test_timeout_seconds,
     };
 }
 
@@ -2106,7 +2058,6 @@ static void cli_options_deinit(CliOptions *options) {
     str_free(options->output_dir);
     str_free(options->tests_dir);
     str_array_free(&options->filters);
-    str_array_free(&options->raw_filters);
 }
 
 static void test_runner_state_init(TestRunnerState *state) {
@@ -2148,291 +2099,80 @@ static void test_runner_state_deinit(TestRunnerState *state) {
     test_file_array_free(&state->files);
 }
 
+// Resolve one parsed path option against the caller's current working
+// directory.
+static void resolve_cli_path_option(String *out, const char *text,
+                                    const char *error_message) {
+    if (path_resolve_absolute(out, text))
+        return;
+
+    die_errno(error_message);
+}
+
 // Parse argv into CliOptions. Returns false when the caller should exit
 // immediately, with exit_code_out already set and any diagnostics printed.
 static bool parse_cli_args(int argc, char **argv, CliOptions *options,
                            int *exit_code_out) {
-    for (int i = 1; i < argc; ++i) {
-        if (strcmp(argv[i], "--list") == 0) {
-            options->list_only = true;
-            continue;
-        }
-        if (strcmp(argv[i], "--all") == 0) {
-            options->run_all = true;
-            continue;
-        }
-        if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
-            usage(stdout);
-            *exit_code_out = 0;
-            return false;
-        }
-        if (strcmp(argv[i], "-p") == 0 ||
-            strcmp(argv[i], "--output-passthrough") == 0) {
-            options->output_passthrough = true;
-            continue;
-        }
-        if (strcmp(argv[i], "-j") == 0 || strcmp(argv[i], "--jobs") == 0) {
-            if (i + 1 >= argc) {
-                fprintf(stderr, "error: --jobs requires a value\n");
-                usage(stderr);
-                *exit_code_out = 2;
-                return false;
-            }
-            if (!parse_positive_int(argv[++i], &options->jobs)) {
-                fprintf(stderr, "error: invalid jobs value: %s\n", argv[i]);
-                usage(stderr);
-                *exit_code_out = 2;
-                return false;
-            }
-            continue;
-        }
-        if (strncmp(argv[i], "--jobs=", 7) == 0) {
-            if (!parse_positive_int(argv[i] + 7, &options->jobs)) {
-                fprintf(stderr, "error: invalid jobs value: %s\n", argv[i] + 7);
-                usage(stderr);
-                *exit_code_out = 2;
-                return false;
-            }
-            continue;
-        }
-        // IMGNEKO_UNCOVERED_OK: The argv[i][2] == '\0' is handled earlier.
-        if (strncmp(argv[i], "-j", 2) == 0 && argv[i][2] != '\0') {
-            if (!parse_positive_int(argv[i] + 2, &options->jobs)) {
-                fprintf(stderr, "error: invalid jobs value: %s\n", argv[i] + 2);
-                usage(stderr);
-                *exit_code_out = 2;
-                return false;
-            }
-            continue;
-        }
-        if (strcmp(argv[i], "--output-dir") == 0) {
-            if (i + 1 >= argc) {
-                usage(stderr);
-                *exit_code_out = 2;
-                return false;
-            }
-            require(path_resolve_absolute(&options->output_dir, argv[++i]),
-                    "failed to resolve output directory: %errno");
-            continue;
-        }
-        if (strncmp(argv[i], "--output-dir=", 13) == 0) {
-            require(path_resolve_absolute(&options->output_dir, argv[i] + 13),
-                    "failed to resolve output directory: %errno");
-            continue;
-        }
-        if (strcmp(argv[i], "--filter") == 0) {
-            if (i + 1 >= argc) {
-                usage(stderr);
-                *exit_code_out = 2;
-                return false;
-            }
-            string_array_push_copy(&options->raw_filters, argv[++i]);
-            continue;
-        }
-        if (strncmp(argv[i], "--filter=", 9) == 0) {
-            string_array_push_copy(&options->raw_filters, argv[i] + 9);
-            continue;
-        }
-        if (strcmp(argv[i], "--tests-dir") == 0) {
-            if (i + 1 >= argc) {
-                usage(stderr);
-                *exit_code_out = 2;
-                return false;
-            }
-            require(path_resolve_absolute(&options->tests_dir, argv[++i]),
-                    "failed to resolve tests directory: %errno");
-            continue;
-        }
-        if (strncmp(argv[i], "--tests-dir=", 12) == 0) {
-            require(path_resolve_absolute(&options->tests_dir, argv[i] + 12),
-                    "failed to resolve tests directory: %errno");
-            continue;
-        }
-        if (strcmp(argv[i], "--test-bin-dir") == 0) {
-            if (i + 1 >= argc) {
-                usage(stderr);
-                *exit_code_out = 2;
-                return false;
-            }
-            require(path_resolve_absolute(&options->test_bin_dir, argv[++i]),
-                    "failed to resolve test-bin directory: %errno");
-            continue;
-        }
-        if (strncmp(argv[i], "--test-bin-dir=", 15) == 0) {
-            require(path_resolve_absolute(&options->test_bin_dir, argv[i] + 15),
-                    "failed to resolve test-bin directory: %errno");
-            continue;
-        }
-        if (strcmp(argv[i], "--timeout") == 0) {
-            if (i + 1 >= argc) {
-                fprintf(stderr, "error: --timeout requires a value\n");
-                usage(stderr);
-                *exit_code_out = 2;
-                return false;
-            }
-            if (!parse_timeout_seconds(argv[++i], &options->timeout_seconds)) {
-                fprintf(stderr, "error: invalid --timeout value: %s\n",
-                        argv[i]);
-                usage(stderr);
-                *exit_code_out = 2;
-                return false;
-            }
-            continue;
-        }
-        if (strncmp(argv[i], "--timeout=", 10) == 0) {
-            if (!parse_timeout_seconds(argv[i] + 10,
-                                       &options->timeout_seconds)) {
-                fprintf(stderr, "error: invalid --timeout value: %s\n",
-                        argv[i] + 10);
-                usage(stderr);
-                *exit_code_out = 2;
-                return false;
-            }
-            continue;
-        }
-        if (strcmp(argv[i], "--debug-flip-exit-probability") == 0) {
-            if (i + 1 >= argc) {
-                fprintf(
-                    stderr,
-                    "error: --debug-flip-exit-probability requires a value\n");
-                *exit_code_out = 2;
-                return false;
-            }
-            if (!parse_probability(argv[++i],
-                                   &options->debug_flip_exit_probability)) {
-                fprintf(stderr,
-                        "error: invalid --debug-flip-exit-probability value: "
-                        "%s\n",
-                        argv[i]);
-                usage(stderr);
-                *exit_code_out = 2;
-                return false;
-            }
-            continue;
-        }
-        if (strncmp(argv[i], "--debug-flip-exit-probability=", 30) == 0) {
-            if (!parse_probability(argv[i] + 30,
-                                   &options->debug_flip_exit_probability)) {
-                fprintf(stderr,
-                        "error: invalid --debug-flip-exit-probability value: "
-                        "%s\n",
-                        argv[i] + 30);
-                usage(stderr);
-                *exit_code_out = 2;
-                return false;
-            }
-            continue;
-        }
-        if (strcmp(argv[i], "--debug-parent-setpgid-delay") == 0) {
-            if (i + 1 >= argc) {
-                fprintf(stderr,
-                        "error: --debug-parent-setpgid-delay requires a "
-                        "value\n");
-                *exit_code_out = 2;
-                return false;
-            }
-            if (!parse_timeout_seconds(
-                    argv[++i], &options->debug_parent_setpgid_delay_seconds)) {
-                fprintf(stderr,
-                        "error: invalid --debug-parent-setpgid-delay value: "
-                        "%s\n",
-                        argv[i]);
-                usage(stderr);
-                *exit_code_out = 2;
-                return false;
-            }
-            continue;
-        }
-        if (strncmp(argv[i], "--debug-parent-setpgid-delay=", 29) == 0) {
-            // IMGNEKO_UNCOVERED_OK_START
-            if (!parse_timeout_seconds(
-                    argv[i] + 29,
-                    &options->debug_parent_setpgid_delay_seconds)) {
-                fprintf(stderr,
-                        "error: invalid --debug-parent-setpgid-delay value: "
-                        "%s\n",
-                        argv[i] + 29);
-                usage(stderr);
-                *exit_code_out = 2;
-                return false;
-            }
-            continue;
-            // IMGNEKO_UNCOVERED_OK_END
-        }
-        if (strcmp(argv[i], "--debug-parent-output-chunk-delay") == 0) {
-            if (i + 1 >= argc) {
-                fprintf(stderr,
-                        "error: --debug-parent-output-chunk-delay requires "
-                        "a value\n");
-                *exit_code_out = 2;
-                return false;
-            }
-            if (!parse_timeout_seconds(
-                    argv[++i],
-                    &options->debug_parent_output_chunk_delay_seconds)) {
-                fprintf(stderr,
-                        "error: invalid --debug-parent-output-chunk-delay "
-                        "value: %s\n",
-                        argv[i]);
-                usage(stderr);
-                *exit_code_out = 2;
-                return false;
-            }
-            continue;
-        }
-        if (strncmp(argv[i], "--debug-parent-output-chunk-delay=", 34) == 0) {
-            if (!parse_timeout_seconds(
-                    argv[i] + 34,
-                    &options->debug_parent_output_chunk_delay_seconds)) {
-                fprintf(stderr,
-                        "error: invalid --debug-parent-output-chunk-delay "
-                        "value: %s\n",
-                        argv[i] + 34);
-                usage(stderr);
-                *exit_code_out = 2;
-                return false;
-            }
-            continue;
-        }
-        if (argv[i][0] == '-') {
-            fprintf(stderr, "error: unknown option: %s\n", argv[i]);
-            usage(stderr);
-            *exit_code_out = 2;
-            return false;
-        }
-        string_array_push_copy(&options->raw_filters, argv[i]);
-    }
+    ParsedTestRunnerCli parsed = {0};
+    const TestRunnerCliArgs *parsed_options = &parsed.top_level;
+    int rc = opt_run_program_parser(&TestRunnerCli_parser, argc, argv, &parsed);
 
-    if (options->run_all && options->raw_filters.size != 0) {
-        fprintf(stderr, "error: --all cannot be combined with --filter or "
-                        "positional patterns\n");
-        usage(stderr);
-        *exit_code_out = 2;
+    if (rc != 0 || parsed.must_exit) {
+        *exit_code_out = rc;
         return false;
     }
 
+    options->list_only = parsed_options->list_only.value;
+    options->run_all = parsed_options->run_all.value;
+    options->output_passthrough = parsed_options->output_passthrough.value;
+    options->jobs = parsed_options->jobs.value;
+    options->timeout_seconds = parsed_options->timeout_seconds.value;
+    options->debug_flip_exit_probability =
+        parsed_options->debug_flip_exit_probability.value;
+    options->debug_parent_setpgid_delay_seconds =
+        parsed_options->debug_parent_setpgid_delay_seconds.value;
+    options->debug_parent_output_chunk_delay_seconds =
+        parsed_options->debug_parent_output_chunk_delay_seconds.value;
+
+    resolve_cli_path_option(&options->output_dir,
+                            parsed_options->output_dir.value.cstr,
+                            "failed to resolve output directory");
+    resolve_cli_path_option(&options->tests_dir,
+                            parsed_options->tests_dir.value.cstr,
+                            "failed to resolve tests directory");
+    resolve_cli_path_option(&options->test_bin_dir,
+                            parsed_options->test_bin_dir.value.cstr,
+                            "failed to resolve test-bin directory");
+
+    if (!flatten_filters(&parsed_options->filter_patterns.value,
+                         &options->filters) ||
+        !flatten_filters(&parsed_options->positional_patterns.value,
+                         &options->filters)) {
+        *exit_code_out = 2;
+        TestRunnerCliArgs_deinit(&parsed.top_level);
+        return false;
+    }
+
+    if (options->run_all && options->filters.size != 0) {
+        fprintf(stderr, "error: --all cannot be combined with --filter or "
+                        "positional patterns\n");
+        *exit_code_out = 2;
+        TestRunnerCliArgs_deinit(&parsed.top_level);
+        return false;
+    }
+
+    TestRunnerCliArgs_deinit(&parsed.top_level);
     return true;
 }
 
-// Fill in defaults and validate the parsed command-line options.
-static bool finalize_cli_options(CliOptions *options, int *exit_code_out) {
-    if (!flatten_filters(&options->raw_filters, &options->filters)) {
-        *exit_code_out = 2;
-        return false;
-    }
-
-    if (options->output_dir.len == 0)
-        options->output_dir = default_test_output_dir();
-    if (options->tests_dir.len == 0)
-        options->tests_dir = default_tests_dir();
-    if (options->test_bin_dir.len == 0)
-        options->test_bin_dir = default_test_bin_dir();
+// Validate the parsed command-line options and apply any runtime setup they
+// require.
+static void finalize_cli_options(CliOptions *options) {
     validate_output_dir(options->output_dir.cstr);
     if (!options->list_only)
         require_empty_output_dir(options->output_dir.cstr);
     if (options->debug_flip_exit_probability > 0.0)
         seed_debug_random();
-    return true;
 }
 
 // Export the nested-test environment and switch to the repository root so test
@@ -2626,8 +2366,7 @@ int main(int argc, char **argv) {
 
     if (!parse_cli_args(argc, argv, &options, &exit_code))
         goto cleanup;
-    if (!finalize_cli_options(&options, &exit_code))
-        goto cleanup;
+    finalize_cli_options(&options);
 
     prepare_test_run_environment();
     if (!discover_tests_for_run(&options, &state, &exit_code))

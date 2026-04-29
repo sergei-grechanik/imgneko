@@ -20,6 +20,8 @@ FLIP_OUTPUT_DIR=$IMGNEKO_TEST_OUTPUT_DIR/flip-output
 XPASS_OUTPUT_DIR=$IMGNEKO_TEST_OUTPUT_DIR/xpass-output
 NO_MATCH_OUTPUT_DIR=$IMGNEKO_TEST_OUTPUT_DIR/no-match-output
 NONEMPTY_OUTPUT_DIR=$IMGNEKO_TEST_OUTPUT_DIR/nonempty-output
+BAD_CWD_PARENT=$IMGNEKO_TEST_OUTPUT_DIR/bad-cwd-parent
+BAD_CWD_CHILD=$BAD_CWD_PARENT/child
 REPO_PARENT=$(dirname "$IMGNEKO_ROOT_DIR")
 
 [ -x "$RUNNER" ] || fail "missing test-runner binary: $RUNNER"
@@ -46,17 +48,22 @@ echo 'stale output' >"$NONEMPTY_OUTPUT_DIR/stale"
 echo '== help =='
 "$RUNNER" --help 2>&1
 # CHECK: == help ==
-# CHECK: Usage: test-runner [--list] [--all] [-j JOBS] [--output-dir DIR]
-# CHECK: [--filter PATTERN] [--tests-dir DIR] [--test-bin-dir DIR]
-# The help text should report whatever default job count configure compiled in.
-# CHECK: Default jobs: {{[1-9][0-9]*}}
-# CHECK: Default timeout: 180 seconds
+# CHECK-NEXT: Usage: test-runner [options] [--] [PATTERN...]
+# CHECK: Options:
+# CHECK: --list                    List matching tests without running them.
+# CHECK: --all                     Run the entire discovered test set.
+# CHECK: -j, --jobs JOBS
+# CHECK: --output-dir DIR
+# CHECK: --filter PATTERN...
+# CHECK: --tests-dir DIR
+# CHECK: --test-bin-dir DIR
+# CHECK: --timeout SECONDS
+# CHECK: -p, --output-passthrough
 
 echo '== short help =='
 "$RUNNER" -h 2>&1
 # CHECK: == short help ==
-# CHECK: Usage: test-runner [--list] [--all] [-j JOBS] [--output-dir DIR]
-# CHECK: [--filter PATTERN] [--tests-dir DIR] [--test-bin-dir DIR]
+# CHECK-NEXT: Usage: test-runner [options] [--] [PATTERN...]
 
 echo '== jobs short option =='
 "$RUNNER" --output-dir "$JOBS_OUTPUT_DIR" -j 2 \
@@ -150,94 +157,81 @@ echo '== debug flip failing test =='
 echo '== missing output dir =='
 "$RUNNER" --output-dir 2>&1 || true
 # CHECK: == missing output dir ==
-# CHECK: Usage: test-runner [--list] [--all] [-j JOBS] [--output-dir DIR]
+# CHECK: error: --output-dir requires a value
 
 echo '== missing jobs =='
 set +e
-missing_jobs_output=$("$RUNNER" -j 2>&1)
-missing_jobs_status=$?
+"$RUNNER" -j 2>&1
+printf 'status=%d\n' "$?"
 set -e
-printf '%s\n' "$missing_jobs_output"
-printf 'status=%d\n' "$missing_jobs_status"
 # CHECK: == missing jobs ==
 # CHECK: error: --jobs requires a value
-# CHECK: Usage: test-runner [--list] [--all] [-j JOBS] [--output-dir DIR]
 # CHECK: status=2
 
 echo '== jobs text =='
 "$RUNNER" --jobs nope 2>&1 || true
 # CHECK: == jobs text ==
-# CHECK: error: invalid jobs value: nope
-# CHECK: Usage: test-runner [--list] [--all] [-j JOBS] [--output-dir DIR]
+# CHECK: error: invalid value for --jobs: nope
 
 echo '== jobs zero =='
 "$RUNNER" --jobs=0 2>&1 || true
 # CHECK: == jobs zero ==
-# CHECK: error: invalid jobs value: 0
-# CHECK: Usage: test-runner [--list] [--all] [-j JOBS] [--output-dir DIR]
+# CHECK: error: invalid value for --jobs: 0
 
 echo '== jobs trailing junk =='
 "$RUNNER" -j2x 2>&1 || true
 # CHECK: == jobs trailing junk ==
-# CHECK: error: invalid jobs value: 2x
-# CHECK: Usage: test-runner [--list] [--all] [-j JOBS] [--output-dir DIR]
+# CHECK: error: invalid value for --jobs: 2x
 
 echo '== jobs too large =='
 "$RUNNER" --jobs=2147483648 2>&1 || true
 # CHECK: == jobs too large ==
-# CHECK: error: invalid jobs value: 2147483648
-# CHECK: Usage: test-runner [--list] [--all] [-j JOBS] [--output-dir DIR]
+# CHECK: error: invalid value for --jobs: 2147483648
 
 echo '== jobs huge =='
 "$RUNNER" --jobs=999999999999999999999999999999 2>&1 || true
 # CHECK: == jobs huge ==
-# CHECK: error: invalid jobs value: 999999999999999999999999999999
-# CHECK: Usage: test-runner [--list] [--all] [-j JOBS] [--output-dir DIR]
+# CHECK: error: invalid value for --jobs: 999999999999999999999999999999
 
 echo '== missing filter =='
 "$RUNNER" --filter 2>&1 || true
 # CHECK: == missing filter ==
-# CHECK: Usage: test-runner [--list] [--all] [-j JOBS] [--output-dir DIR]
+# CHECK: error: --filter requires a value
 
 echo '== missing tests dir =='
 "$RUNNER" --tests-dir 2>&1 || true
 # CHECK: == missing tests dir ==
-# CHECK: Usage: test-runner [--list] [--all] [-j JOBS] [--output-dir DIR]
+# CHECK: error: --tests-dir requires a value
 
 echo '== missing test bin dir =='
 "$RUNNER" --test-bin-dir 2>&1 || true
 # CHECK: == missing test bin dir ==
-# CHECK: Usage: test-runner [--list] [--all] [-j JOBS] [--output-dir DIR]
+# CHECK: error: --test-bin-dir requires a value
 
 echo '== missing timeout =='
 "$RUNNER" --timeout 2>&1 || true
 # CHECK: == missing timeout ==
 # CHECK: error: --timeout requires a value
-# CHECK: Usage: test-runner [--list] [--all] [-j JOBS] [--output-dir DIR]
 
 echo '== timeout text =='
 "$RUNNER" --timeout nope 2>&1 || true
 # CHECK: == timeout text ==
-# CHECK: error: invalid --timeout value: nope
-# CHECK: Usage: test-runner [--list] [--all] [-j JOBS] [--output-dir DIR]
+# CHECK: error: invalid value for --timeout: nope
 
 echo '== timeout trailing junk =='
 "$RUNNER" --timeout=1x 2>&1 || true
 # CHECK: == timeout trailing junk ==
-# CHECK: error: invalid --timeout value: 1x
-# CHECK: Usage: test-runner [--list] [--all] [-j JOBS] [--output-dir DIR]
+# CHECK: error: invalid value for --timeout: 1x
 
 echo '== timeout negative =='
 "$RUNNER" --timeout -1 2>&1 || true
 # CHECK: == timeout negative ==
-# CHECK: error: invalid --timeout value: -1
-# CHECK: Usage: test-runner [--list] [--all] [-j JOBS] [--output-dir DIR]
+# CHECK: error: invalid value for --timeout: -1
 
 echo '== timeout huge =='
 "$RUNNER" --timeout 1e5000 2>&1 || true
 # CHECK: == timeout huge ==
-# CHECK: error: invalid --timeout value: 1e5000
-# CHECK: Usage: test-runner [--list] [--all] [-j JOBS] [--output-dir DIR]
+# CHECK: error: invalid value for --timeout: 1e5000
 
 echo '== missing debug flip =='
 "$RUNNER" --debug-flip-exit-probability 2>&1 || true
@@ -247,32 +241,27 @@ echo '== missing debug flip =='
 echo '== debug flip text =='
 "$RUNNER" --debug-flip-exit-probability nope 2>&1 || true
 # CHECK: == debug flip text ==
-# CHECK: error: invalid --debug-flip-exit-probability value: nope
-# CHECK: Usage: test-runner [--list] [--all] [-j JOBS] [--output-dir DIR]
+# CHECK: error: invalid value for --debug-flip-exit-probability: nope
 
 echo '== debug flip negative =='
 "$RUNNER" --debug-flip-exit-probability=-1 2>&1 || true
 # CHECK: == debug flip negative ==
-# CHECK: error: invalid --debug-flip-exit-probability value: -1
-# CHECK: Usage: test-runner [--list] [--all] [-j JOBS] [--output-dir DIR]
+# CHECK: error: invalid value for --debug-flip-exit-probability: -1
 
 echo '== debug flip trailing junk =='
 "$RUNNER" --debug-flip-exit-probability=1x 2>&1 || true
 # CHECK: == debug flip trailing junk ==
-# CHECK: error: invalid --debug-flip-exit-probability value: 1x
-# CHECK: Usage: test-runner [--list] [--all] [-j JOBS] [--output-dir DIR]
+# CHECK: error: invalid value for --debug-flip-exit-probability: 1x
 
 echo '== debug flip too large =='
 "$RUNNER" --debug-flip-exit-probability=2 2>&1 || true
 # CHECK: == debug flip too large ==
-# CHECK: error: invalid --debug-flip-exit-probability value: 2
-# CHECK: Usage: test-runner [--list] [--all] [-j JOBS] [--output-dir DIR]
+# CHECK: error: invalid value for --debug-flip-exit-probability: 2
 
 echo '== debug flip huge =='
 "$RUNNER" --debug-flip-exit-probability 1e5000 2>&1 || true
 # CHECK: == debug flip huge ==
-# CHECK: error: invalid --debug-flip-exit-probability value: 1e5000
-# CHECK: Usage: test-runner [--list] [--all] [-j JOBS] [--output-dir DIR]
+# CHECK: error: invalid value for --debug-flip-exit-probability: 1e5000
 
 echo '== missing debug parent setpgid delay =='
 "$RUNNER" --debug-parent-setpgid-delay 2>&1 || true
@@ -282,26 +271,22 @@ echo '== missing debug parent setpgid delay =='
 echo '== debug parent setpgid delay text =='
 "$RUNNER" --debug-parent-setpgid-delay nope 2>&1 || true
 # CHECK: == debug parent setpgid delay text ==
-# CHECK: error: invalid --debug-parent-setpgid-delay value: nope
-# CHECK: Usage: test-runner [--list] [--all] [-j JOBS] [--output-dir DIR]
+# CHECK: error: invalid value for --debug-parent-setpgid-delay: nope
 
 echo '== debug parent setpgid delay negative =='
 "$RUNNER" --debug-parent-setpgid-delay=-1 2>&1 || true
 # CHECK: == debug parent setpgid delay negative ==
-# CHECK: error: invalid --debug-parent-setpgid-delay value: -1
-# CHECK: Usage: test-runner [--list] [--all] [-j JOBS] [--output-dir DIR]
+# CHECK: error: invalid value for --debug-parent-setpgid-delay: -1
 
 echo '== debug parent setpgid delay trailing junk =='
 "$RUNNER" --debug-parent-setpgid-delay=1x 2>&1 || true
 # CHECK: == debug parent setpgid delay trailing junk ==
-# CHECK: error: invalid --debug-parent-setpgid-delay value: 1x
-# CHECK: Usage: test-runner [--list] [--all] [-j JOBS] [--output-dir DIR]
+# CHECK: error: invalid value for --debug-parent-setpgid-delay: 1x
 
 echo '== debug parent setpgid delay huge =='
 "$RUNNER" --debug-parent-setpgid-delay 1e5000 2>&1 || true
 # CHECK: == debug parent setpgid delay huge ==
-# CHECK: error: invalid --debug-parent-setpgid-delay value: 1e5000
-# CHECK: Usage: test-runner [--list] [--all] [-j JOBS] [--output-dir DIR]
+# CHECK: error: invalid value for --debug-parent-setpgid-delay: 1e5000
 
 echo '== debug parent output chunk delay equals =='
 "$RUNNER" --list --debug-parent-output-chunk-delay=0 runner/no-subtests.c 2>&1
@@ -316,41 +301,42 @@ echo '== missing debug parent output chunk delay =='
 echo '== debug parent output chunk delay text =='
 "$RUNNER" --debug-parent-output-chunk-delay nope 2>&1 || true
 # CHECK: == debug parent output chunk delay text ==
-# CHECK: error: invalid --debug-parent-output-chunk-delay value: nope
-# CHECK: Usage: test-runner [--list] [--all] [-j JOBS] [--output-dir DIR]
+# CHECK: error: invalid value for --debug-parent-output-chunk-delay: nope
 
 echo '== debug parent output chunk delay negative =='
 "$RUNNER" --debug-parent-output-chunk-delay=-1 2>&1 || true
 # CHECK: == debug parent output chunk delay negative ==
-# CHECK: error: invalid --debug-parent-output-chunk-delay value: -1
-# CHECK: Usage: test-runner [--list] [--all] [-j JOBS] [--output-dir DIR]
+# CHECK: error: invalid value for --debug-parent-output-chunk-delay: -1
 
 echo '== unknown option =='
 set +e
-unknown_option_output=$("$RUNNER" --definitely-unknown 2>&1)
-unknown_option_status=$?
+"$RUNNER" --definitely-unknown 2>&1
+printf 'status=%d\n' "$?"
 set -e
-printf '%s\n' "$unknown_option_output"
-printf 'status=%d\n' "$unknown_option_status"
 # CHECK: == unknown option ==
 # CHECK: error: unknown option: --definitely-unknown
-# CHECK: Usage: test-runner [--list] [--all] [-j JOBS] [--output-dir DIR]
 # CHECK: status=2
 
 echo '== all with filter =='
 "$RUNNER" --all runner/no-subtests.c 2>&1 || true
 # CHECK: == all with filter ==
 # CHECK: error: --all cannot be combined with --filter or positional patterns
-# CHECK: Usage: test-runner [--list] [--all] [-j JOBS] [--output-dir DIR]
 
 echo '== empty filter parts =='
 set +e
-empty_filter_output=$("$RUNNER" --list --filter '||runner/no-subtests.c|' 2>&1)
-empty_filter_status=$?
+"$RUNNER" --list --filter '||runner/no-subtests.c|' 2>&1
+printf 'status=%d\n' "$?"
 set -e
-printf '%s\n' "$empty_filter_output"
-printf 'status=%d\n' "$empty_filter_status"
 # CHECK: == empty filter parts ==
+# CHECK: error: invalid filter pattern: ||runner/no-subtests.c|
+# CHECK: status=2
+
+echo '== empty positional filter parts =='
+set +e
+"$RUNNER" --list -- '||runner/no-subtests.c|' 2>&1
+printf 'status=%d\n' "$?"
+set -e
+# CHECK: == empty positional filter parts ==
 # CHECK: error: invalid filter pattern: ||runner/no-subtests.c|
 # CHECK: status=2
 
@@ -363,9 +349,8 @@ echo '== end list no matches =='
 echo '== run no matches =='
 set +e
 "$RUNNER" --output-dir "$NO_MATCH_OUTPUT_DIR" --filter does/not/exist 2>&1
-run_no_matches_status=$?
+printf 'status=%d\n' "$?"
 set -e
-printf 'status=%d\n' "$run_no_matches_status"
 # CHECK: == run no matches ==
 # CHECK: error: no tests matched the requested filters
 # CHECK: status=2
@@ -405,3 +390,17 @@ echo '== unsafe build =='
 "$RUNNER" --list --output-dir "$IMGNEKO_BUILD_DIR" 2>&1 || true
 # CHECK: == unsafe build ==
 # CHECK-NEXT: error: unsafe output directory: {{.+}}
+
+mkdir -p "$BAD_CWD_CHILD"
+echo '== relative output dir from deleted cwd =='
+set +e
+(
+    cd "$BAD_CWD_CHILD"
+    rmdir "$BAD_CWD_CHILD"
+    "$RUNNER" --list --output-dir relative-output runner/no-subtests.c 2>&1
+)
+printf 'status=%d\n' "$?"
+set -e
+# CHECK: == relative output dir from deleted cwd ==
+# CHECK: error: failed to resolve output directory: No such file or directory
+# CHECK: status=1

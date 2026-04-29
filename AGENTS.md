@@ -65,6 +65,23 @@ For owned dynamically allocated strings, use the `String` type from
   callee, in which case document it explicitly and assign an invalid value to
   the `String` in the caller after the call (e.g. `str = {NULL};`).
 
+## Shell scripting recommendations
+
+- Avoid saving the output to a variable just to print it a few lines later. Just
+  pass through the output whenever possible. Same with exit codes.
+  Bad:
+  ```sh
+  output=$(some_command)
+  exit_code=$?
+  printf "%s" "$output"
+  printf "Exit code: %d\n" "$exit_code"
+  ```
+  Good:
+  ```sh
+  some_command
+  printf "Exit code: %d\n" "$?"
+  ```
+
 ## Addressing review comments
 
 If the user asks you to address review comments, search for the comments
