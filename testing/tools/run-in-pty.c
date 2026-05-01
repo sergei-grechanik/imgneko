@@ -26,20 +26,20 @@
 // of the helper's own option space.
 #define RUN_IN_PTY_OPTIONS(X, S)                                               \
     X(S, rows, OptInt,                                                         \
-      OPT_CUSTOM(.parse = opt_parse_positive_int_option, .cli = "--rows ROWS", \
-                 .descr = "PTY row count.", .dflt = "24"))                     \
+      OPT_INT(.cli = "--rows ROWS", .validate = opt_validate_positive_int,     \
+              .descr = "PTY row count.", .dflt = "24"))                        \
     X(S, cols, OptInt,                                                         \
-      OPT_CUSTOM(.parse = opt_parse_positive_int_option, .cli = "--cols COLS", \
-                 .descr = "PTY column count.", .dflt = "80"))                  \
+      OPT_INT(.cli = "--cols COLS", .validate = opt_validate_positive_int,     \
+              .descr = "PTY column count.", .dflt = "80"))                     \
     X(S, opost, OptBool,                                                       \
       OPT_BOOL_NEGATABLE(.cli = "--opost", .cli_negate = "--no-opost",         \
                          .descr = "Enable PTY output post-processing.",        \
                          .dflt = "false"))                                     \
     X(S, write_chunk_size, OptInt,                                             \
-      OPT_CUSTOM(.parse = opt_parse_positive_int_option,                       \
-                 .cli = "--write-chunk-size BYTES",                            \
-                 .descr = "Maximum stdout forwarding write size.",             \
-                 .dflt = UTIL_STRINGIFY(PIPE_BUF)))                            \
+      OPT_INT(.cli = "--write-chunk-size BYTES",                               \
+              .validate = opt_validate_positive_int,                           \
+              .descr = "Maximum stdout forwarding write size.",                \
+              .dflt = UTIL_STRINGIFY(PIPE_BUF)))                               \
     X(S, command, OptString,                                                   \
       OPT_STRING(.cli = "COMMAND", .descr = "Command to run under the PTY.",   \
                  .positional = true, .double_dash_only = true))                \

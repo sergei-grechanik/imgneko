@@ -723,10 +723,9 @@ static void validate_output_dir(const char *output_dir) {
       OPT_BOOL_FLAG(.cli = "--all",                                            \
                     .descr = "Run the entire discovered test set."))           \
     X(S, jobs, OptInt,                                                         \
-      OPT_CUSTOM(.parse = opt_parse_positive_int_option,                       \
-                 .cli = "-j --jobs JOBS",                                      \
-                 .descr = "Run up to JOBS tests concurrently.",                \
-                 .dflt = UTIL_STRINGIFY(TEST_RUNNER_DEFAULT_JOBS)))            \
+      OPT_INT(.cli = "-j --jobs JOBS", .validate = opt_validate_positive_int,  \
+              .descr = "Run up to JOBS tests concurrently.",                   \
+              .dflt = UTIL_STRINGIFY(TEST_RUNNER_DEFAULT_JOBS)))               \
     X(S, output_dir, OptString,                                                \
       OPT_STRING(.cli = "--output-dir DIR",                                    \
                  .descr = "Write captured test output under DIR.",             \
@@ -744,8 +743,8 @@ static void validate_output_dir(const char *output_dir) {
                  .descr = "Read compiled C test binaries from DIR.",           \
                  .dflt = TEST_RUNNER_BUILD_DIR "/obj/test-bin"))               \
     X(S, timeout_seconds, OptDouble,                                           \
-      OPT_CUSTOM(.parse = opt_parse_non_negative_double_option,                \
-                 .cli = "--timeout SECONDS",                                   \
+      OPT_DOUBLE(.cli = "--timeout SECONDS",                                   \
+                 .validate = opt_validate_non_negative_double,                 \
                  .descr = "Set the per-test timeout in seconds. Use 0 to "     \
                           "disable timeouts.",                                 \
                  .dflt = "180.0"))                                             \
@@ -754,18 +753,18 @@ static void validate_output_dir(const char *output_dir) {
                     .descr = "Mirror test stdout/stderr live while still "     \
                              "capturing it."))                                 \
     X(S, debug_flip_exit_probability, OptDouble,                               \
-      OPT_CUSTOM(.parse = opt_parse_probability_option,                        \
-                 .cli = "--debug-flip-exit-probability P",                     \
+      OPT_DOUBLE(.cli = "--debug-flip-exit-probability P",                     \
+                 .validate = opt_validate_probability,                         \
                  .descr = "Flip child exit codes with probability P for "      \
                           "debugging."))                                       \
     X(S, debug_parent_setpgid_delay_seconds, OptDouble,                        \
-      OPT_CUSTOM(.parse = opt_parse_non_negative_double_option,                \
-                 .cli = "--debug-parent-setpgid-delay SECONDS",                \
+      OPT_DOUBLE(.cli = "--debug-parent-setpgid-delay SECONDS",                \
+                 .validate = opt_validate_non_negative_double,                 \
                  .descr = "Delay the parent-side setpgid() call to exercise "  \
                           "timeout races."))                                   \
     X(S, debug_parent_output_chunk_delay_seconds, OptDouble,                   \
-      OPT_CUSTOM(.parse = opt_parse_non_negative_double_option,                \
-                 .cli = "--debug-parent-output-chunk-delay SECONDS",           \
+      OPT_DOUBLE(.cli = "--debug-parent-output-chunk-delay SECONDS",           \
+                 .validate = opt_validate_non_negative_double,                 \
                  .descr = "Sleep between captured-output chunks to exercise "  \
                           "drain timing."))                                    \
     X(S, positional_patterns, OptStringList,                                   \

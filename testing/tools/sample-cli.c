@@ -64,11 +64,6 @@ OPT_DEFINE_WRAPPER_STRUCT(OptPassWindowList, PassWindowArray);
 // Only `parse` is required. List parsers append one element per call instead of
 // replacing the whole list.
 
-// Parse a positive integer segment from raw text.
-static bool parse_positive_int_segment(const char *text, size_t len, int *out) {
-    return opt_parse_int_span(text, len, out) && *out > 0;
-}
-
 // Parse a START:END pass-window value.
 static bool parse_pass_window_value(const char *text, size_t text_len,
                                     PassWindow *out) {
@@ -89,9 +84,13 @@ static bool parse_pass_window_value(const char *text, size_t text_len,
     end_len = text_len - start_len - 1;
     if (memchr(separator + 1, ':', end_len) != NULL)
         return false;
-    if (!parse_positive_int_segment(text, start_len, &start))
+    if (!opt_parse_int_option(&start, text, start_len, NULL))
         return false;
-    if (!parse_positive_int_segment(separator + 1, end_len, &end))
+    if (!opt_validate_positive_int(&start, NULL))
+        return false;
+    if (!opt_parse_int_option(&end, separator + 1, end_len, NULL))
+        return false;
+    if (!opt_validate_positive_int(&end, NULL))
         return false;
     if (start > end)
         return false;
@@ -194,9 +193,13 @@ static bool parse_grid_size_option(void *value_ptr, const char *text,
                                "expected NxM with positive integers");
     width_len = (size_t)(separator - text);
     height_len = text_len - width_len - 1;
-    if (!parse_positive_int_segment(text, width_len, &width))
+    if (!opt_parse_int_option(&width, text, width_len, NULL))
         return opt_parse_error(error_out, "width must be a positive integer");
-    if (!parse_positive_int_segment(separator + 1, height_len, &height))
+    if (!opt_validate_positive_int(&width, NULL))
+        return opt_parse_error(error_out, "width must be a positive integer");
+    if (!opt_parse_int_option(&height, separator + 1, height_len, NULL))
+        return opt_parse_error(error_out, "height must be a positive integer");
+    if (!opt_validate_positive_int(&height, NULL))
         return opt_parse_error(error_out, "height must be a positive integer");
 
     parsed = calloc(1, sizeof(*parsed));
@@ -236,10 +239,8 @@ static bool parse_grid_size_option(void *value_ptr, const char *text,
               .descr = "Run N synthetic transformation passes.",               \
               .dflt = "24"))                                                   \
     X(S, quota, OptInt,                                                        \
-      OPT_CUSTOM(.parse = opt_parse_positive_int_option,                       \
-                 .cli = "-q --quota N",                                        \
-                 .descr =                                                      \
-                     "Use a positive quota as the synthetic work budget."))    \
+      OPT_INT(.cli = "-q --quota N", .validate = opt_validate_positive_int,    \
+              .descr = "Use a positive quota as the synthetic work budget."))  \
     X(S, window, OptPassWindow,                                                \
       OPT_CUSTOM(.parse = parse_pass_window_option,                            \
                  .cli = "--window START:END",                                  \

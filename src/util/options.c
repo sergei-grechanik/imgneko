@@ -1135,25 +1135,20 @@ bool opt_parse_int_option(void *value, const char *text, size_t text_len,
     return true;
 }
 
-// Parse a positive int value from a textual decimal integer.
-bool opt_parse_positive_int_option(void *value, const char *text,
-                                   size_t text_len, String *error_out) {
-    int *int_value = value;
+// Validate that an already parsed int is positive.
+bool opt_validate_positive_int(const void *value_ptr, String *error_out) {
+    const int *int_value = value_ptr;
 
-    if (!opt_parse_int_span(text, text_len, int_value))
-        return opt_parse_error(error_out, "expected a base-10 integer");
     if (*int_value <= 0)
         return opt_parse_error(error_out, "must be positive");
     return true;
 }
 
-// Parse a finite non-negative floating-point value from a textual number.
-bool opt_parse_non_negative_double_option(void *value, const char *text,
-                                          size_t text_len, String *error_out) {
-    double *double_value = value;
+// Validate that an already parsed double is finite and non-negative.
+bool opt_validate_non_negative_double(const void *value_ptr,
+                                      String *error_out) {
+    const double *double_value = value_ptr;
 
-    if (!opt_parse_double_span(text, text_len, double_value))
-        return opt_parse_error(error_out, "expected a number");
     if (!isfinite(*double_value))
         return opt_parse_error(error_out, "must be finite");
     if (*double_value < 0.0)
@@ -1161,13 +1156,10 @@ bool opt_parse_non_negative_double_option(void *value, const char *text,
     return true;
 }
 
-// Parse a finite probability in the inclusive range [0, 1].
-bool opt_parse_probability_option(void *value, const char *text,
-                                  size_t text_len, String *error_out) {
-    double *double_value = value;
+// Validate that an already parsed double is a finite probability.
+bool opt_validate_probability(const void *value_ptr, String *error_out) {
+    const double *double_value = value_ptr;
 
-    if (!opt_parse_double_span(text, text_len, double_value))
-        return opt_parse_error(error_out, "expected a number");
     if (!isfinite(*double_value))
         return opt_parse_error(error_out, "must be finite");
     if (*double_value < 0.0 || *double_value > 1.0) {
@@ -1475,8 +1467,10 @@ static OptParseStatus opt_assign_field_or_fail(const OptFieldSpec *field,
             bool parsed_value = false;
             if (field->attrs.parse(&parsed_value, value_text, value_text_len,
                                    NULL)) {
-                if (*(const bool *)opt_const_field_value_ptr(field, options) ==
-                    parsed_value) {
+                if ((field->attrs.validate == NULL ||
+                     field->attrs.validate(&parsed_value, NULL)) &&
+                    *(const bool *)opt_const_field_value_ptr(field, options) ==
+                        parsed_value) {
                     return OPT_PARSE_STATUS_OK;
                 }
             }
@@ -1990,23 +1984,78 @@ void opt_apply_default(const OptFieldSpec *field, void *options) {
             "option field has an invalid default value");
 }
 
+// Copy the current field value into temporary wrapper storage so parsing and
+// validation can run without mutating the committed destination value.
+static void opt_copy_field_value_for_validation(const OptFieldSpec *field,
+                                                void *temp_wrapper,
+                                                const void *options) {
+    void *temp_value_ptr = (char *)temp_wrapper + field->value_offset;
+
+    memset(temp_wrapper, 0, field->size);
+
+    if (!opt_field_is_set(field, options))
+        return;
+
+    require(field->attrs.copy != NULL || field->attrs.clear == NULL,
+            "validated owned option fields require a copy callback");
+    if (field->attrs.copy != NULL) {
+        field->attrs.copy(temp_value_ptr,
+                          opt_const_field_value_ptr(field, options));
+    } else {
+        memcpy(temp_value_ptr, opt_const_field_value_ptr(field, options),
+               field->value_size);
+    }
+}
+
+// Release any owned storage held by a temporary parsed value.
+static void opt_clear_tentative_field_value(const OptFieldSpec *field,
+                                            void *temp_wrapper) {
+    if (field->attrs.clear == NULL)
+        return;
+
+    field->attrs.clear((char *)temp_wrapper + field->value_offset);
+}
+
 // Assign a parsed textual value to the destination field.
 bool opt_assign_field_value(const OptFieldSpec *field, void *options,
                             const char *text, size_t text_len,
                             OptProvenance provenance, String *error_out) {
+    char temp_wrapper[field->size];
+    void *temp_value_ptr = (char *)temp_wrapper + field->value_offset;
+    bool success = false;
+
     if (field->attrs.parse == NULL)
         return false;
 
     if (error_out != NULL)
         str_free(*error_out);
 
-    if (!field->attrs.parse(opt_field_value_ptr(field, options), text, text_len,
-                            error_out)) {
-        return false;
+    if (field->attrs.validate == NULL) {
+        if (!field->attrs.parse(opt_field_value_ptr(field, options), text,
+                                text_len, error_out)) {
+            return false;
+        }
+
+        opt_set_field_state(field, options, true, provenance);
+        return true;
     }
 
+    opt_copy_field_value_for_validation(field, temp_wrapper, options);
+
+    if (!field->attrs.parse(temp_value_ptr, text, text_len, error_out))
+        goto cleanup;
+    if (!field->attrs.validate(temp_value_ptr, error_out))
+        goto cleanup;
+
+    opt_clear_field(field, options);
+    memcpy(opt_field_ptr(field, options), temp_wrapper, field->size);
     opt_set_field_state(field, options, true, provenance);
-    return true;
+    success = true;
+
+cleanup:
+    if (!success)
+        opt_clear_tentative_field_value(field, temp_wrapper);
+    return success;
 }
 
 // Deep-copy a matching field value from src to dst.

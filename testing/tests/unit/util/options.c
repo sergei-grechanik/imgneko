@@ -54,11 +54,14 @@ static bool parse_range2_value(const char *text, size_t text_len, Range2 *out) {
     end_len = text_len - start_len - 1;
     if (memchr(separator + 1, ':', end_len) != NULL)
         return false;
-    if (!opt_parse_positive_int_option(&start, text, start_len, NULL))
+    if (!opt_parse_int_option(&start, text, start_len, NULL))
         return false;
-    if (!opt_parse_positive_int_option(&end, separator + 1, end_len, NULL)) {
+    if (!opt_validate_positive_int(&start, NULL))
         return false;
-    }
+    if (!opt_parse_int_option(&end, separator + 1, end_len, NULL))
+        return false;
+    if (!opt_validate_positive_int(&end, NULL))
+        return false;
     if (start > end)
         return false;
 
@@ -160,10 +163,13 @@ static bool parse_size2_option(void *value_ptr, const char *text,
                                "expected NxM with positive integers");
     width_len = (size_t)(separator - text);
     height_len = text_len - width_len - 1;
-    if (!opt_parse_positive_int_option(&width, text, width_len, NULL))
+    if (!opt_parse_int_option(&width, text, width_len, NULL))
         return opt_parse_error(error_out, "width must be a positive integer");
-    if (!opt_parse_positive_int_option(&height, separator + 1, height_len,
-                                       NULL)) {
+    if (!opt_validate_positive_int(&width, NULL))
+        return opt_parse_error(error_out, "width must be a positive integer");
+    if (!opt_parse_int_option(&height, separator + 1, height_len, NULL))
+        return opt_parse_error(error_out, "height must be a positive integer");
+    if (!opt_validate_positive_int(&height, NULL)) {
         return opt_parse_error(error_out, "height must be a positive integer");
     }
 
@@ -589,14 +595,21 @@ static int test_low_level_parse_helpers(TestContext *ctx) {
         status = fail_message(name, "missing bool value unexpectedly parsed");
         goto cleanup;
     }
-    if (!opt_parse_positive_int_option(&int_value, "17", strlen("17"),
-                                       &error) ||
-        int_value != 17) {
+    if (!opt_parse_int_option(&int_value, "17", strlen("17"), &error) ||
+        !opt_validate_positive_int(&int_value, &error) || int_value != 17) {
         status = fail_message(name, "failed to parse positive integer");
         goto cleanup;
     }
-    if (opt_parse_positive_int_option(&int_value, "0", strlen("0"), &error)) {
+    if (!opt_parse_int_option(&int_value, "0", strlen("0"), &error)) {
+        status = fail_message(name, "failed to parse zero as an integer");
+        goto cleanup;
+    }
+    if (opt_validate_positive_int(&int_value, &error)) {
         status = fail_message(name, "non-positive integer unexpectedly parsed");
+        goto cleanup;
+    }
+    if (strcmp(error.cstr, "must be positive") != 0) {
+        status = fail_message(name, "unexpected positive-integer parse error");
         goto cleanup;
     }
     if (!opt_parse_double_option(&double_value, "2.5", strlen("2.5"), &error) ||
@@ -613,50 +626,95 @@ static int test_low_level_parse_helpers(TestContext *ctx) {
         status = fail_message(name, "unexpected generic double parse error");
         goto cleanup;
     }
-    if (!opt_parse_non_negative_double_option(&double_value, "0", strlen("0"),
-                                              &error) ||
+    if (!opt_parse_double_option(&double_value, "0", strlen("0"), &error) ||
+        !opt_validate_non_negative_double(&double_value, &error) ||
         double_value != 0.0) {
         status =
             fail_message(name, "failed to parse non-negative double option");
         goto cleanup;
     }
-    if (opt_parse_non_negative_double_option(&double_value, "-0.5",
-                                             strlen("-0.5"), &error)) {
+    if (!opt_parse_double_option(&double_value, "-0.5", strlen("-0.5"),
+                                 &error)) {
+        status = fail_message(name, "failed to parse negative double");
+        goto cleanup;
+    }
+    if (opt_validate_non_negative_double(&double_value, &error)) {
         status = fail_message(
             name, "negative double unexpectedly parsed as non-negative");
         goto cleanup;
     }
-    if (opt_parse_non_negative_double_option(&double_value, "inf",
-                                             strlen("inf"), &error)) {
+    if (strcmp(error.cstr, "must be non-negative") != 0) {
+        status =
+            fail_message(name, "unexpected non-negative double range error");
+        goto cleanup;
+    }
+    if (!opt_parse_double_option(&double_value, "inf", strlen("inf"), &error)) {
+        status = fail_message(name, "failed to parse infinity as a double");
+        goto cleanup;
+    }
+    if (opt_validate_non_negative_double(&double_value, &error)) {
         status = fail_message(
             name, "infinite double unexpectedly parsed as non-negative");
         goto cleanup;
     }
-    if (opt_parse_non_negative_double_option(&double_value, "nan",
-                                             strlen("nan"), &error)) {
+    if (strcmp(error.cstr, "must be finite") != 0) {
+        status = fail_message(name, "unexpected finite-double error");
+        goto cleanup;
+    }
+    if (!opt_parse_double_option(&double_value, "nan", strlen("nan"), &error)) {
+        status = fail_message(name, "failed to parse NaN as a double");
+        goto cleanup;
+    }
+    if (opt_validate_non_negative_double(&double_value, &error)) {
         status = fail_message(name, "NaN unexpectedly parsed as non-negative");
         goto cleanup;
     }
-    if (!opt_parse_probability_option(&double_value, "0.5", strlen("0.5"),
-                                      &error) ||
+    if (strcmp(error.cstr, "must be finite") != 0) {
+        status = fail_message(name, "unexpected NaN finite-double error");
+        goto cleanup;
+    }
+    if (!opt_parse_double_option(&double_value, "0.5", strlen("0.5"), &error) ||
+        !opt_validate_probability(&double_value, &error) ||
         double_value != 0.5) {
         status = fail_message(name, "failed to parse probability option");
         goto cleanup;
     }
-    if (opt_parse_probability_option(&double_value, "1.5", strlen("1.5"),
-                                     &error)) {
+    if (!opt_parse_double_option(&double_value, "1.5", strlen("1.5"), &error)) {
+        status = fail_message(name, "failed to parse out-of-range probability");
+        goto cleanup;
+    }
+    if (opt_validate_probability(&double_value, &error)) {
         status =
             fail_message(name, "out-of-range probability unexpectedly parsed");
         goto cleanup;
     }
-    if (opt_parse_probability_option(&double_value, "inf", strlen("inf"),
-                                     &error)) {
+    if (strcmp(error.cstr, "expected a number in the range 0-1") != 0) {
+        status = fail_message(name, "unexpected probability range error");
+        goto cleanup;
+    }
+    if (!opt_parse_double_option(&double_value, "inf", strlen("inf"), &error)) {
+        status = fail_message(
+            name, "failed to parse infinite probability as a double");
+        goto cleanup;
+    }
+    if (opt_validate_probability(&double_value, &error)) {
         status = fail_message(name, "infinite probability unexpectedly parsed");
         goto cleanup;
     }
-    if (opt_parse_probability_option(&double_value, "nan", strlen("nan"),
-                                     &error)) {
+    if (strcmp(error.cstr, "must be finite") != 0) {
+        status = fail_message(name, "unexpected infinite probability error");
+        goto cleanup;
+    }
+    if (!opt_parse_double_option(&double_value, "nan", strlen("nan"), &error)) {
+        status = fail_message(name, "failed to parse NaN probability");
+        goto cleanup;
+    }
+    if (opt_validate_probability(&double_value, &error)) {
         status = fail_message(name, "NaN probability unexpectedly parsed");
+        goto cleanup;
+    }
+    if (strcmp(error.cstr, "must be finite") != 0) {
+        status = fail_message(name, "unexpected NaN probability error");
         goto cleanup;
     }
 

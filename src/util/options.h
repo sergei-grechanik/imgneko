@@ -53,6 +53,10 @@ OPT_DEFINE_WRAPPER_STRUCT(OptStringList, StringArray);
 typedef bool (*OptValueParseFn)(void *value, const char *text, size_t text_len,
                                 String *error_out);
 
+// Validate an already parsed `.value` object before the new value is
+// committed to the destination field.
+typedef bool (*OptValueValidateFn)(const void *value, String *error_out);
+
 // Clear the underlying `.value` object, releasing any owned resources.
 typedef void (*OptValueClearFn)(void *value);
 
@@ -81,6 +85,7 @@ typedef struct OptFieldAttrs {
     OptBoolMode bool_mode;
     const char *dflt;
     OptValueParseFn parse;
+    OptValueValidateFn validate;
     OptValueClearFn clear;
     OptValueCopyFn copy;
 } OptFieldAttrs;
@@ -232,17 +237,15 @@ bool opt_parse_double_option(void *value, const char *text, size_t text_len,
 bool opt_parse_int_option(void *value, const char *text, size_t text_len,
                           String *error_out);
 
-// Parse a finite non-negative floating-point value from a textual number.
-bool opt_parse_non_negative_double_option(void *value, const char *text,
-                                          size_t text_len, String *error_out);
+// Validate that an already parsed double is finite and non-negative.
+bool opt_validate_non_negative_double(const void *value, String *error_out);
 
-// Parse a positive int value from a textual decimal integer.
-bool opt_parse_positive_int_option(void *value, const char *text,
-                                   size_t text_len, String *error_out);
+// Validate that an already parsed int is positive.
+bool opt_validate_positive_int(const void *value, String *error_out);
 
-// Parse a finite probability in the inclusive range [0, 1].
-bool opt_parse_probability_option(void *value, const char *text,
-                                  size_t text_len, String *error_out);
+// Validate that an already parsed double is a finite probability in the
+// inclusive range [0, 1].
+bool opt_validate_probability(const void *value, String *error_out);
 
 // Parse a string value from raw text, replacing any previous owned string.
 bool opt_parse_string_option(void *value, const char *text, size_t text_len,
@@ -344,7 +347,8 @@ void opt_clear_field(const OptFieldSpec *field, void *options);
 // Apply a field's default string after the destination was zero-initialized.
 void opt_apply_default(const OptFieldSpec *field, void *options);
 
-// Parse and assign a textual value to a field, then update field state.
+// Parse, validate, and assign a textual value to a field, then update field
+// state.
 bool opt_assign_field_value(const OptFieldSpec *field, void *options,
                             const char *text, size_t text_len,
                             OptProvenance provenance, String *error_out);
