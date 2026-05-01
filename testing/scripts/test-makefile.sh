@@ -414,7 +414,7 @@ run_capture "$LOG_DIR/make-test-jobs-tools.out" make -C "$TEST_JOBS_BUILD" test-
 assert_status_zero
 run_capture "$LOG_DIR/test-jobs-help.out" "$TEST_JOBS_BUILD/bin/test-runner" --help
 assert_status_zero
-assert_output_contains "Default jobs: 3"
+assert_output_contains "Run up to JOBS tests concurrently. (default: 3)"
 
 # The top-level `make test` target should accept both JOBS and PARALLEL as the
 # user-facing override knobs for test-runner parallelism.
