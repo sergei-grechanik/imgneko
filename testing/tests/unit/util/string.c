@@ -326,6 +326,7 @@ cleanup:
 static int test_special_empty_in_place_ops(TestContext *ctx) {
     const char *name = ctx->test_name;
     String cleared = str_empty;
+    String truncated = str_empty;
     String dropped_back = str_empty;
     String dropped_front = str_empty;
     String taken_back = str_empty;
@@ -337,6 +338,13 @@ static int test_special_empty_in_place_ops(TestContext *ctx) {
 
     str_clear(cleared);
     status = expect_empty_string(name, cleared, false);
+    if (status != 0)
+        goto cleanup;
+
+    // Truncating the special empty string should stay in the non-allocated
+    // empty state and remain a no-op.
+    str_truncate(truncated, 0);
+    status = expect_empty_string(name, truncated, false);
     if (status != 0)
         goto cleanup;
 
@@ -383,6 +391,7 @@ cleanup:
     str_free(taken_back);
     str_free(dropped_front);
     str_free(dropped_back);
+    str_free(truncated);
     str_free(cleared);
     return status;
 }

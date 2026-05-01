@@ -156,14 +156,14 @@ enum {
     OPT_CMD_NONE = 0,
 };
 
-// Build an OptFieldAttrs value in a macro-friendly way.
-#define OPT_ATTRS(...) ((OptFieldAttrs){__VA_ARGS__})
+// Build an OptFieldAttrs initializer fragment in a macro-friendly way.
+#define OPT_ATTRS(...) (__VA_ARGS__)
 
-// Build an OptCommandAttrs value in a macro-friendly way.
-#define OPT_COMMAND(...) ((OptCommandAttrs){__VA_ARGS__})
+// Build an OptCommandAttrs initializer fragment in a macro-friendly way.
+#define OPT_COMMAND(...) (__VA_ARGS__)
 
-// Build an OptProgramAttrs value in a macro-friendly way.
-#define OPT_PROGRAM(...) ((OptProgramAttrs){__VA_ARGS__})
+// Build an OptProgramAttrs initializer fragment in a macro-friendly way.
+#define OPT_PROGRAM(...) (__VA_ARGS__)
 
 // Build presence-only boolean flag attrs. These flags default to false and
 // become true when supplied.
@@ -381,6 +381,12 @@ void opt_program_result_deinit(const OptProgramParser *parser, void *result);
 int opt_run_program_parser(const OptProgramParser *parser, int argc,
                            char **argv, void *result);
 
+// Materialize a brace-wrapped initializer fragment after macro argument
+// forwarding.
+#define OPT__INIT_ARGS(args) OPT__INIT_ARGS_IMPL args
+#define OPT__INIT_ARGS_IMPL(...)                                               \
+    { __VA_ARGS__ }
+
 #define OPT__DECLARE_FIELD(StructName, FieldName, FieldType, FieldAttrs)       \
     FieldType FieldName;
 
@@ -394,7 +400,7 @@ int opt_run_program_parser(const OptProgramParser *parser, int argc,
         .value_size = sizeof(((FieldType *)0)->value),                         \
         .is_set_offset = offsetof(FieldType, is_set),                          \
         .provenance_offset = offsetof(FieldType, provenance),                  \
-        .attrs = FieldAttrs,                                                   \
+        .attrs = OPT__INIT_ARGS(FieldAttrs),                                   \
     },
 
 // Define a typed option struct, its schema, and init/deinit wrappers from an
@@ -433,7 +439,7 @@ int opt_run_program_parser(const OptProgramParser *parser, int argc,
                                   CommandAttrs)                                \
     static const OptCommandDesc Name##_##CommandName##_command = {             \
         .name = #CommandName,                                                  \
-        .attrs = (CommandAttrs),                                               \
+        .attrs = OPT__INIT_ARGS(CommandAttrs),                                 \
         .schema = &OptionsType##_schema};
 
 #define OPT__PROGRAM_COMMAND_ENTRY(Name, CommandName, OptionsType,             \
@@ -469,7 +475,7 @@ int opt_run_program_parser(const OptProgramParser *parser, int argc,
         },                                                                     \
     };                                                                         \
     static const OptProgramParser Name##_parser = {                            \
-        .attrs = ProgramAttrs,                                                 \
+        .attrs = OPT__INIT_ARGS(ProgramAttrs),                                 \
         .top_level_schema = TopLevelSchema,                                    \
         .commands = Name##_program_commands,                                   \
         .command_count = ARRAY_SIZE(Name##_program_commands) - 1,              \

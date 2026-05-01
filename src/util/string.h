@@ -63,6 +63,7 @@ ARRLIB_INLINE bool str_char_is_ascii_space(char ch) {
 // NULL when the string is empty and no data is dynamically allocated.
 ARRLIB_INLINE char *str__get_cstr_or_null(char *str, size_t len,
                                           size_t capacity) {
+    (void)len;
     if (capacity == 0) {
         assert(len == 0);
         assert(str[0] == '\0');
@@ -88,6 +89,15 @@ ARRLIB_INLINE char *str__reserve_impl(char *cstr, size_t len, size_t *capacity,
 // return the resulting string buffer.
 ARRLIB_INLINE char *str__resize_impl(char *cstr, size_t *len, size_t *capacity,
                                      size_t new_len) {
+    if (new_len <= *len) {
+        // Shrinking never needs reallocation or zero-filling. Handling it
+        // directly avoids size underflow in fortified libc warning analysis.
+        if (*capacity != 0)
+            cstr[new_len] = '\0';
+        *len = new_len;
+        return cstr;
+    }
+
     size_t size_with_nul = *len + 1;
 
     cstr = str__get_cstr_or_null(cstr, *len, *capacity);

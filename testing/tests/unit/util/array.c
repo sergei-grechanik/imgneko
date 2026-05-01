@@ -78,6 +78,18 @@ static int test_growth_and_resize(TestContext *ctx) {
     if (status != 0)
         goto cleanup;
 
+    // Shrinking should preserve the prefix and keep the existing allocation.
+    arr_resize(array, 2);
+    if (array.data != reserved_data || array.capacity != reserved_capacity) {
+        status =
+            fail_message(name, "shrink resize replaced the existing buffer");
+        goto cleanup;
+    }
+
+    status = expect_array_eq(name, array.data, array.size, INTS(10, 20));
+    if (status != 0)
+        goto cleanup;
+
     arr_clear(array);
     if (array.size != 0 || array.capacity < 8) {
         status = fail_message(name, "clear changed more than size");
