@@ -1,5 +1,7 @@
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 
 #include "test_main.h"
 
@@ -16,6 +18,24 @@ static const char *test_marker_name(TestMarker marker) {
     }
 
     return NULL; // IMGNEKO_UNCOVERED_OK
+}
+
+// Validate and return the per-test output directory exported by the runner.
+const char *test_get_output_dir(const TestContext *ctx) {
+    const char *output_dir = getenv("IMGNEKO_TEST_OUTPUT_DIR");
+    struct stat output_dir_stat;
+
+    if (output_dir == NULL || output_dir[0] == '\0' ||
+        stat(output_dir, &output_dir_stat) != 0 ||
+        !S_ISDIR(output_dir_stat.st_mode)) {
+        fprintf(stderr,
+                "%s: IMGNEKO_TEST_OUTPUT_DIR is not set to an "
+                "existing directory\n",
+                ctx->test_name);
+        return NULL;
+    }
+
+    return output_dir;
 }
 
 // Run named subtests selected by argv and return the combined status code.

@@ -10,6 +10,11 @@ fail() {
     exit 1
 }
 
+if [ -z "${IMGNEKO_TEST_OUTPUT_DIR:-}" ] ||
+   [ ! -d "$IMGNEKO_TEST_OUTPUT_DIR" ]; then
+    fail "IMGNEKO_TEST_OUTPUT_DIR is not set to an existing directory"
+fi
+
 assert_file_exists() {
     path=$1
 

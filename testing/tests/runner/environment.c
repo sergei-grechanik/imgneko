@@ -19,15 +19,20 @@ static int fail_message(const char *subtest, const char *message) {
 static int test_output_env(TestContext *ctx) {
     const char *subtest = ctx->test_name;
     const char *build_dir = getenv("IMGNEKO_BUILD_DIR");
-    const char *output_dir = getenv("IMGNEKO_TEST_OUTPUT_DIR");
+    const char *output_dir = test_get_output_dir(ctx);
     String expected_dir = str_empty;
     String expected_file = str_empty;
     char cwd[4096];
     int status = 0;
 
-    if (build_dir == NULL || output_dir == NULL) {
+    if (build_dir == NULL) {
         status =
             fail_message(subtest, "required test output env vars are unset");
+        goto cleanup;
+    }
+
+    if (output_dir == NULL) {
+        status = 1;
         goto cleanup;
     }
 

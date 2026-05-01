@@ -16,11 +16,11 @@ static int fail_message(const char *subtest, const char *message) {
 // runner can validate per-test output capture for C tests too.
 static int test_emit_output(TestContext *ctx) {
     const char *subtest = ctx->test_name;
-    const char *output_dir = getenv("IMGNEKO_TEST_OUTPUT_DIR");
+    const char *output_dir = test_get_output_dir(ctx);
     char cwd[4096];
 
     if (output_dir == NULL)
-        return fail_message(subtest, "required test output env vars are unset");
+        return 1;
 
     if (output_dir[0] != '/')
         return fail_message(subtest, "IMGNEKO_TEST_OUTPUT_DIR is not absolute");

@@ -7,6 +7,11 @@ fail() {
     exit 1
 }
 
+if [ -z "${IMGNEKO_TEST_OUTPUT_DIR:-}" ] ||
+   [ ! -d "$IMGNEKO_TEST_OUTPUT_DIR" ]; then
+    fail "IMGNEKO_TEST_OUTPUT_DIR is not set to an existing directory"
+fi
+
 # Assert that a variable is completely absent from the environment, not just
 # set to an empty string.
 require_unset() {
@@ -18,7 +23,6 @@ require_unset() {
 # The runner exports stable paths to the project root and selected build dir.
 test -n "${IMGNEKO_ROOT_DIR:-}" || fail "IMGNEKO_ROOT_DIR is not set"
 test -n "${IMGNEKO_BUILD_DIR:-}" || fail "IMGNEKO_BUILD_DIR is not set"
-test -n "${IMGNEKO_TEST_OUTPUT_DIR:-}" || fail "IMGNEKO_TEST_OUTPUT_DIR is not set"
 
 test -d "$IMGNEKO_ROOT_DIR" || fail "IMGNEKO_ROOT_DIR is not a directory"
 test -d "$IMGNEKO_BUILD_DIR" || fail "IMGNEKO_BUILD_DIR is not a directory"
@@ -31,8 +35,6 @@ expected_output_file=$expected_output_dir/output
 
 test "$IMGNEKO_TEST_OUTPUT_DIR" = "$expected_output_dir" ||
     fail "IMGNEKO_TEST_OUTPUT_DIR does not match this test's output directory"
-test -d "$IMGNEKO_TEST_OUTPUT_DIR" ||
-    fail "IMGNEKO_TEST_OUTPUT_DIR is not a directory"
 test -f "$expected_output_file" || fail "output file is not a regular file"
 
 current_dir=$(pwd)

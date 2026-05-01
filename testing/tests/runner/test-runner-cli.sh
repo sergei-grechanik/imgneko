@@ -10,6 +10,11 @@ fail() {
     exit 1
 }
 
+if [ -z "${IMGNEKO_TEST_OUTPUT_DIR:-}" ] ||
+   [ ! -d "$IMGNEKO_TEST_OUTPUT_DIR" ]; then
+    fail "IMGNEKO_TEST_OUTPUT_DIR is not set to an existing directory"
+fi
+
 RUNNER=$IMGNEKO_BUILD_DIR/bin/test-runner
 OPTION_TEST_DIR=$IMGNEKO_TEST_OUTPUT_DIR/cli-tests-dir
 EMPTY_OUTPUT_DIR=$IMGNEKO_TEST_OUTPUT_DIR/existing-empty-output

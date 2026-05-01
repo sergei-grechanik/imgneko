@@ -11,6 +11,11 @@ fail() {
     exit 1
 }
 
+if [ -z "${IMGNEKO_TEST_OUTPUT_DIR:-}" ] ||
+   [ ! -d "$IMGNEKO_TEST_OUTPUT_DIR" ]; then
+    fail "IMGNEKO_TEST_OUTPUT_DIR is not set to an existing directory"
+fi
+
 RUN_IN_PTY=$IMGNEKO_BUILD_DIR/bin/run-in-pty
 
 [ -x "$RUN_IN_PTY" ] || fail "missing run-in-pty binary: $RUN_IN_PTY"

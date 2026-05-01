@@ -13,6 +13,11 @@ fail() {
     exit 1
 }
 
+if [ -z "${IMGNEKO_TEST_OUTPUT_DIR:-}" ] ||
+   [ ! -d "$IMGNEKO_TEST_OUTPUT_DIR" ]; then
+    fail "IMGNEKO_TEST_OUTPUT_DIR is not set to an existing directory"
+fi
+
 RUNNER=$IMGNEKO_BUILD_DIR/bin/test-runner
 PARALLEL_TEST_DIR=$IMGNEKO_TEST_OUTPUT_DIR/parallel-tests
 SERIAL_OUTPUT_DIR=$IMGNEKO_TEST_OUTPUT_DIR/parallel-serial-output

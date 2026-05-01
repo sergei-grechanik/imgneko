@@ -20,6 +20,11 @@ typedef struct Subtest {
     TestMarker marker;
 } Subtest;
 
+// Return IMGNEKO_TEST_OUTPUT_DIR after verifying that it is set to an
+// existing directory. On failure, print one test-style error message and
+// return NULL.
+const char *test_get_output_dir(const TestContext *ctx);
+
 // Verify that test_func starts with "test_" and produce the displayed subtest
 // name without that prefix.
 // IMGNEKO_UNCOVERED_OK_START

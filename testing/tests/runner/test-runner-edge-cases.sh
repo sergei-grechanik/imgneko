@@ -11,6 +11,11 @@ fail() {
     exit 1
 }
 
+if [ -z "${IMGNEKO_TEST_OUTPUT_DIR:-}" ] ||
+   [ ! -d "$IMGNEKO_TEST_OUTPUT_DIR" ]; then
+    fail "IMGNEKO_TEST_OUTPUT_DIR is not set to an existing directory"
+fi
+
 RUNNER=$IMGNEKO_BUILD_DIR/bin/test-runner
 [ -x "$RUNNER" ] || fail "missing test-runner binary: $RUNNER"
 
