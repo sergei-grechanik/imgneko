@@ -24,6 +24,7 @@
 #include "util/array.h"
 #include "util/error.h"
 #include "util/file.h"
+#include "util/io.h"
 #include "util/options.h"
 #include "util/path.h"
 #include "util/string.h"
@@ -1456,16 +1457,24 @@ static void print_output_tail(const char *output_file_path, size_t max_lines) {
         return;
     }
 
-    fprintf(stderr, "===== LAST %zu LINES OF TEST OUTPUT %s {{{ =====\n",
-            max_lines, output_file_path);
+    fflush(stderr);
+    BufferedWriter writer = buffered_writer_for_fd(STDERR_FILENO);
+    buffered_writer_printf(&writer,
+                           "===== LAST %zu LINES OF TEST OUTPUT %s {{{ =====\n",
+                           max_lines, output_file_path);
     for (size_t i = 0; i < lines.size; ++i) {
         str_trim_trailing_chars(&lines.data[i], "\r\n");
         String escaped =
             str_from_escaped_bytes(lines.data[i].cstr, lines.data[i].len);
-        fprintf(stderr, "%s\n", escaped.cstr);
+
+        buffered_writer_make_room(&writer, escaped.len + 1);
+        buffered_writer_write(&writer, escaped.cstr, escaped.len);
+        buffered_writer_write(&writer, "\n", 1);
         str_free(escaped);
     }
-    fprintf(stderr, "===== }}} END TEST OUTPUT =====\n\n");
+    buffered_writer_printf(&writer, "===== }}} END TEST OUTPUT =====\n\n");
+    buffered_writer_flush(&writer);
+    buffered_writer_free(&writer);
     fflush(stderr);
 
     str_array_free(&lines);

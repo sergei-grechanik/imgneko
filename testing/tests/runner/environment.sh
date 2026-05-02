@@ -65,7 +65,6 @@ require_unset MAKELEVEL
 invalid_output_file=$expected_output_dir/not-a-directory
 : >"$invalid_output_file"
 
-# REVIEW: Do you need to pass IMGNEKO_BUILD_DIR ?
 echo '== c output dir unset =='
 set +e
 env -u IMGNEKO_TEST_OUTPUT_DIR IMGNEKO_BUILD_DIR="$IMGNEKO_BUILD_DIR" \

@@ -11,6 +11,10 @@ $(BUILD_DIR)/obj/src/util/file.o: \
 	$(ROOT_DIR)/src/util/file.c \
 	$(ROOT_DIR)/src/util/file.h \
 	$(ROOT_DIR)/src/util/string.h
+$(BUILD_DIR)/obj/src/util/io.o: \
+	$(ROOT_DIR)/src/util/error.h \
+	$(ROOT_DIR)/src/util/io.c \
+	$(ROOT_DIR)/src/util/io.h
 $(BUILD_DIR)/obj/src/util/options.o: \
 	$(ROOT_DIR)/src/util/array.h \
 	$(ROOT_DIR)/src/util/common.h \
@@ -67,6 +71,13 @@ $(BUILD_DIR)/obj/test-bin/unit/util/file.c.bin: \
 	$(ROOT_DIR)/src/util/string.h \
 	$(ROOT_DIR)/testing/support/test_main.h \
 	$(ROOT_DIR)/testing/tests/unit/util/file.c
+$(BUILD_DIR)/obj/test-bin/unit/util/io.c.bin: \
+	$(ROOT_DIR)/src/util/array.h \
+	$(ROOT_DIR)/src/util/common.h \
+	$(ROOT_DIR)/src/util/io.h \
+	$(ROOT_DIR)/src/util/string.h \
+	$(ROOT_DIR)/testing/support/test_main.h \
+	$(ROOT_DIR)/testing/tests/unit/util/io.c
 $(BUILD_DIR)/obj/test-bin/unit/util/options.c.bin: \
 	$(ROOT_DIR)/src/util/array.h \
 	$(ROOT_DIR)/src/util/common.h \
@@ -160,6 +171,7 @@ $(BUILD_DIR)/obj/testing/tools/test-runner.o: \
 	$(ROOT_DIR)/src/util/common.h \
 	$(ROOT_DIR)/src/util/error.h \
 	$(ROOT_DIR)/src/util/file.h \
+	$(ROOT_DIR)/src/util/io.h \
 	$(ROOT_DIR)/src/util/options.h \
 	$(ROOT_DIR)/src/util/path.h \
 	$(ROOT_DIR)/src/util/string.h \
