@@ -1,10 +1,14 @@
 // SPDX-License-Identifier: MIT-0
 
+// Keep Darwin extension declarations, such as mkdtemp(), visible when strict
+// POSIX feature-test macros are enabled.
+#define _DARWIN_C_SOURCE
 // Enable POSIX APIs used in this file (getcwd).
 #define _POSIX_C_SOURCE 200809L
 
 #include <errno.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
