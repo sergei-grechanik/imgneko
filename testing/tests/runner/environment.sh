@@ -32,10 +32,12 @@ test -f "$IMGNEKO_ROOT_DIR/src/main.c" || fail "project root does not look corre
 # Each test gets its own absolute output directory and runs from it.
 expected_output_dir=$IMGNEKO_BUILD_DIR/test-outputs/runner/environment.sh
 expected_output_file=$expected_output_dir/output
+C_ENV_TEST=$IMGNEKO_BUILD_DIR/obj/test-bin/runner/environment.c.bin
 
 test "$IMGNEKO_TEST_OUTPUT_DIR" = "$expected_output_dir" ||
     fail "IMGNEKO_TEST_OUTPUT_DIR does not match this test's output directory"
 test -f "$expected_output_file" || fail "output file is not a regular file"
+test -x "$C_ENV_TEST" || fail "runner environment C test binary is missing"
 
 current_dir=$(pwd)
 test "$current_dir" = "$IMGNEKO_TEST_OUTPUT_DIR" ||
@@ -58,3 +60,49 @@ require_unset MAKEFLAGS
 require_unset MAKEOVERRIDES
 require_unset MFLAGS
 require_unset MAKELEVEL
+
+invalid_output_file=$expected_output_dir/not-a-directory
+: >"$invalid_output_file"
+
+# REVIEW: Do you need to pass IMGNEKO_BUILD_DIR ?
+echo '== c output dir unset =='
+set +e
+env -u IMGNEKO_TEST_OUTPUT_DIR IMGNEKO_BUILD_DIR="$IMGNEKO_BUILD_DIR" \
+    "$C_ENV_TEST" output_env 2>&1
+printf 'status=%d\n' "$?"
+set -e
+# CHECK-NEXT: {{^}}== c output dir unset =={{$}}
+# CHECK-NEXT: {{^}}output_env: IMGNEKO_TEST_OUTPUT_DIR is not set to an existing directory{{$}}
+# CHECK-NEXT: {{^}}status=1{{$}}
+
+echo '== c output dir empty =='
+set +e
+env IMGNEKO_BUILD_DIR="$IMGNEKO_BUILD_DIR" IMGNEKO_TEST_OUTPUT_DIR= \
+    "$C_ENV_TEST" output_env 2>&1
+printf 'status=%d\n' "$?"
+set -e
+# CHECK-NEXT: {{^}}== c output dir empty =={{$}}
+# CHECK-NEXT: {{^}}output_env: IMGNEKO_TEST_OUTPUT_DIR is not set to an existing directory{{$}}
+# CHECK-NEXT: {{^}}status=1{{$}}
+
+echo '== c output dir missing =='
+set +e
+env IMGNEKO_BUILD_DIR="$IMGNEKO_BUILD_DIR" \
+    IMGNEKO_TEST_OUTPUT_DIR="$expected_output_dir/missing-dir" \
+    "$C_ENV_TEST" output_env 2>&1
+printf 'status=%d\n' "$?"
+set -e
+# CHECK-NEXT: {{^}}== c output dir missing =={{$}}
+# CHECK-NEXT: {{^}}output_env: IMGNEKO_TEST_OUTPUT_DIR is not set to an existing directory{{$}}
+# CHECK-NEXT: {{^}}status=1{{$}}
+
+echo '== c output dir file =='
+set +e
+env IMGNEKO_BUILD_DIR="$IMGNEKO_BUILD_DIR" \
+    IMGNEKO_TEST_OUTPUT_DIR="$invalid_output_file" \
+    "$C_ENV_TEST" output_env 2>&1
+printf 'status=%d\n' "$?"
+set -e
+# CHECK-NEXT: {{^}}== c output dir file =={{$}}
+# CHECK-NEXT: {{^}}output_env: IMGNEKO_TEST_OUTPUT_DIR is not set to an existing directory{{$}}
+# CHECK-NEXT: {{^}}status=1{{$}}

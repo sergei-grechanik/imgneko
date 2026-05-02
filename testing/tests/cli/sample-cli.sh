@@ -32,6 +32,7 @@ env COLUMNS=80 "$SAMPLE_CLI" --help 2>&1
 # CHECK-NEXT: {{^}}                            bool-value parsing.{{$}}
 # CHECK-NEXT: {{^}}  purge                     Exercise a command without positionals and with{{$}}
 # CHECK-NEXT: {{^}}                            short flags.{{$}}
+# CHECK-NEXT: {{^}}  validate                  Exercise validation-only parser edge cases.{{$}}
 # CHECK-NEXT: {{^$}}
 # CHECK-NEXT: {{^}}Options:{{$}}
 # CHECK-NEXT: {{^}}  --version                 Show program version and exit.{{$}}
@@ -104,6 +105,17 @@ env COLUMNS=80 "$SAMPLE_CLI" purge --help 2>&1
 # CHECK-NEXT: {{^}}Options:{{$}}
 # CHECK:      {{^}}  -a, --all                 Remove all cached artifacts.{{$}}
 
+echo '== validation command help =='
+env COLUMNS=80 "$SAMPLE_CLI" validate --help 2>&1
+# CHECK:      {{^}}== validation command help =={{$}}
+# CHECK-NEXT: {{^}}Exercise validation-only parser edge cases.{{$}}
+# CHECK-NEXT: {{^$}}
+# CHECK-NEXT: {{^}}Usage: sample-cli validate [options]{{$}}
+# CHECK-NEXT: {{^$}}
+# CHECK-NEXT: {{^}}Options:{{$}}
+# CHECK:      {{^}}  --toggle BOOL             Accept repeated equivalent boolean values.{{$}}
+# CHECK:      {{^}}  --probe-copy-required     Trigger the validated owned-value copy requirement{{$}}
+
 echo '== help with narrow COLUMNS =='
 env COLUMNS=20 "$SAMPLE_CLI" --help 2>&1
 # CHECK:      {{^}}== help with narrow COLUMNS =={{$}}
@@ -123,6 +135,8 @@ env COLUMNS=20 "$SAMPLE_CLI" --help 2>&1
 # CHECK-NEXT: {{^}}  purge      Exercise a command without{{$}}
 # CHECK-NEXT: {{^}}             positionals and with short{{$}}
 # CHECK-NEXT: {{^}}             flags.{{$}}
+# CHECK-NEXT: {{^}}  validate   Exercise validation-only{{$}}
+# CHECK-NEXT: {{^}}             parser edge cases.{{$}}
 # CHECK-NEXT: {{^$}}
 # CHECK-NEXT: {{^}}Options:{{$}}
 # CHECK-NEXT: {{^}}  --version  Show program version and{{$}}
@@ -145,6 +159,7 @@ env COLUMNS= "$SAMPLE_CLI" --help 2>&1
 # CHECK-NEXT: {{^}}                            bool-value parsing.{{$}}
 # CHECK-NEXT: {{^}}  purge                     Exercise a command without positionals and with{{$}}
 # CHECK-NEXT: {{^}}                            short flags.{{$}}
+# CHECK-NEXT: {{^}}  validate                  Exercise validation-only parser edge cases.{{$}}
 # CHECK-NEXT: {{^$}}
 # CHECK-NEXT: {{^}}Options:{{$}}
 # CHECK-NEXT: {{^}}  --version                 Show program version and exit.{{$}}
@@ -167,6 +182,7 @@ env COLUMNS=184467440737095516161844674407370955161 \
 # CHECK-NEXT: {{^}}                            bool-value parsing.{{$}}
 # CHECK-NEXT: {{^}}  purge                     Exercise a command without positionals and with{{$}}
 # CHECK-NEXT: {{^}}                            short flags.{{$}}
+# CHECK-NEXT: {{^}}  validate                  Exercise validation-only parser edge cases.{{$}}
 # CHECK-NEXT: {{^$}}
 # CHECK-NEXT: {{^}}Options:{{$}}
 # CHECK-NEXT: {{^}}  --version                 Show program version and exit.{{$}}
@@ -191,6 +207,8 @@ echo '== help via pty stdout =='
 # CHECK-NEXT: {{^}}  purge                     Exercise a command without{{$}}
 # CHECK-NEXT: {{^}}                            positionals and with short{{$}}
 # CHECK-NEXT: {{^}}                            flags.{{$}}
+# CHECK-NEXT: {{^}}  validate                  Exercise validation-only{{$}}
+# CHECK-NEXT: {{^}}                            parser edge cases.{{$}}
 # CHECK-NEXT: {{^$}}
 # CHECK-NEXT: {{^}}Options:{{$}}
 # CHECK-NEXT: {{^}}  --version                 Show program version and{{$}}
@@ -243,6 +261,15 @@ echo '== explicit quota =='
 # CHECK: quota: 7 (cli)
 # CHECK: subjects: ["alpha.subject"] (cli)
 
+echo '== invalid empty profile =='
+set +e
+"$SAMPLE_CLI" morph --profile '' alpha.subject 2>&1
+printf 'status=%d\n' "$?"
+set -e
+# CHECK: == invalid empty profile ==
+# CHECK: error: invalid value for --profile:  (profile name must not be empty)
+# CHECK: status=2
+
 echo '== repeated bool aliases =='
 "$SAMPLE_CLI" -k --cache-results alpha.subject 2>&1
 # CHECK: == repeated bool aliases ==
@@ -281,6 +308,60 @@ echo '== explicit bool on =='
 # CHECK: command: audit
 # CHECK: strict: true (cli)
 # CHECK: targets: ["cache"] (cli)
+
+echo '== repeated bool without validation =='
+"$SAMPLE_CLI" validate --toggle yes --toggle on 2>&1
+# CHECK: == repeated bool without validation ==
+# CHECK: command: validate
+# CHECK: toggle: true (cli)
+# CHECK: gate: <unset>
+# CHECK: owned: <unset>
+# CHECK: probe_copy_required: false (default)
+
+echo '== repeated validated true bool =='
+"$SAMPLE_CLI" validate --gate on --gate yes 2>&1
+# CHECK: == repeated validated true bool ==
+# CHECK: command: validate
+# CHECK: toggle: <unset>
+# CHECK: gate: true (cli)
+# CHECK: owned: <unset>
+# CHECK: probe_copy_required: false (default)
+
+echo '== repeated bool validation rejects shortcut =='
+set +e
+"$SAMPLE_CLI" validate --gate off --gate no 2>&1
+printf 'status=%d\n' "$?"
+set -e
+# CHECK: == repeated bool validation rejects shortcut ==
+# CHECK: error: option specified multiple times: --gate
+# CHECK: status=2
+
+echo '== valid owned =='
+"$SAMPLE_CLI" validate --owned keep 2>&1
+# CHECK: == valid owned ==
+# CHECK: command: validate
+# CHECK: toggle: <unset>
+# CHECK: gate: <unset>
+# CHECK: owned: keep (cli)
+# CHECK: probe_copy_required: false (default)
+
+echo '== invalid empty owned =='
+set +e
+"$SAMPLE_CLI" validate --owned '' 2>&1
+printf 'status=%d\n' "$?"
+set -e
+# CHECK: == invalid empty owned ==
+# CHECK: error: invalid value for --owned:  (text must not be empty)
+# CHECK: status=2
+
+echo '== validated owned copy required =='
+set +e
+"$SAMPLE_CLI" validate --probe-copy-required 2>&1
+printf 'status=%d\n' "$?"
+set -e
+# CHECK: == validated owned copy required ==
+# CHECK: error: validated owned option fields require a copy callback
+# CHECK: status=1
 
 echo '== duplicate explicit bool invalid value =='
 set +e
@@ -325,6 +406,15 @@ set -e
 # CHECK: error: invalid value for --window: 0:2 (expected START:END with positive integers and START <= END)
 # CHECK: status=2
 
+echo '== invalid window start text =='
+set +e
+"$SAMPLE_CLI" --window nope:2 2>&1
+printf 'status=%d\n' "$?"
+set -e
+# CHECK: == invalid window start text ==
+# CHECK: error: invalid value for --window: nope:2 (expected START:END with positive integers and START <= END)
+# CHECK: status=2
+
 echo '== invalid window order =='
 set +e
 "$SAMPLE_CLI" --window 3:2 2>&1
@@ -341,6 +431,15 @@ printf 'status=%d\n' "$?"
 set -e
 # CHECK: == invalid window end ==
 # CHECK: error: invalid value for --window: 1:nope (expected START:END with positive integers and START <= END)
+# CHECK: status=2
+
+echo '== invalid window end zero =='
+set +e
+"$SAMPLE_CLI" --window 1:0 2>&1
+printf 'status=%d\n' "$?"
+set -e
+# CHECK: == invalid window end zero ==
+# CHECK: error: invalid value for --window: 1:0 (expected START:END with positive integers and START <= END)
 # CHECK: status=2
 
 echo '== invalid grid separator =='
@@ -370,6 +469,15 @@ set -e
 # CHECK: error: invalid value for --grid: 0x20 (width must be a positive integer)
 # CHECK: status=2
 
+echo '== invalid grid width text =='
+set +e
+"$SAMPLE_CLI" --grid nox20 2>&1
+printf 'status=%d\n' "$?"
+set -e
+# CHECK: == invalid grid width text ==
+# CHECK: error: invalid value for --grid: nox20 (width must be a positive integer)
+# CHECK: status=2
+
 echo '== invalid grid dimension =='
 set +e
 "$SAMPLE_CLI" --grid 10x0 2>&1
@@ -377,6 +485,15 @@ printf 'status=%d\n' "$?"
 set -e
 # CHECK: == invalid grid dimension ==
 # CHECK: error: invalid value for --grid: 10x0 (height must be a positive integer)
+# CHECK: status=2
+
+echo '== invalid grid height text =='
+set +e
+"$SAMPLE_CLI" --grid 10xno 2>&1
+printf 'status=%d\n' "$?"
+set -e
+# CHECK: == invalid grid height text ==
+# CHECK: error: invalid value for --grid: 10xno (height must be a positive integer)
 # CHECK: status=2
 
 # Each slice needs its own --slice, otherwise the argument will be interpreted

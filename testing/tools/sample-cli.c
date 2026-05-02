@@ -213,6 +213,50 @@ static bool parse_grid_size_option(void *value_ptr, const char *text,
 }
 
 //===----------------------------------------------------------------------===//
+// Custom option validation functions
+//===----------------------------------------------------------------------===//
+
+// Accept either boolean value for options that use validation only to exercise
+// the generic parser's bool-idempotence path.
+static bool validate_any_bool(const void *value_ptr, String *error_out) {
+    (void)value_ptr;
+    (void)error_out;
+    return true;
+}
+
+// Reject empty profile names after parsing so String validation covers the
+// ownership-preserving assign-and-rollback path.
+static bool validate_non_empty_profile_name(const void *value_ptr,
+                                            String *error_out) {
+    const String *value = value_ptr;
+
+    if (value->len == 0)
+        return opt_parse_error(error_out, "profile name must not be empty");
+    return true;
+}
+
+// Keep ordinary parsing permissive, but decline the duplicate-idempotence
+// shortcut for the false case so the CLI parser falls back to its duplicate
+// diagnostic path.
+static bool validate_gate_bool(const void *value_ptr, String *error_out) {
+    const bool *value = value_ptr;
+
+    if (error_out == NULL && !*value)
+        return false;
+    return true;
+}
+
+// Reject empty validated-owned strings after parsing.
+static bool validate_non_empty_validation_owned(const void *value_ptr,
+                                                String *error_out) {
+    const String *value = value_ptr;
+
+    if (value->len == 0)
+        return opt_parse_error(error_out, "text must not be empty");
+    return true;
+}
+
+//===----------------------------------------------------------------------===//
 // Define CLI options using the X macro pattern
 //===----------------------------------------------------------------------===//
 
@@ -255,10 +299,12 @@ static bool parse_grid_size_option(void *value_ptr, const char *text,
                  .dflt = "80x24"))                                             \
     X(S, profile, OptString,                                                   \
       OPT_STRING(.cli = "--profile NAME",                                      \
+                 .validate = validate_non_empty_profile_name,                  \
                  .descr = "Select the synthetic profile.", .dflt = "auto"))    \
     X(S, cache_results, OptBool,                                               \
       OPT_BOOL_NEGATABLE(.cli = "-k --cache-results",                          \
                          .cli_negate = "-K --no-cache-results",                \
+                         .validate = validate_any_bool,                        \
                          .descr = "Cache or skip cached morph results."))      \
     X(S, keep_workspace, OptBool,                                              \
       OPT_BOOL_NEGATABLE(.cli = "--keep-workspace",                            \
@@ -306,6 +352,24 @@ static bool parse_grid_size_option(void *value_ptr, const char *text,
       OPT_STRING(.cli = "-o --cache-root DIR",                                 \
                  .descr = "Purge DIR instead of the default cache root."))
 
+#define VALIDATE_ONLY_OPTIONS(X, S)                                            \
+    X(S, toggle, OptBool,                                                      \
+      OPT_BOOL_VALUE(.cli = "--toggle BOOL",                                   \
+                     .descr = "Accept repeated equivalent boolean values."))   \
+    X(S, gate, OptBool,                                                        \
+      OPT_BOOL_VALUE(.cli = "--gate BOOL", .validate = validate_gate_bool,     \
+                     .descr = "Reject one duplicate-idempotence preflight."))  \
+    X(S, owned, OptString,                                                     \
+      OPT_CUSTOM(.parse = opt_parse_string_option,                             \
+                 .validate = validate_non_empty_validation_owned,              \
+                 .clear = opt_clear_string_option, .cli = "--owned TEXT",      \
+                 .descr = "Exercise validated owned values without a copy "    \
+                          "hook."))                                            \
+    X(S, probe_copy_required, OptBool,                                         \
+      OPT_BOOL_FLAG(.cli = "--probe-copy-required",                            \
+                    .descr = "Trigger the validated owned-value copy "         \
+                             "requirement probe."))
+
 //===----------------------------------------------------------------------===//
 // Define options structs for commands
 //===----------------------------------------------------------------------===//
@@ -324,6 +388,9 @@ OPT_DEFINE_STRUCT(AuditOptions, AUDIT_OPTIONS)
     COMMON_OPTIONS(X, S)                                                       \
     PURGE_ONLY_OPTIONS(X, S)
 OPT_DEFINE_STRUCT(PurgeOptions, PURGE_OPTIONS)
+
+#define VALIDATE_OPTIONS(X, S) VALIDATE_ONLY_OPTIONS(X, S)
+OPT_DEFINE_STRUCT(ValidateOptions, VALIDATE_OPTIONS)
 
 // All options, from all commands.
 #define GLOBAL_OPTIONS(X, S)                                                   \
@@ -349,7 +416,9 @@ OPT_DEFINE_STRUCT(ProgramOptions, PROGRAM_OPTIONS)
                            "bool-value parsing."))                             \
     X(Name, purge, PurgeOptions,                                               \
       OPT_COMMAND(.descr = "Exercise a command without positionals and with "  \
-                           "short flags."))
+                           "short flags."))                                    \
+    X(Name, validate, ValidateOptions,                                         \
+      OPT_COMMAND(.descr = "Exercise validation-only parser edge cases."))
 
 OPT_DEFINE_PROGRAM_PARSER_WITH_TOP_LEVEL_OPTIONS(
     SampleCLI,
@@ -506,6 +575,40 @@ static int process_purge_command(const PurgeOptions *command_options) {
     return process_command("purge", &PurgeOptions_schema, command_options);
 }
 
+// Trigger the validated-owned-value path that requires a copy callback when the
+// destination already holds one committed owned value.
+static int run_validate_copy_required_probe(void) {
+    ValidateOptions options;
+    const OptFieldSpec *owned_field =
+        opt_find_field_by_name(&ValidateOptions_schema, "owned");
+
+    ValidateOptions_init(&options);
+    require(owned_field != NULL, "missing validation owned field");
+    require(opt_assign_field_value(owned_field, &options, "alpha",
+                                   strlen("alpha"), OPT_PROVENANCE_DEFAULT,
+                                   NULL),
+            "failed to assign initial validation owned value");
+
+    // This second validated assignment should die before it returns because the
+    // schema intentionally omits the required deep-copy callback.
+    (void)opt_assign_field_value(owned_field, &options, "beta", strlen("beta"),
+                                 OPT_PROVENANCE_DEFAULT, NULL);
+
+    ValidateOptions_deinit(&options);
+    die("expected validation copy-requirement probe to fail");
+}
+
+// Print the validation command fields unless the caller requested the
+// copy-requirement probe path.
+static int process_validate_command(const ValidateOptions *command_options) {
+    if (command_options->probe_copy_required.value)
+        return run_validate_copy_required_probe();
+
+    printf("command: validate\n");
+    print_options_by_schema(&ValidateOptions_schema, command_options);
+    return 0;
+}
+
 // Entrypoint.
 
 int main(int argc, char **argv) {
@@ -535,6 +638,9 @@ int main(int argc, char **argv) {
         break;
     case OPT_CMD_SampleCLI_purge:
         rc = process_purge_command(&parsed.command.purge);
+        break;
+    case OPT_CMD_SampleCLI_validate:
+        rc = process_validate_command(&parsed.command.validate);
         break;
     }
 
