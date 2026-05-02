@@ -80,6 +80,10 @@ OPT_DEFINE_STRUCT(RepeatOptions, REPEAT_OPTIONS)
                 .clear = opt_clear_string_list_option,                         \
                 .copy = opt_copy_string_list_option, .cli = "--item NAME",     \
                 .nargs = "+"))                                                 \
+    X(S, positive_only, OptBool,                                               \
+      OPT_BOOL_NEGATABLE(.cli = "--positive-only", .cli_negate = "",           \
+                         .descr = "Synthetic negatable option without "        \
+                                  "declared negative aliases."))               \
     X(S, file2_count, OptInt,                                                  \
       OPT_ATTRS(.parse = opt_parse_int_option,                                 \
                 .descr = "Fallback positional.  ", .positional = true))

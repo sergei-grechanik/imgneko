@@ -29,7 +29,7 @@ echo '== help =='
 # CHECK-NEXT: {{^}}Usage: run-in-pty [options] -- COMMAND [ARG...]{{$}}
 # CHECK:      {{^}}  --rows ROWS               PTY row count. (default: 24){{$}}
 # CHECK:      {{^}}  --cols COLS               PTY column count. (default: 80){{$}}
-# CHECK:      {{^}}  --opost, --no-opost       Enable PTY output post-processing. (default: false){{$}}
+# CHECK:      {{^}}  --opost / --no-opost      Enable PTY output post-processing. (default: false){{$}}
 # CHECK:      --write-chunk-size BYTES  Maximum stdout forwarding write size.
 # CHECK:      {{^}}                            4096){{$}}
 

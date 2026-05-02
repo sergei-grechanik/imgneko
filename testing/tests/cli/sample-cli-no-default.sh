@@ -170,6 +170,8 @@ env COLUMNS=80 "$SAMPLE_CLI" labels --help 2>&1
 # CHECK-NEXT: {{^}}Options:{{$}}
 # CHECK-NEXT: {{^}}  -s SIZE{{$}}
 # CHECK-NEXT: {{^}}  --item NAME...{{$}}
+# CHECK-NEXT: {{^}}  --positive-only           Synthetic negatable option without declared negative{{$}}
+# CHECK-NEXT: {{^}}                            aliases.{{$}}
 # CHECK-NEXT: {{^}}  -h, --help                Show this help message and exit.{{$}}
 # CHECK-NEXT: {{^$}}
 

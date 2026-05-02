@@ -70,7 +70,7 @@ env COLUMNS=80 "$SAMPLE_CLI" morph --help 2>&1
 # CHECK-NEXT: {{^}}  --grid NxM                Use an NxM work grid for the synthetic job.{{$}}
 # CHECK-NEXT: {{^}}                            (default: 80x24){{$}}
 # CHECK-NEXT: {{^}}  --profile NAME            Select the synthetic profile. (default: auto){{$}}
-# CHECK-NEXT: {{^}}  -k, --cache-results, -K, --no-cache-results{{$}}
+# CHECK-NEXT: {{^}}  -k, --cache-results / -K, --no-cache-results{{$}}
 # CHECK-NEXT: {{^}}                            Cache or skip cached morph results.{{$}}
 # CHECK-NEXT: {{^}}  --keep-workspace          Retain the synthetic workspace after the morph run.{{$}}
 # CHECK-NEXT: {{^}}                            (default: false){{$}}

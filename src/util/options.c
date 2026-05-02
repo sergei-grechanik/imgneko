@@ -519,13 +519,29 @@ static void opt_append_option_label(String *out, const OptFieldSpec *field) {
     opt_require_option_aliases(field);
 
     // Print aliases exactly as declared so help text reflects the real parser
-    // surface. Positive aliases are listed first, followed by any explicit
-    // negated aliases for negatable booleans.
-    opt_append_option_aliases(out, field->attrs.cli, &first);
+    // surface. Positive aliases are listed first. For negatable booleans, the
+    // negated aliases are listed after a '/'.
+    bool appended_primary =
+        opt_append_option_aliases(out, field->attrs.cli, &first);
 
     if (opt_field_is_negatable_bool(field)) {
-        if (field->attrs.cli_negate != NULL)
-            opt_append_option_aliases(out, field->attrs.cli_negate, &first);
+        if (field->attrs.cli_negate != NULL) {
+            if (appended_primary) {
+                String negated_label = str_empty;
+                bool first_negated = true;
+
+                if (opt_append_option_aliases(&negated_label,
+                                              field->attrs.cli_negate,
+                                              &first_negated)) {
+                    str_append_cstr(*out, " / ");
+                    str_append_cstr(*out, negated_label.cstr);
+                }
+
+                str_free(negated_label);
+            } else {
+                opt_append_option_aliases(out, field->attrs.cli_negate, &first);
+            }
+        }
     }
 
     require(!first, "option field is missing CLI aliases");
