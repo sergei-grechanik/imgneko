@@ -1,12 +1,12 @@
 ## Building and testing
 
 The project supports build directories. It is recommended to build and test
-with the asan profile in the asan build directory. Pass the build
+with the dev profile in the dev build directory. Pass the build
 directory to `make` explicitly.
 
 ```sh
-./configure --profile=asan
-make -C build/asan test
+./configure --profile=dev
+make -C build/dev test
 ```
 
 ## General coding style

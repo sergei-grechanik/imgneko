@@ -8,7 +8,7 @@ Usage:
   ./configure [OPTIONS] [VAR=VALUE ...]
 
 Options:
-  --profile=NAME       Select profile: default, release, debug, asan
+  --profile=NAME       Select profile: default, release, debug, asan, dev
   --build-dir=DIR      Build directory (default: build/<profile>)
   --comp-db-mj         Generate compile_commands.json via compiler -MJ output
   --coverage-report    Enable Clang source-based coverage and `make coverage`
@@ -33,7 +33,7 @@ Examples:
   ./configure --profile=release
   ./configure PROFILE=debug BUILD_DIR=build/debug
   ./configure --profile=asan --cc=clang
-  ./configure --profile=debug --cc=clang --coverage-report
+  ./configure --profile=dev
 EOF
 }
 
@@ -545,6 +545,21 @@ case $PROFILE in
         : "${COMP_DB_MJ:=OFF}"
         : "${COVERAGE_REPORT:=OFF}"
         : "${DEPFILES:=OFF}"
+        : "${TEST_JOBS:=$DEFAULT_TEST_JOBS}"
+        ;;
+    dev)
+        : "${PREFIX:=/usr/local}"
+        : "${CC:=clang}"
+        : "${CPPFLAGS:=}"
+        : "${CFLAGS:=--std=c99 -O0 -g3 -Wall -Wextra -Wpedantic -fsanitize=address,undefined}"
+        : "${LDFLAGS:=-fsanitize=address,undefined}"
+        : "${LDLIBS:=}"
+        : "${LLVM_PROFDATA:=}"
+        : "${LLVM_COV:=}"
+        : "${FEATURE_X:=OFF}"
+        : "${COMP_DB_MJ:=ON}"
+        : "${COVERAGE_REPORT:=ON}"
+        : "${DEPFILES:=ON}"
         : "${TEST_JOBS:=$DEFAULT_TEST_JOBS}"
         ;;
     *)

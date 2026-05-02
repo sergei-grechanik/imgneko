@@ -46,6 +46,7 @@ fi
 
 DEFAULT_BUILD=$ROOT_DIR/build/default
 CUSTOM_BUILD=$ROOT_DIR/build/test-debug-custom-cc
+DEV_BUILD=$ROOT_DIR/build/test-dev-profile
 MISSING_CONFIG_BUILD=$ROOT_DIR/build/test-missing-config
 INVALID_FEATURE_BUILD=$ROOT_DIR/build/test-invalid-feature
 INVALID_COMPDB_BUILD=$ROOT_DIR/build/test-invalid-compdb
@@ -285,6 +286,7 @@ trap cleanup EXIT
 assert_path_absent "$LOG_DIR"
 assert_path_absent "$DEFAULT_BUILD"
 assert_path_absent "$CUSTOM_BUILD"
+assert_path_absent "$DEV_BUILD"
 assert_path_absent "$MISSING_CONFIG_BUILD"
 assert_path_absent "$INVALID_FEATURE_BUILD"
 assert_path_absent "$INVALID_COMPDB_BUILD"
@@ -336,6 +338,17 @@ assert_status_zero
 assert_output_contains "profile: debug"
 assert_output_contains "cc: cc"
 assert_output_contains "-DFEATURE_X=1"
+
+# The dev profile is the CI/development configuration: ASan plus every
+# generation-oriented build feature enabled by default.
+say "Dev profile enables ASan, coverage, compile database fragments, and depfiles"
+sh "$ROOT_DIR/configure" --build-dir="$DEV_BUILD" --profile=dev
+assert_file_contains "$DEV_BUILD/config.mk" "override PROFILE = dev"
+assert_file_contains "$DEV_BUILD/config.mk" "override CC = clang"
+assert_file_contains "$DEV_BUILD/config.mk" "-fsanitize=address,undefined"
+assert_file_contains "$DEV_BUILD/config.mk" "override COMP_DB_MJ = ON"
+assert_file_contains "$DEV_BUILD/config.mk" "override COVERAGE_REPORT = ON"
+assert_file_contains "$DEV_BUILD/config.mk" "override DEPFILES = ON"
 
 # In a fresh repository copy with no build directories yet, plain root-level
 # make should direct the user to configure first instead of inventing a default
