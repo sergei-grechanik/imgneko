@@ -100,13 +100,27 @@ echo '== large output, small write chunk =='
 # CHECK-NEXT: {{^}}100000{{$}}
 
 echo '== broken stdout =='
+broken_stdout_fifo=$IMGNEKO_TEST_OUTPUT_DIR/broken-stdout-fifo
+broken_stdout_ready=$IMGNEKO_TEST_OUTPUT_DIR/broken-stdout-ready
+mkfifo "$broken_stdout_fifo"
 set +e
 (
+    # Ignore SIGPIPE so run-in-pty can report the write error instead of being
+    # terminated by the signal.
     trap '' PIPE
+    BROKEN_STDOUT_READY=$broken_stdout_ready \
     "$RUN_IN_PTY" --write-chunk-size 1 -- \
-        sh -c 'head -c 4096 /dev/zero | tr "\000" x' 2>"$IMGNEKO_TEST_OUTPUT_DIR/err"
+        sh -c 'while [ ! -f "$BROKEN_STDOUT_READY" ]; do :; done; printf x' \
+        >"$broken_stdout_fifo" 2>"$IMGNEKO_TEST_OUTPUT_DIR/err"
     printf '%d\n' "$?" >"$IMGNEKO_TEST_OUTPUT_DIR/status"
-) | head -c 1 >/dev/null
+) &
+broken_stdout_pid=$!
+# Unblock the writer's FIFO open, close the reader, and only then let the PTY
+# child produce output. That makes the stdout write fail deterministically.
+exec 9<"$broken_stdout_fifo"
+exec 9<&-
+: >"$broken_stdout_ready"
+wait "$broken_stdout_pid"
 set -e
 cat "$IMGNEKO_TEST_OUTPUT_DIR/err"
 printf 'status=%d\n' "$(cat "$IMGNEKO_TEST_OUTPUT_DIR/status")"
