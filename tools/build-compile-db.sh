@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: MIT-0
 
 # Merge every existing compiler `-MJ` fragment under OBJ_DIR into one
 # compile_commands.json file. The Makefile calls this after build targets that

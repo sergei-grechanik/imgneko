@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: MIT-0
 
 # Exercise nested test-runner invocations so output capture, custom output roots,
 # and failure summaries are verified end to end.

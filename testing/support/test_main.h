@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT-0
+
 #ifndef UTIL_TEST_MAIN_H
 #define UTIL_TEST_MAIN_H
 

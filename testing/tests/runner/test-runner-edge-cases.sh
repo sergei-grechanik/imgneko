@@ -1,4 +1,5 @@
 #!/usr/bin/env run-and-check
+# SPDX-License-Identifier: MIT-0
 # RUN: sh %s
 
 # Exercise additional reachable edge cases in test-runner without mutating the

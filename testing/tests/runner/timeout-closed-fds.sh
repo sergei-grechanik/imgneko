@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: MIT-0
 
 # Close both output streams before sleeping so the runner must enforce the
 # timeout even after the child output pipe reaches EOF. By default this exits

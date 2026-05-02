@@ -1,4 +1,5 @@
 #!/usr/bin/env run-and-check
+# SPDX-License-Identifier: MIT-0
 # RUN: sh %s
 
 # Verify the shared fatal helpers emit the expected stderr text and exit status.

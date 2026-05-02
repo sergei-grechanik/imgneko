@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT-0
+
 // Expose the POSIX/XSI PTY interfaces used below: posix_openpt(), grantpt(),
 // unlockpt(), and ptsname().
 #define _XOPEN_SOURCE 600

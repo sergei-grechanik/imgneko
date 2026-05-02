@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: MIT-0
 # XFAIL
 
 set -eu

@@ -1,4 +1,5 @@
 #!/usr/bin/env run-and-check
+# SPDX-License-Identifier: MIT-0
 # RUN: sh %s
 
 # Verify the standalone C subtest dispatcher by invoking a compiled C test

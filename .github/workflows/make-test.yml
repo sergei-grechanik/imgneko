@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT-0
+
 name: Make Test
 
 # This workflow runs all tests with the default and development configurations.

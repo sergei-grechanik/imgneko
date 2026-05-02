@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: MIT-0
 
 # Emit deterministic stdout/stderr so the test runner can verify per-test output
 # capture, custom output roots, and failure tail reporting.

@@ -1,4 +1,5 @@
 #!/usr/bin/env run-and-check
+# SPDX-License-Identifier: MIT-0
 # RUN: sh %s
 
 # Verify more complex regex fragments, including alternation, bounded repeats,

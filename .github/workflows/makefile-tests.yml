@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT-0
+
 name: Makefile Tests
 
 # This workflow runs tests for the Makefile and the configure script.

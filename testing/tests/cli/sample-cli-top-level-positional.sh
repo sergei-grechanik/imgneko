@@ -1,4 +1,5 @@
 #!/usr/bin/env run-and-check
+# SPDX-License-Identifier: MIT-0
 # RUN: sh %s
 
 # Exercise the validation that rejects command-based parsers with top-level

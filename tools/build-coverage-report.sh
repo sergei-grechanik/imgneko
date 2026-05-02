@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: MIT-0
 
 # Build coverage artifacts from Clang source-based profile data. `make
 # coverage` populates OUTPUT_DIR/profiles with raw .profraw files, then calls

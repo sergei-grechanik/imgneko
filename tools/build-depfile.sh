@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: MIT-0
 
 # Normalize compiler-generated depfiles into one checked-in Makefile fragment
 # that uses repository and build variables instead of absolute paths.

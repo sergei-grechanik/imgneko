@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT-0
+
 #ifndef UTIL_PATH_H
 #define UTIL_PATH_H
 

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT-0
+
 // Enable POSIX APIs used in this file (timespec).
 #define _POSIX_C_SOURCE 200809L
 

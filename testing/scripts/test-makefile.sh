@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: MIT-0
 
 # This is a test for the Makefile and the configure script. It runs a variety of
 # scenarios that cover the expected use cases and error paths.

@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: MIT-0
 
 # Spawn a detached descendant that inherits the output pipe and keeps it open
 # after the direct test process times out. The runner must not block forever

@@ -1,4 +1,5 @@
 #!/usr/bin/env run-and-check
+# SPDX-License-Identifier: MIT-0
 # RUN: sh %s 2>&1
 
 # Verify that stderr participates in matching if the shell redirects it into

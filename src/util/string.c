@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT-0
+
 #include "util/string.h"
 
 // Copy raw bytes into a new owning String while escaping non-printable bytes

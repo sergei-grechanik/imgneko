@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: MIT-0
 
 """Generate text coverage artifacts from `llvm-cov export` JSON.
 

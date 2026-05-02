@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: MIT-0 -->
+
 ## Building and testing
 
 The project supports build directories. It is recommended to build and test

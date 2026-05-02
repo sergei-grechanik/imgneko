@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT-0
+
 #include "util/error.h"
 
 #include <errno.h>

@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: MIT-0
 
 # Verify test markers in list output, skip/xfail accounting, and unexpected
 # success reporting via nested test-runner invocations.
