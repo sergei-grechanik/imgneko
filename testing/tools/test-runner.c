@@ -1457,7 +1457,9 @@ static void print_output_tail(const char *output_file_path, size_t max_lines) {
         return;
     }
 
+    fflush(stdout);
     fflush(stderr);
+
     BufferedWriter writer = buffered_writer_for_fd(STDERR_FILENO);
     buffered_writer_printf(&writer,
                            "===== LAST %zu LINES OF TEST OUTPUT %s {{{ =====\n",
@@ -1475,7 +1477,6 @@ static void print_output_tail(const char *output_file_path, size_t max_lines) {
     buffered_writer_printf(&writer, "===== }}} END TEST OUTPUT =====\n\n");
     buffered_writer_flush(&writer);
     buffered_writer_free(&writer);
-    fflush(stderr);
 
     str_array_free(&lines);
 }

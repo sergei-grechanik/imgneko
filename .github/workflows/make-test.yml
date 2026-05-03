@@ -67,7 +67,7 @@ jobs:
         run: ./configure
 
       - name: Run default-profile tests
-        run: make test
+        run: make test 2>&1
 
   make-test-dev:
     runs-on: ubuntu-latest
@@ -87,7 +87,7 @@ jobs:
 
       - name: Run dev-profile coverage
         # Note: This will run all tests and also generate a coverage report.
-        run: make BUILD_DIR=build/dev coverage
+        run: make BUILD_DIR=build/dev coverage 2>&1
 
       - name: Require empty uncovered quickfix report
         run: |
@@ -116,4 +116,4 @@ jobs:
       - name: Run dev-profile tests
         env:
           MallocNanoZone: "0"
-        run: gmake BUILD_DIR=build/dev test
+        run: gmake BUILD_DIR=build/dev test 2>&1
