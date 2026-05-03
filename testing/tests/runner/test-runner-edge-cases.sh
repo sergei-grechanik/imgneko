@@ -96,7 +96,13 @@ echo '== tests dir equals and similar prefix output =='
 # CHECK-NEXT: start-marker.sh XFAIL
 
 echo '== path unset =='
-env -u PATH "$RUNNER" --jobs=1 --list runner/no-subtests.c 2>&1
+# On macOS, sanitized binaries may try to discover an external symbolizer
+# before main(). With PATH unset, that runtime warning is unrelated to
+# test-runner behavior but lands in this merged output stream.
+env -u PATH \
+    ASAN_OPTIONS="${ASAN_OPTIONS:+$ASAN_OPTIONS:}symbolize=0" \
+    UBSAN_OPTIONS="${UBSAN_OPTIONS:+$UBSAN_OPTIONS:}symbolize=0" \
+    "$RUNNER" --jobs=1 --list runner/no-subtests.c 2>&1
 # CHECK: == path unset ==
 # CHECK-NEXT: runner/no-subtests.c
 
@@ -255,6 +261,8 @@ EOF
 chmod +x "$OUTPUT_DRAIN_RACE_TEST_DIR/reaped-before-output-drain.sh"
 
 echo '== child reaped before output drain =='
+# Delay parent-side reads so the child can exit while output is still buffered,
+# which exercises the normal-exit output-drain deadline.
 "$RUNNER" --jobs=1 --tests-dir "$OUTPUT_DRAIN_RACE_TEST_DIR" \
     --output-dir "$OUTPUT_DRAIN_RACE_OUTPUT_DIR" \
     --debug-parent-output-chunk-delay 0.01 \
@@ -346,7 +354,13 @@ chmod +x "$TIMEOUT_TEST_DIR/ignore-term-too.sh"
 cat >"$TIMEOUT_TEST_DIR/detached-output.sh" <<'EOF'
 #!/bin/sh
 printf '%s\n' 'timeout detached output marker'
-setsid sh -c 'sleep 5' &
+# macOS does not ship a setsid command. Fall back to Perl's POSIX binding so
+# this generated test still starts the sleeper in a new session.
+if command -v setsid >/dev/null 2>&1; then
+    setsid sh -c 'sleep 5' &
+else
+    perl -MPOSIX=setsid -e 'setsid() or die "setsid: $!"; sleep 5' &
+fi
 sleep 2
 EOF
 chmod +x "$TIMEOUT_TEST_DIR/detached-output.sh"
@@ -370,11 +384,13 @@ echo '== parallel timeout bookkeeping =='
 # CHECK: == parallel timeout bookkeeping ==
 # CHECK: RUN: detached-output.sh
 # CHECK: RUN: ignore-term.sh
-# CHECK: TIMEOUT: ignore-term.sh
-# CHECK: TIMEOUT: detached-output.sh
+# The two workers time out independently, and their reporting order depends on
+# scheduling. macOS ASan runs can be slow enough that both orders are realistic.
+# CHECK: TIMEOUT: {{ignore-term|detached-output}}.sh
+# CHECK: TIMEOUT: {{ignore-term|detached-output}}.sh
 # CHECK: timed out tests:
-# CHECK: ignore-term.sh
-# CHECK: detached-output.sh
+# CHECK: {{ignore-term|detached-output}}.sh
+# CHECK: {{ignore-term|detached-output}}.sh
 # CHECK: Summary:
 # CHECK: discovered: 2
 # CHECK: timeout: 2
@@ -388,6 +404,8 @@ echo '== parallel timeout sigkill deadlines =='
 # CHECK: == parallel timeout sigkill deadlines ==
 # CHECK: RUN: ignore-term-too.sh
 # CHECK: RUN: ignore-term.sh
+# SIGKILL escalation for these two timed-out workers races by design, so the
+# order is not stable across platforms.
 # CHECK: TIMEOUT: ignore-term{{|-too}}.sh
 # CHECK: TIMEOUT: ignore-term{{|-too}}.sh
 # CHECK: timed out tests:

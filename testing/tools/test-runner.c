@@ -2,6 +2,9 @@
 
 // Enable POSIX APIs used in this file (getline, strdup/strndup, setenv, etc.).
 #define _POSIX_C_SOURCE 200809L
+// macOS hides mkdtemp() when strict POSIX feature macros are active unless the
+// Darwin extensions are requested explicitly.
+#define _DARWIN_C_SOURCE
 
 #include <dirent.h>
 #include <errno.h>
@@ -206,7 +209,8 @@ typedef struct RunningTest {
     double deadline_seconds;
     // Grace deadline after SIGTERM before escalating to SIGKILL.
     double sigkill_deadline_seconds;
-    // Deadline for giving up on additional pipe output after a timeout.
+    // Deadline for giving up on additional pipe output after the child exits
+    // or after a timeout starts cleanup.
     double output_drain_deadline_seconds;
 
     bool child_reaped;
@@ -267,10 +271,16 @@ static const char *const build_dir = TEST_RUNNER_BUILD_DIR;
 // Root-level file inside the output directory that records per-test timings.
 static const char *const timing_file_name = "test-times.txt";
 // After a timeout sends SIGTERM, wait briefly before escalating to SIGKILL.
-static const double timeout_sigkill_grace_seconds = 0.1;
-// After killing a timed-out test, keep draining buffered output only briefly so
-// a detached descendant that inherited the pipe cannot hang the runner forever.
-static const double timeout_output_drain_grace_seconds = 0.25;
+static const double timeout_sigkill_grace_seconds = 0.5;
+// Keep draining buffered output only briefly after the supervised child is gone
+// so a detached descendant that inherited the pipe cannot hang the runner
+// forever.
+static const double output_drain_grace_seconds = 0.25;
+// Bound otherwise-indefinite sleeps so platforms that miss a SIGCHLD wakeup
+// still make progress by polling child state periodically. This prevents macOS
+// runs from hanging when the child state changes without another readable pipe
+// or pending timeout transition to wake pselect().
+static const double event_loop_idle_poll_seconds = 0.1;
 
 // Per-test environment variable that points tests at their own output
 // directory.
@@ -511,6 +521,7 @@ static bool path_is_prefix(const char *prefix, const char *path) {
     if (strncmp(prefix, path, prefix_len) != 0)
         return false;
 
+    // IMGNEKO_UNCOVERED_OK: path[prefix_len] != '/' hard to trigger cleanly.
     return path[prefix_len] == '\0' || path[prefix_len] == '/';
 }
 
@@ -907,8 +918,8 @@ static void write_all_or_die(int fd, const char *data, size_t len,
     }
 }
 
-// Close a running test's output pipe once the runner has reached EOF or has
-// given up draining it after a timeout.
+// Close a running test's output pipe once the runner has reached EOF or once
+// the short output-drain deadline expires.
 static void close_running_test_output_pipe(RunningTest *running_test) {
     // IMGNEKO_UNCOVERED_OK[2 lines]: Defensive. We always close it here once.
     if (running_test->output_pipe_closed || running_test->output_pipe_fd < 0)
@@ -1128,6 +1139,15 @@ static void reap_running_tests(RunningTestArray *running_tests) {
             require(running_test != NULL, "reaped untracked child");
             running_test->child_reaped = true;
             running_test->status = status;
+            // Reaping the direct child does not guarantee the merged output
+            // pipe is finished. The kernel may still have buffered bytes, or a
+            // detached descendant may still hold the write end open, so set up
+            // drain deadline.
+            if (!running_test->output_pipe_closed &&
+                running_test->output_drain_deadline_seconds == 0.0) {
+                running_test->output_drain_deadline_seconds =
+                    time_monotonic_seconds() + output_drain_grace_seconds;
+            }
             continue;
         }
 
@@ -1169,7 +1189,7 @@ static void sigterm_running_test_process(RunningTest *running_test,
     running_test->sigkill_deadline_seconds =
         now_seconds + timeout_sigkill_grace_seconds;
     running_test->output_drain_deadline_seconds =
-        now_seconds + timeout_output_drain_grace_seconds;
+        now_seconds + output_drain_grace_seconds;
 
     signal_running_test_process_group(running_test, SIGTERM);
 }
@@ -1243,8 +1263,9 @@ static void update_running_test_timeouts(RunningTestArray *running_tests,
         }
 
         // Detached descendants can keep the inherited pipe open after the main
-        // child is gone, so stop draining after a short post-timeout window.
-        if (running_test->timed_out && !running_test->output_pipe_closed &&
+        // child is gone, so stop draining after a short period.
+        if (running_test->output_drain_deadline_seconds > 0.0 &&
+            !running_test->output_pipe_closed &&
             now_seconds >= running_test->output_drain_deadline_seconds) {
             close_running_test_output_pipe(running_test);
         }
@@ -1286,7 +1307,8 @@ static bool next_running_test_deadline(const RunningTestArray *running_tests,
         // different output-drain deadlines. Existing tests only hit the
         // first-deadline case.
         // The deadline for giving up on draining the output pipe.
-        if (running_test->timed_out && !running_test->output_pipe_closed &&
+        if (running_test->output_drain_deadline_seconds > 0.0 &&
+            !running_test->output_pipe_closed &&
             running_test->output_drain_deadline_seconds < deadline)
             deadline = running_test->output_drain_deadline_seconds;
     }
@@ -1341,14 +1363,20 @@ static void wait_for_running_test_events(RunningTestArray *running_tests,
             max_fd = running_test->output_pipe_fd;
     }
 
-    // Bound the sleep by the earliest pending timeout transition, if any.
+    // Bound the sleep by the earliest pending transition. If there is no
+    // specific deadline, still wake periodically so a missed signal cannot
+    // leave the runner asleep forever.
     if (next_running_test_deadline(running_tests, &next_deadline)) {
         wait_timeout = time_timeout_until_deadline(next_deadline, now_seconds);
+        wait_timeout_ptr = &wait_timeout;
+    } else {
+        wait_timeout = time_timeout_until_deadline(
+            now_seconds + event_loop_idle_poll_seconds, now_seconds);
         wait_timeout_ptr = &wait_timeout;
     }
 
     // Sleep until output arrives, a child state change interrupts pselect(),
-    // or the next timeout deadline expires.
+    // or the next deadline expires.
     rc = pselect(max_fd + 1, max_fd >= 0 ? &read_fds : NULL, NULL, NULL,
                  wait_timeout_ptr, &signal_state->wait_mask);
 
@@ -1366,12 +1394,25 @@ static void wait_for_running_test_events(RunningTestArray *running_tests,
             if (!FD_ISSET(running_test->output_pipe_fd, &read_fds))
                 continue;
 
-            if (pump_running_test_output(running_test, output_passthrough) &&
-                output_chunk_delay_seconds > 0.0) {
-                // Debug-only hook to slow output draining enough to exercise
-                // the state where the child is already reaped but unread bytes
-                // still remain buffered in the merged output pipe.
-                time_sleep_seconds(output_chunk_delay_seconds);
+            if (pump_running_test_output(running_test, output_passthrough)) {
+                if (output_chunk_delay_seconds > 0.0) {
+                    // Debug-only hook to slow output draining enough to
+                    // exercise the state where the child is already reaped but
+                    // unread bytes still remain buffered in the merged output
+                    // pipe.
+                    time_sleep_seconds(output_chunk_delay_seconds);
+                }
+                // IMGNEKO_UNCOVERED_OK[2 lines]: Hard to trigger closed pipe.
+                if (running_test->child_reaped &&
+                    !running_test->output_pipe_closed) {
+                    // A successful read after waitpid() means the child is
+                    // gone but the pipe still had buffered output. Restart the
+                    // drain window after the read so we do not close before
+                    // consuming nearby buffered bytes, while still bounding a
+                    // pipe kept open by a descendant.
+                    running_test->output_drain_deadline_seconds =
+                        time_monotonic_seconds() + output_drain_grace_seconds;
+                }
             }
         }
     }

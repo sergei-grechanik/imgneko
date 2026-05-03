@@ -30,8 +30,9 @@ echo '== help =='
 # CHECK:      {{^}}  --rows ROWS               PTY row count. (default: 24){{$}}
 # CHECK:      {{^}}  --cols COLS               PTY column count. (default: 80){{$}}
 # CHECK:      {{^}}  --opost / --no-opost      Enable PTY output post-processing. (default: false){{$}}
-# CHECK:      --write-chunk-size BYTES  Maximum stdout forwarding write size.
-# CHECK:      {{^}}                            4096){{$}}
+# Only match the first line for this option. The default is derived from
+# PIPE_BUF, which is smaller on macOS and changes the wrapped help text.
+# CHECK:      {{^}}  --write-chunk-size BYTES  Maximum stdout forwarding write size.
 
 echo '== default size =='
 "$RUN_IN_PTY" --no-opost -- sh -c 'stty size' 2>&1
@@ -39,14 +40,16 @@ echo '== default size =='
 # CHECK-NEXT: {{^}}24 80{{$}}
 
 echo '== default opost off =='
-"$RUN_IN_PTY" -- sh -c 'printf "x\ny\n"' | od -An -tx1
+# BSD od on macOS and GNU od pad hex output differently. Drop blank padding
+# rows and let the check match either spacing style.
+"$RUN_IN_PTY" -- sh -c 'printf "x\ny\n"' | od -An -tx1 | sed '/^[[:space:]]*$/d'
 # CHECK-NEXT: {{^}}== default opost off =={{$}}
-# CHECK-NEXT: {{^}} 78 0a 79 0a{{$}}
+# CHECK-NEXT: {{^ *78 +0a +79 +0a *$}}
 
 echo '== explicit opost on =='
-"$RUN_IN_PTY" --opost -- sh -c 'printf "x\ny\n"' | od -An -tx1
+"$RUN_IN_PTY" --opost -- sh -c 'printf "x\ny\n"' | od -An -tx1 | sed '/^[[:space:]]*$/d'
 # CHECK-NEXT: {{^}}== explicit opost on =={{$}}
-# CHECK-NEXT: {{^}} 78 0d 0a 79 0d 0a{{$}}
+# CHECK-NEXT: {{^ *78 +0d +0a +79 +0d +0a *$}}
 
 echo '== stty size =='
 "$RUN_IN_PTY" --rows 13 --cols 72 -- sh -c 'stty size' 2>&1
@@ -90,14 +93,16 @@ echo '== forwarded output =='
 # CHECK-NEXT: {{^}}beta{{$}}
 
 echo '== large output =='
+# wc pads counts differently across BSD and GNU implementations, so the
+# expectation accepts the portable count with optional leading spaces.
 "$RUN_IN_PTY" -- sh -c 'i=0; while [ "$i" -lt 100000 ]; do printf x; i=$((i + 1)); done' | wc -c
 # CHECK-NEXT: {{^}}== large output =={{$}}
-# CHECK-NEXT: {{^}}100000{{$}}
+# CHECK-NEXT: {{^ *100000$}}
 
 echo '== large output, small write chunk =='
 "$RUN_IN_PTY" --write-chunk-size 16 -- sh -c 'i=0; while [ "$i" -lt 100000 ]; do printf x; i=$((i + 1)); done' | wc -c
 # CHECK-NEXT: {{^}}== large output, small write chunk =={{$}}
-# CHECK-NEXT: {{^}}100000{{$}}
+# CHECK-NEXT: {{^ *100000$}}
 
 echo '== broken stdout =='
 broken_stdout_fifo=$IMGNEKO_TEST_OUTPUT_DIR/broken-stdout-fifo

@@ -150,9 +150,12 @@ run_runner_pending_signal_mixed_state_test() {
 
     mkdir "$state_dir"
 
+    # These windows are longer than the logical race needs because macOS ASan
+    # runs can be slow enough for shorter values to collapse the intended mixed
+    # state before the interrupt is sent.
     IMGNEKO_RUNNER_SIGNAL_STATE_DIR="$state_dir" \
         "$RUNNER" --tests-dir "$RUNNER_SIGNAL_TEST_DIR" --output-dir "$output_dir" \
-        --output-passthrough --debug-parent-output-chunk-delay 1 --timeout 0.2 \
+        --output-passthrough --debug-parent-output-chunk-delay 6 --timeout 5.0 \
         -j 3 --filter 'g-output-then-exit.sh|h-closed-fds-fast-success.sh|i-ignore-term-timeout.sh' \
         >"$log_path" 2>&1 &
     runner_pid=$!
@@ -160,7 +163,7 @@ run_runner_pending_signal_mixed_state_test() {
     # Wait until the timeout candidate has started and the passthrough output
     # appears. The runner prints the chunk before sleeping in the debug delay,
     # which leaves the stop signal pending until shutdown polling after:
-    # - h has already exited and closed its pipe, and
+    # - h has already closed its output pipe while its process keeps running,
     # - i has already crossed its timeout deadline.
     wait_for_path "$state_dir/i.started"
     # The mixed-state assertions depend on interrupting the runner before it
@@ -189,7 +192,7 @@ run_runner_completed_timeout_shutdown_test() {
 
     IMGNEKO_RUNNER_SIGNAL_STATE_DIR="$state_dir" \
         "$RUNNER" --tests-dir "$RUNNER_SIGNAL_TEST_DIR" --output-dir "$output_dir" \
-        --timeout 1.0 -j 2 \
+        --timeout 5.0 -j 2 \
         --filter 'j-timeout-exit-on-term.sh|k-delay-slot.sh|l-signal-window.sh' \
         >"$log_path" 2>&1 &
     runner_pid=$!
@@ -200,7 +203,9 @@ run_runner_completed_timeout_shutdown_test() {
     #   output-drain deadline, and
     # - l is still running and keeping the event loop blocked in pselect().
     wait_for_path "$state_dir/l.started"
-    sleep 0.4
+    # Keep enough wall-clock space for the timeout path to settle under macOS
+    # ASan load before delivering the interrupt.
+    sleep 2.5
     kill "-$signal_name" "$runner_pid"
 
     set +e
@@ -328,15 +333,18 @@ exit 0
 EOF
 chmod +x "$RUNNER_SIGNAL_TEST_DIR/g-output-then-exit.sh"
 
-# Exits with stdout/stderr closed so the runner can observe a fully completed
-# child (reaped and output pipe closed) before shutdown processing begins.
+# Closes stdout/stderr while keeping the process alive so the runner observes a
+# child with no remaining output pipe that still needs shutdown cleanup.
 cat >"$RUNNER_SIGNAL_TEST_DIR/h-closed-fds-fast-success.sh" <<'EOF'
 #!/bin/sh
 set -eu
 state_dir=${IMGNEKO_RUNNER_SIGNAL_STATE_DIR:?}
 : >"$state_dir/h.started"
+trap 'exit 0' TERM INT
 exec 1>&- 2>&-
-exit 0
+while :; do
+    sleep 0.1
+done
 EOF
 chmod +x "$RUNNER_SIGNAL_TEST_DIR/h-closed-fds-fast-success.sh"
 
@@ -367,12 +375,12 @@ done
 EOF
 chmod +x "$RUNNER_SIGNAL_TEST_DIR/j-timeout-exit-on-term.sh"
 
-# Short-lived child that exits before j times out, freeing a job slot so the
+# Delayed child that exits before j times out, freeing a job slot so the
 # signal-window child can start later and therefore have a later timeout
-# deadline than j.
+# deadline than j. The delay is intentionally wide for macOS ASan scheduling.
 cat >"$RUNNER_SIGNAL_TEST_DIR/k-delay-slot.sh" <<'EOF'
 #!/bin/sh
-sleep 0.9
+sleep 3
 EOF
 chmod +x "$RUNNER_SIGNAL_TEST_DIR/k-delay-slot.sh"
 
@@ -497,9 +505,11 @@ cat "$COMPLETED_TIMEOUT_INTERRUPT_LOG"
 # CHECK: == runner completed timeout interrupt ==
 # CHECK: RUN: j-timeout-exit-on-term.sh
 # CHECK: RUN: k-delay-slot.sh
-# CHECK: PASS: k-delay-slot.sh
-# CHECK: RUN: l-signal-window.sh
-# CHECK: TIMEOUT: j-timeout-exit-on-term.sh
+# k's PASS, l's RUN, and j's TIMEOUT all happen near the same scheduling window,
+# so accept any ordering among those three lines.
+# CHECK: {{PASS: k-delay-slot\.sh|RUN: l-signal-window\.sh|TIMEOUT: j-timeout-exit-on-term\.sh}}
+# CHECK: {{PASS: k-delay-slot\.sh|RUN: l-signal-window\.sh|TIMEOUT: j-timeout-exit-on-term\.sh}}
+# CHECK: {{PASS: k-delay-slot\.sh|RUN: l-signal-window\.sh|TIMEOUT: j-timeout-exit-on-term\.sh}}
 # CHECK: Summary:
 # CHECK: discovered: 3
 # CHECK: passed: 1

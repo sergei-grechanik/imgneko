@@ -34,6 +34,27 @@ assert_file_contains() {
     fi
 }
 
+# Poll instead of sleeping for live-output assertions. macOS ASan runs can start
+# the nested child slowly enough that a fixed sleep checks the log too early.
+wait_for_file_contains() {
+    path=$1
+    needle=$2
+    i=0
+
+    while [ "$i" -lt 200 ]; do
+        if [ -f "$path" ] && grep -F -- "$needle" "$path" >/dev/null 2>&1; then
+            return 0
+        fi
+        sleep 0.05
+        i=$((i + 1))
+    done
+
+    printf '%s\n' "Timed out waiting for file to contain: $needle" >&2
+    printf '%s\n' "Actual file: $path" >&2
+    sed -n '1,200p' "$path" >&2
+    exit 1
+}
+
 assert_file_not_contains() {
     path=$1
     needle=$2
@@ -95,8 +116,7 @@ IMGNEKO_TEST_PASSTHROUGH_DELAY=1 "$RUNNER" --jobs=1 --output-dir "$PASSTHROUGH_O
     -p --filter runner/output.sh \
     >"$PASSTHROUGH_LOG" 2>&1 &
 passthrough_pid=$!
-sleep 1
-assert_file_contains "$PASSTHROUGH_LOG" "output script stdout marker"
+wait_for_file_contains "$PASSTHROUGH_LOG" "output script stdout marker"
 kill -0 "$passthrough_pid" >/dev/null 2>&1 ||
     fail "passthrough run exited before live-output check"
 wait "$passthrough_pid" || fail "nested passthrough run failed"

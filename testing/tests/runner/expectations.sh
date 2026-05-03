@@ -225,9 +225,11 @@ assert_file_exists "$TIMEOUT_CLOSED_FDS_OUTPUT"
 [ ! -s "$TIMEOUT_CLOSED_FDS_OUTPUT" ] ||
     fail "expected closed-fds timeout output to be empty"
 
+# Keep the detached child alive well past the allowed elapsed time, leaving room
+# for coarse date +%s timing and macOS ASan scheduling.
 detached_start=$(date +%s)
 set +e
-IMGNEKO_TEST_TIMEOUT_DETACHED_OUTPUT_SLEEP_SECONDS=5 \
+IMGNEKO_TEST_TIMEOUT_DETACHED_OUTPUT_SLEEP_SECONDS=10 \
     "$RUNNER" --jobs=1 --output-dir "$TIMEOUT_DETACHED_OUTPUT_ROOT" --timeout 1 \
     --filter runner/timeout-detached-output.sh \
     >"$TIMEOUT_DETACHED_OUTPUT_LOG" 2>&1
@@ -236,7 +238,7 @@ set -e
 detached_elapsed=$(( $(date +%s) - detached_start ))
 
 [ "$status" -ne 0 ] || fail "detached-output timeout run unexpectedly passed"
-[ "$detached_elapsed" -lt 4 ] ||
+[ "$detached_elapsed" -lt 6 ] ||
     fail "detached-output timeout run took too long: ${detached_elapsed}s"
 
 assert_file_contains "$TIMEOUT_DETACHED_OUTPUT_LOG" \

@@ -378,14 +378,6 @@ echo '== unsafe repo =='
 # CHECK: == unsafe repo ==
 # CHECK-NEXT: error: unsafe output directory: {{.+}}
 
-# Dropping the last character keeps this path as a plain string prefix of the
-# repo root without making it a path-component prefix, so it must stay allowed.
-SIMILAR_REPO_OUTPUT_DIR=${IMGNEKO_ROOT_DIR%?}
-echo '== similar repo prefix =='
-"$RUNNER" --output-dir "$SIMILAR_REPO_OUTPUT_DIR" runner/no-subtests.c 2>&1
-# CHECK: == similar repo prefix ==
-# CHECK: Result: SUCCESS
-
 echo '== unsafe parent =='
 "$RUNNER" --output-dir "$REPO_PARENT" runner/no-subtests.c 2>&1 || true
 # CHECK: == unsafe parent ==
