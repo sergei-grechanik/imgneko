@@ -42,6 +42,7 @@ printf 'expected timing file: %s\n' "$PASS_TIMING_FILE"
 # CHECK: discovered: 1
 # CHECK: passed: 1
 # CHECK: Time: {{[0-9]+[.][0-9]+}} s
+# CHECK-NEXT: Output dir: [[pass_output_dir:[a-zA-Z0-9_/-]+]]
 # CHECK-NEXT: Timing file: [[pass_timing_file]]
 # CHECK-NEXT: Result: SUCCESS
 
@@ -69,6 +70,7 @@ printf 'expected timing file: %s\n' "$MARKERS_TIMING_FILE"
 # CHECK: xfailed: 2
 # CHECK: disabled: 2
 # CHECK: Time: {{[0-9]+[.][0-9]+}} s
+# CHECK-NEXT: Output dir: [[markers_output_dir:[a-zA-Z0-9_/-]+]]
 # CHECK-NEXT: Timing file: [[markers_timing_file]]
 # CHECK-NEXT: Result: SUCCESS
 
@@ -98,6 +100,7 @@ printf 'expected timing file: %s\n' "$TIMEOUT_TIMING_FILE"
 # CHECK: discovered: 1
 # CHECK: timeout: 1
 # CHECK: Time: {{[0-9]+[.][0-9]+}} s
+# CHECK-NEXT: Output dir: [[timeout_output_dir:[a-zA-Z0-9_/-]+]]
 # CHECK-NEXT: Timing file: [[timeout_timing_file]]
 # CHECK-NEXT: Result: FAILURE
 

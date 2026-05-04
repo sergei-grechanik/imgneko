@@ -137,6 +137,7 @@ typedef struct CliOptions {
     bool list_only;
     bool run_all;
     bool output_passthrough;
+    bool out_tmp;
     int jobs;
     String tests_dir;
     String output_dir;
@@ -730,9 +731,13 @@ static void validate_output_dir(const char *output_dir) {
               .descr = "Run up to JOBS tests concurrently.",                   \
               .dflt = UTIL_STRINGIFY(TEST_RUNNER_DEFAULT_JOBS)))               \
     X(S, output_dir, OptString,                                                \
-      OPT_STRING(.cli = "--output-dir DIR",                                    \
+      OPT_STRING(.cli = "--output-dir --out-dir DIR",                          \
                  .descr = "Write captured test output under DIR.",             \
                  .dflt = TEST_RUNNER_BUILD_DIR "/test-outputs"))               \
+    X(S, out_tmp, OptBool,                                                     \
+      OPT_BOOL_FLAG(.cli = "--output-tmp --out-tmp",                           \
+                    .descr = "Create a temporary output directory instead of " \
+                             "using --out-dir."))                              \
     X(S, filter_patterns, OptStringList,                                       \
       OPT_STRING_LIST(.cli = "--filter PATTERN",                               \
                       .descr = "Match tests with shell-style wildcard "        \
@@ -2145,9 +2150,12 @@ static bool parse_cli_args(int argc, char **argv, CliOptions *options,
     options->debug_parent_output_chunk_delay_seconds =
         parsed_options->debug_parent_output_chunk_delay_seconds.value;
 
-    resolve_cli_path_option(&options->output_dir,
-                            parsed_options->output_dir.value.cstr,
-                            "failed to resolve output directory");
+    options->out_tmp = parsed_options->out_tmp.value;
+    if (!options->out_tmp) {
+        resolve_cli_path_option(&options->output_dir,
+                                parsed_options->output_dir.value.cstr,
+                                "failed to resolve output directory");
+    }
     resolve_cli_path_option(&options->tests_dir,
                             parsed_options->tests_dir.value.cstr,
                             "failed to resolve tests directory");
@@ -2179,9 +2187,16 @@ static bool parse_cli_args(int argc, char **argv, CliOptions *options,
 // Validate the parsed command-line options and apply any runtime setup they
 // require.
 static void finalize_cli_options(CliOptions *options) {
-    validate_output_dir(options->output_dir.cstr);
-    if (!options->list_only)
+    if (!options->list_only) {
+        if (options->out_tmp) {
+            // Use options->output_dir directly as the mkdtemp buffer.
+            options->output_dir = str_from_cstr("/tmp/imgneko-test-XXXXXX");
+            require(mkdtemp(options->output_dir.cstr) != NULL,
+                    "failed to mkdtemp");
+        }
+        validate_output_dir(options->output_dir.cstr);
         require_empty_output_dir(options->output_dir.cstr);
+    }
     if (options->debug_flip_exit_probability > 0.0)
         seed_debug_random();
 }
@@ -2336,7 +2351,8 @@ static void run_selected_tests(const CliOptions *options,
 
 // Finish the run by checking whether any test matched and printing the final
 // summary for execution mode.
-static void finalize_run_result(TestRunnerState *state, int *exit_code_out) {
+static void finalize_run_result(const CliOptions *options,
+                                TestRunnerState *state, int *exit_code_out) {
     print_named_test_list("timed out tests", &state->summary.timed_out_tests);
     print_named_test_list("failed tests", &state->summary.failed_tests);
     print_named_test_list("xpassed tests", &state->summary.xpassed_tests);
@@ -2361,6 +2377,7 @@ static void finalize_run_result(TestRunnerState *state, int *exit_code_out) {
 
     printf("Time: %.3f s\n",
            time_monotonic_seconds() - state->run_start_seconds);
+    printf("Output dir: %s\n", options->output_dir.cstr);
     printf("Timing file: %s\n", state->timing_file_path.cstr);
     printf("Result: %s\n", state->shutdown_requested
                                ? "INTERRUPTED"
@@ -2401,7 +2418,7 @@ int main(int argc, char **argv) {
     print_run_start_message(&options, &state);
     signal_state_init(&state.signal_state);
     run_selected_tests(&options, &state);
-    finalize_run_result(&state, &exit_code);
+    finalize_run_result(&options, &state, &exit_code);
     signal_state_deinit(&state.signal_state);
 
 cleanup:

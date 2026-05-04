@@ -59,7 +59,7 @@ echo '== help =='
 # CHECK: --list                    List matching tests without running them.
 # CHECK: --all                     Run the entire discovered test set.
 # CHECK: -j, --jobs JOBS
-# CHECK: --output-dir DIR
+# CHECK: --output-dir, --out-dir DIR
 # CHECK: --filter PATTERN...
 # CHECK: --tests-dir DIR
 # CHECK: --test-bin-dir DIR
@@ -369,12 +369,12 @@ echo '== nonempty output dir =='
 # CHECK: remove it first with rm -rf '{{.*nonempty-output}}'
 
 echo '== unsafe slash =='
-"$RUNNER" --list --output-dir / 2>&1 || true
+"$RUNNER" --output-dir / runner/no-subtests.c 2>&1 || true
 # CHECK: == unsafe slash ==
 # CHECK: error: unsafe output directory: /
 
 echo '== unsafe repo =='
-"$RUNNER" --list --output-dir "$IMGNEKO_ROOT_DIR" 2>&1 || true
+"$RUNNER" --output-dir "$IMGNEKO_ROOT_DIR" runner/no-subtests.c 2>&1 || true
 # CHECK: == unsafe repo ==
 # CHECK-NEXT: error: unsafe output directory: {{.+}}
 
@@ -382,18 +382,17 @@ echo '== unsafe repo =='
 # repo root without making it a path-component prefix, so it must stay allowed.
 SIMILAR_REPO_OUTPUT_DIR=${IMGNEKO_ROOT_DIR%?}
 echo '== similar repo prefix =='
-"$RUNNER" --list --output-dir "$SIMILAR_REPO_OUTPUT_DIR" \
-    runner/no-subtests.c 2>&1
+"$RUNNER" --output-dir "$SIMILAR_REPO_OUTPUT_DIR" runner/no-subtests.c 2>&1
 # CHECK: == similar repo prefix ==
-# CHECK-NEXT: runner/no-subtests.c
+# CHECK: Result: SUCCESS
 
 echo '== unsafe parent =='
-"$RUNNER" --list --output-dir "$REPO_PARENT" 2>&1 || true
+"$RUNNER" --output-dir "$REPO_PARENT" runner/no-subtests.c 2>&1 || true
 # CHECK: == unsafe parent ==
 # CHECK-NEXT: error: unsafe output directory: {{.+}}
 
 echo '== unsafe build =='
-"$RUNNER" --list --output-dir "$IMGNEKO_BUILD_DIR" 2>&1 || true
+"$RUNNER" --output-dir "$IMGNEKO_BUILD_DIR" runner/no-subtests.c 2>&1 || true
 # CHECK: == unsafe build ==
 # CHECK-NEXT: error: unsafe output directory: {{.+}}
 
@@ -410,3 +409,10 @@ set -e
 # CHECK: == relative output dir from deleted cwd ==
 # CHECK: error: failed to resolve output directory: No such file or directory
 # CHECK: status=1
+
+echo "== --out-tmp =="
+# Run a single fast test with --out-tmp to verify that the runner creates a
+# temporary output directory and reports its path on completion.
+"$RUNNER" --out-tmp runner/no-subtests.c 2>&1
+# CHECK: == --out-tmp ==
+# CHECK: Output dir: /tmp/imgneko-test-{{.+}}
