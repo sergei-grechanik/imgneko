@@ -173,6 +173,50 @@ static int test_resolve_absolute(TestContext *ctx) {
 
     status = expect_string_eq(name, resolved.cstr, resolved.len,
                               STR("/tmp/example"));
+    if (status != 0)
+        goto cleanup;
+
+    // Relative paths are normalized after they are joined to the current
+    // working directory, so `.` and `..` do not leak into the result.
+    str_free(expected);
+    expected = str_from_cstr(cwd);
+    path_append(&expected, "child");
+    if (!path_resolve_absolute(&resolved, "./alpha/../child//")) {
+        status = fail_message(name, "failed to resolve a normalized path");
+        goto cleanup;
+    }
+
+    status = expect_string_eq(name, resolved.cstr, resolved.len, expected.cstr,
+                              expected.len);
+    if (status != 0)
+        goto cleanup;
+
+    // A relative path may start with `..`; normalization still happens after
+    // the path is made absolute from cwd.
+    char *last_slash = strrchr(cwd, '/');
+    size_t parent_len = last_slash == cwd ? 1 : (size_t)(last_slash - cwd);
+    str_free(expected);
+    expected = str_from_data(cwd, parent_len);
+    path_append(&expected, "sibling");
+    if (!path_resolve_absolute(&resolved, "../sibling/./leaf/..")) {
+        status = fail_message(name, "failed to resolve a parent-relative path");
+        goto cleanup;
+    }
+
+    status = expect_string_eq(name, resolved.cstr, resolved.len, expected.cstr,
+                              expected.len);
+    if (status != 0)
+        goto cleanup;
+
+    // Parent traversal above the root stays at the root, and ordinary dotted
+    // components such as `.x` are preserved unless a later `..` removes them.
+    if (!path_resolve_absolute(&resolved, "/../tmp/./.x/../example//")) {
+        status = fail_message(name, "failed to resolve a root-parent path");
+        goto cleanup;
+    }
+
+    status = expect_string_eq(name, resolved.cstr, resolved.len,
+                              STR("/tmp/example"));
 
 cleanup:
     str_free(resolved);

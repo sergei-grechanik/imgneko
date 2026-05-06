@@ -84,6 +84,14 @@ For owned dynamically allocated strings, use the `String` type from
   printf "Exit code: %d\n" "$?"
   ```
 
+## Testing
+
+Prefer shell run-and-check tests for testing CLI. C tests should be used for
+unit testing C code.
+
+Every test should have a clear description explaining what we are testing and
+why.
+
 ## Addressing review comments
 
 If the user asks you to address review comments, search for the comments

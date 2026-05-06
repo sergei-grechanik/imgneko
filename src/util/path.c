@@ -5,6 +5,7 @@
 
 #include "util/path.h"
 
+#include <assert.h>
 #include <errno.h>
 #include <limits.h>
 #include <stdlib.h>
@@ -16,6 +17,58 @@ bool path_is_absolute(const char *path) { return path[0] == '/'; }
 void path_trim_trailing_slashes(String *path) {
     while (path->len > 1 && path->cstr[path->len - 1] == '/')
         str_truncate(*path, path->len - 1);
+}
+
+// Remove the last component from a normalized absolute path. Such a path starts
+// with `/`, has no repeated separators, has no `.` or `..` components, and has
+// no trailing slash unless it is the root path. The root path stays unchanged.
+static void path_drop_last_component(String *path) {
+    while (path->len > 1 && path->cstr[path->len - 1] != '/')
+        str_drop_back(*path, 1);
+    if (path->len > 1)
+        str_drop_back(*path, 1);
+}
+
+// Normalize an absolute path by collapsing repeated separators, removing `.`
+// components, applying `..` components without moving above root, and trimming
+// the trailing slash unless the result is root.
+static void path_normalize_absolute(String *path) {
+    assert(path_is_absolute(path->cstr));
+
+    String normalized = str_from_cstr("/");
+    size_t index = 0;
+
+    while (path->cstr[index] != '\0') {
+        size_t component_start;
+        size_t component_len;
+
+        while (path->cstr[index] == '/')
+            ++index;
+        component_start = index;
+        while (path->cstr[index] != '\0' && path->cstr[index] != '/')
+            ++index;
+
+        component_len = index - component_start;
+        if (component_len == 0)
+            break;
+
+        if (component_len == 1 && path->cstr[component_start] == '.')
+            continue;
+
+        if (component_len == 2 && path->cstr[component_start] == '.' &&
+            path->cstr[component_start + 1] == '.') {
+            path_drop_last_component(&normalized);
+            continue;
+        }
+
+        if (normalized.len > 1)
+            str_push(normalized, '/');
+        str_append_data(normalized, path->cstr + component_start,
+                        component_len);
+    }
+
+    str_free(*path);
+    *path = normalized;
 }
 
 void path_append(String *path, const char *segment) {
@@ -111,7 +164,7 @@ bool path_resolve_absolute(String *out, const char *path) {
         path_append(&resolved, path);
     }
 
-    path_trim_trailing_slashes(&resolved);
+    path_normalize_absolute(&resolved);
     *out = resolved;
     return true;
 }

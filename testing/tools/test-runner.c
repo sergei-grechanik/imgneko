@@ -6,6 +6,7 @@
 // Darwin extensions are requested explicitly.
 #define _DARWIN_C_SOURCE
 
+#include <assert.h>
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -60,7 +61,7 @@ typedef enum TestMarker {
     TEST_MARKER_DISABLED,
 } TestMarker;
 
-// One discovered runnable file under `testing/tests/`.
+// A discovered runnable file under `testing/tests/`.
 //
 // rel_path is the path relative to that test root, for example:
 // `integration/unit/util/string.c`
@@ -75,13 +76,13 @@ typedef struct TestFile {
     String abs_path;
 } TestFile;
 
-// One subtest reported by a compiled C test binary.
+// A subtest reported by a compiled C test binary.
 typedef struct CSubtest {
     String name;
     TestMarker marker;
 } CSubtest;
 
-// One runnable test case expanded from a discovered file.
+// A runnable test case expanded from a discovered file.
 //
 // Example for a C test with subtests:
 // id:            `integration/unit/util/string.c/empty_and_reserve`
@@ -102,7 +103,20 @@ typedef struct TestCase {
     String c_subtest;
 } TestCase;
 
-// Result of running one test case in a child process.
+// A path supplied on the command line to limit the discovered test set.
+//
+// `path` is the argument normalized to an absolute path. Relative arguments are
+// resolved against the invocation cwd before the runner changes directory for
+// discovery and test execution.
+typedef struct TestPathSelector {
+    String arg;
+    String path;
+    bool matched_path;
+} TestPathSelector;
+
+DEFINE_ARRAY_TYPE(TestPathSelectorArray, TestPathSelector)
+
+// Result of running a test case in a child process.
 typedef struct TestRunResult {
     int exit_code;
     bool interrupted;
@@ -137,6 +151,7 @@ typedef struct TestRunConfig {
 // Parsed command-line options plus their derived filter/path state.
 typedef struct CliOptions {
     StringArray filters;
+    TestPathSelectorArray path_selectors;
     bool list_only;
     bool run_all;
     bool output_passthrough;
@@ -177,7 +192,7 @@ typedef struct TestSignalState {
     bool installed;
 } TestSignalState;
 
-// One currently running/supervised test child plus its captured-output state.
+// A currently running/supervised test child plus its captured-output state.
 //
 // Lifecycle:
 // 1. start_test_process() fills this after fork/exec setup succeeds.
@@ -244,7 +259,7 @@ DEFINE_ARRAY_TYPE(RunningTestArray, RunningTest)
 DEFINE_ARRAY_TYPE(TestFileArray, TestFile)
 DEFINE_ARRAY_TYPE(TestCaseArray, TestCase)
 
-// Mutable process-wide state for one test-runner invocation.
+// Mutable process-wide state for a test-runner invocation.
 typedef struct TestRunnerState {
     TestFileArray files;
     TestCaseArray cases;
@@ -325,6 +340,14 @@ static void string_array_push_copy(StringArray *array, const char *item) {
 static void c_subtest_array_free(CSubtestArray *array) {
     for (size_t i = 0; i < array->size; ++i)
         str_free(array->data[i].name);
+    arr_free(*array);
+}
+
+static void test_path_selector_array_free(TestPathSelectorArray *array) {
+    for (size_t i = 0; i < array->size; ++i) {
+        str_free(array->data[i].arg);
+        str_free(array->data[i].path);
+    }
     arr_free(*array);
 }
 
@@ -523,6 +546,32 @@ static bool path_is_prefix(const char *prefix, const char *path) {
 
     // IMGNEKO_UNCOVERED_OK: path[prefix_len] != '/' hard to trigger cleanly.
     return path[prefix_len] == '\0' || path[prefix_len] == '/';
+}
+
+// Store a positional PATH argument as an absolute path prefix to compare with
+// discovered test cases later. No filesystem probing is needed here: after
+// discovery, an unmatched selector is reported as "no tests matched".
+static void parse_test_path_selector(const char *arg,
+                                     TestPathSelectorArray *selectors) {
+    String path = str_empty;
+
+    if (!path_resolve_absolute(&path, arg))
+        die_errno("failed to resolve test path");
+
+    TestPathSelector selector = {
+        .arg = str_from_cstr(arg),
+        .path = path,
+        .matched_path = false,
+    };
+
+    arr_push(*selectors, selector);
+}
+
+// Parse all positional PATH arguments into selector prefixes.
+static void parse_test_path_selectors(const StringArray *path_args,
+                                      TestPathSelectorArray *selectors) {
+    for (size_t i = 0; i < path_args->size; ++i)
+        parse_test_path_selector(path_args->data[i].cstr, selectors);
 }
 
 // Comparator for deterministic sorting of discovered files by relative path.
@@ -728,8 +777,8 @@ static void validate_output_dir(const char *output_dir) {
     str_free(build_dir_abs);
 }
 
-// CLI schema for test-runner. Filters can be supplied either through repeated
-// `--filter` options or as positional patterns.
+// CLI schema for test-runner. `--filter` limits tests by shell-style id
+// patterns; positional arguments limit tests by filesystem path.
 #define TEST_RUNNER_CLI_OPTIONS(X, S)                                          \
     X(S, list_only, OptBool,                                                   \
       OPT_BOOL_FLAG(.cli = "--list",                                           \
@@ -750,7 +799,7 @@ static void validate_output_dir(const char *output_dir) {
                     .descr = "Create a temporary output directory instead of " \
                              "using --out-dir."))                              \
     X(S, filter_patterns, OptStringList,                                       \
-      OPT_STRING_LIST(.cli = "--filter PATTERN",                               \
+      OPT_STRING_LIST(.cli = "--filter -f PATTERN",                            \
                       .descr = "Match tests with shell-style wildcard "        \
                                "PATTERN values. Use '|' for alternation."))    \
     X(S, tests_dir, OptString,                                                 \
@@ -786,9 +835,15 @@ static void validate_output_dir(const char *output_dir) {
                  .validate = opt_validate_non_negative_double,                 \
                  .descr = "Sleep between captured-output chunks to exercise "  \
                           "drain timing."))                                    \
-    X(S, positional_patterns, OptStringList,                                   \
-      OPT_STRING_LIST(.cli = "PATTERN",                                        \
-                      .descr = "Additional shell-style wildcard patterns.",    \
+    X(S, positional_paths, OptStringList,                                      \
+      OPT_STRING_LIST(.cli = "PATH",                                           \
+                      .descr =                                                 \
+                          "Select tests by file, directory, or "               \
+                          "C-subtest path. Relative PATHs are resolved "       \
+                          "against the current directory (NOT the tests "      \
+                          "directory). Multiple PATHs are ORed; "              \
+                          "--filter patterns are ORed; the final set is the "  \
+                          "intersection of PATH and filter matches.",          \
                       .positional = true))
 
 OPT_DEFINE_STRUCT(TestRunnerCliArgs, TEST_RUNNER_CLI_OPTIONS)
@@ -941,7 +996,7 @@ static void close_running_test_output_file(RunningTest *running_test) {
     running_test->output_fd = -1;
 }
 
-// Read one chunk from the merged child-output pipe, append it to the captured
+// Read a chunk from the merged child-output pipe, append it to the captured
 // output file, and optionally mirror it to the user's terminal. Returns
 // whether a non-empty chunk was consumed.
 static bool pump_running_test_output(RunningTest *running_test,
@@ -998,7 +1053,7 @@ static RunningTest *find_running_test_by_pid(RunningTestArray *running_tests,
     return NULL;
 }
 
-// Fork and exec one test case, returning a fully initialized RunningTest that
+// Fork and exec a test case, returning a fully initialized RunningTest that
 // the wait loop owns and later releases with running_test_deinit(). The input
 // path strings transfer ownership into the returned struct.
 static RunningTest start_test_process(const TestCase *test_case,
@@ -1320,7 +1375,7 @@ static bool next_running_test_deadline(const RunningTestArray *running_tests,
     return true;
 }
 
-// Sleep until one child emits output, exits, or reaches the next timeout
+// Sleep until a child emits output, exits, or reaches the next timeout
 // transition, then process the newly available events.
 static void wait_for_running_test_events(RunningTestArray *running_tests,
                                          bool output_passthrough,
@@ -1563,6 +1618,56 @@ static bool test_matches_filters(const TestCase *test_case,
     return false;
 }
 
+// Check whether a prefix selects the test case's absolute id. For C subtests,
+// the absolute id is the source path plus the subtest name:
+// `/tests/root/foo.c/subtest_name`.
+static bool test_abs_id_has_prefix(const TestCase *test_case,
+                                   const char *prefix) {
+    if (path_is_prefix(prefix, test_case->file_abs_path.cstr))
+        return true;
+
+    if (test_case->c_subtest.len == 0)
+        return false;
+
+    size_t file_len = test_case->file_abs_path.len;
+    size_t prefix_len = strlen(prefix);
+    if (prefix_len <= file_len ||
+        strncmp(prefix, test_case->file_abs_path.cstr, file_len) != 0 ||
+        prefix[file_len] != '/') {
+        return false;
+    }
+
+    return path_is_prefix(prefix + file_len + 1, test_case->c_subtest.cstr);
+}
+
+// Check whether a test case is selected by the absolute spelling of a PATH
+// argument.
+static bool test_matches_selector_path(const TestCase *test_case,
+                                       const TestPathSelector *selector) {
+    return test_abs_id_has_prefix(test_case, selector->path.cstr);
+}
+
+// Check whether a test matches any path selector. Empty selector arrays match
+// everything. Matched selectors are marked before filters are applied so a path
+// combined with an overly narrow filter is not reported as an invalid path.
+static bool test_matches_path_selectors(const TestCase *test_case,
+                                        TestPathSelectorArray *selectors) {
+    bool matched = false;
+
+    if (selectors->size == 0)
+        return true;
+
+    for (size_t i = 0; i < selectors->size; ++i) {
+        if (!test_matches_selector_path(test_case, &selectors->data[i]))
+            continue;
+
+        selectors->data[i].matched_path = true;
+        matched = true;
+    }
+
+    return matched;
+}
+
 // Expand `|` alternation in filter patterns into individual match patterns.
 // Return false after reporting a CLI error if any alternation part is empty.
 static bool flatten_filters(const StringArray *patterns, StringArray *out) {
@@ -1768,7 +1873,7 @@ static void print_summary_count(const char *label, size_t count) {
         printf("  %s: %zu\n", label, count);
 }
 
-// Print the [current/total] prefix for one recorded test result line.
+// Print the [current/total] prefix for a recorded test result line.
 static void print_test_result_prefix(const TestRunnerState *state) {
     printf("[%zu/%zu] ", state->num_recorded_results + 1, state->discovered);
 }
@@ -1783,7 +1888,7 @@ static void print_run_start_message(const CliOptions *options,
     fflush(stdout);
 }
 
-// Print the user-facing shutdown message for one runner-shutdown signal.
+// Print the user-facing shutdown message for a runner-shutdown signal.
 static void print_shutdown_signal_message(int signal_number) {
     switch (signal_number) {
     case SIGINT:
@@ -1927,7 +2032,7 @@ update_summary_for_classified_result(RunSummary *summary,
     }
 }
 
-// Print the final status line for one classified test result and, for failures
+// Print the final status line for a classified test result and, for failures
 // and timeouts, include the captured output tail unless passthrough already
 // showed the full stream live.
 static void print_classified_test_result(const TestRunnerState *state,
@@ -1977,7 +2082,7 @@ static void print_classified_test_result(const TestRunnerState *state,
 }
 
 // Open the root-level timing file before the run starts so every recorded test
-// can append one machine-readable line immediately.
+// can append a machine-readable line immediately.
 static void open_timing_file(TestRunnerState *state, const char *output_dir) {
     require(mkdir_p(output_dir), "failed to create a directory: %errno");
     state->timing_file_path = timing_file_path(output_dir);
@@ -2002,7 +2107,7 @@ static void append_timing_file_record(const TestRunnerState *state,
 }
 
 // Update the summary, print the terminal status line, and record the
-// timing entry for one already-classified test result.
+// timing entry for an already-classified test result.
 static void
 record_classified_test_result(TestRunnerState *state, const TestCase *test_case,
                               const ClassifiedTestResult *classified,
@@ -2016,7 +2121,7 @@ record_classified_test_result(TestRunnerState *state, const TestCase *test_case,
     state->num_recorded_results++;
 }
 
-// Update state for one completed test: summary counters, status output, and the
+// Update state for a completed test: summary counters, status output, and the
 // next result index.
 static void record_test_result(TestRunnerState *state,
                                const RunningTest *running_test,
@@ -2104,6 +2209,7 @@ static void prepare_env_vars(void) {
 static void cli_options_init(CliOptions *options) {
     *options = (CliOptions){
         .filters = arr_empty,
+        .path_selectors = arr_empty,
         .tests_dir = str_empty,
         .output_dir = str_empty,
         .test_bin_dir = str_empty,
@@ -2114,6 +2220,7 @@ static void cli_options_deinit(CliOptions *options) {
     str_free(options->test_bin_dir);
     str_free(options->output_dir);
     str_free(options->tests_dir);
+    test_path_selector_array_free(&options->path_selectors);
     str_array_free(&options->filters);
 }
 
@@ -2156,7 +2263,7 @@ static void test_runner_state_deinit(TestRunnerState *state) {
     test_file_array_free(&state->files);
 }
 
-// Resolve one parsed path option against the caller's current working
+// Resolve a parsed path option against the caller's current working
 // directory.
 static void resolve_cli_path_option(String *out, const char *text,
                                     const char *error_message) {
@@ -2205,21 +2312,24 @@ static bool parse_cli_args(int argc, char **argv, CliOptions *options,
                             "failed to resolve test-bin directory");
 
     if (!flatten_filters(&parsed_options->filter_patterns.value,
-                         &options->filters) ||
-        !flatten_filters(&parsed_options->positional_patterns.value,
                          &options->filters)) {
         *exit_code_out = 2;
         TestRunnerCliArgs_deinit(&parsed.top_level);
         return false;
     }
 
-    if (options->run_all && options->filters.size != 0) {
-        fprintf(stderr, "error: --all cannot be combined with --filter or "
-                        "positional patterns\n");
+    if (options->run_all &&
+        (options->filters.size != 0 ||
+         parsed_options->positional_paths.value.size != 0)) {
+        fprintf(stderr,
+                "error: --all cannot be combined with --filter or paths\n");
         *exit_code_out = 2;
         TestRunnerCliArgs_deinit(&parsed.top_level);
         return false;
     }
+
+    parse_test_path_selectors(&parsed_options->positional_paths.value,
+                              &options->path_selectors);
 
     TestRunnerCliArgs_deinit(&parsed.top_level);
     return true;
@@ -2274,19 +2384,42 @@ static bool discover_tests_for_run(const CliOptions *options,
     return true;
 }
 
-// Append every discovered test case that matches the active filters to
-// selected_cases, preserving discovery order.
+// Append every discovered test case that matches the active path selectors and
+// filters to selected_cases, preserving discovery order.
 static void collect_selected_test_cases(const TestCaseArray *cases,
+                                        TestPathSelectorArray *path_selectors,
                                         const StringArray *filters,
                                         TestCasePtrArray *selected_cases) {
     for (size_t i = 0; i < cases->size; ++i) {
         const TestCase *test_case = &cases->data[i];
+
+        if (!test_matches_path_selectors(test_case, path_selectors))
+            continue;
 
         if (!test_matches_filters(test_case, filters))
             continue;
 
         arr_push(*selected_cases, test_case);
     }
+}
+
+// Report path arguments that resolved successfully but did not select any
+// discovered test case.
+static bool
+validate_path_selectors_matched(const TestPathSelectorArray *path_selectors) {
+    bool ok = true;
+
+    for (size_t i = 0; i < path_selectors->size; ++i) {
+        const TestPathSelector *selector = &path_selectors->data[i];
+
+        if (!selector->matched_path) {
+            fprintf(stderr, "error: no tests matched test path: %s\n",
+                    selector->arg.cstr);
+            ok = false;
+        }
+    }
+
+    return ok;
 }
 
 // Print the already-selected tests in discovery order for `--list`.
@@ -2310,7 +2443,7 @@ static void record_disabled_test(TestRunnerState *state,
     record_classified_test_result(state, test_case, &classified, NULL, false);
 }
 
-// Start one selected test or, for disabled entries, record the synthetic result
+// Start a selected test or, for disabled entries, record the synthetic result
 // immediately without consuming a job slot.
 static void start_selected_test(const CliOptions *options,
                                 TestRunnerState *state,
@@ -2440,9 +2573,14 @@ int main(int argc, char **argv) {
     prepare_test_run_environment();
     if (!discover_tests_for_run(&options, &state, &exit_code))
         goto cleanup;
-    collect_selected_test_cases(&state.cases, &options.filters,
-                                &state.selected_cases);
+    collect_selected_test_cases(&state.cases, &options.path_selectors,
+                                &options.filters, &state.selected_cases);
     state.discovered = state.selected_cases.size;
+
+    if (!validate_path_selectors_matched(&options.path_selectors)) {
+        exit_code = 2;
+        goto cleanup;
+    }
 
     if (options.list_only) {
         list_selected_tests(&state);

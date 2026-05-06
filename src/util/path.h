@@ -29,7 +29,8 @@ String path_join(const char *left, const char *right);
 bool mkdir_p(const char *path);
 
 // Resolve `path` to an absolute path, using the current working directory when
-// the input is relative.
+// the input is relative. Repeated separators plus `.` and `..` components are
+// normalized lexically; symlinks are not resolved.
 //
 // `*out` must hold a valid String. This function always frees the previous
 // value in `*out` first.
