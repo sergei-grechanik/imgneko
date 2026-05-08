@@ -34,10 +34,15 @@ SAME_LINE_VAR_LOG=$(mktemp /tmp/imgneko-run-and-check-same-line-var.XXXXXX)
 SAME_LINE_WITHOUT_PREVIOUS_LOG=$(mktemp /tmp/imgneko-run-and-check-same-line-without-previous.XXXXXX)
 OUTPUT_DIR_LOG=$(mktemp /tmp/imgneko-run-and-check-output-dir.XXXXXX)
 WHOLE_LINE_NOT_LOG=$(mktemp /tmp/imgneko-run-and-check-whole-line-not.XXXXXX)
+DAG_AFTER_LAST_LOG=$(mktemp /tmp/imgneko-run-and-check-dag-after-last.XXXXXX)
+DAG_NOT_LOG=$(mktemp /tmp/imgneko-run-and-check-dag-not.XXXXXX)
+DAG_NOT_BARRIER_LOG=$(mktemp /tmp/imgneko-run-and-check-dag-not-barrier.XXXXXX)
+DAG_OVERLAP_LOG=$(mktemp /tmp/imgneko-run-and-check-dag-overlap.XXXXXX)
 
 cleanup() {
     rm -f "$NOT_LOG" "$VAR_LOG" "$NOT_VAR_DEF_LOG" "$NOT_VAR_USE_LOG" "$NEXT_NO_NEXT_LINE_LOG" "$ANCHOR_LOG" "$SAME_LINE_VAR_LOG" "$OUTPUT_DIR_LOG" "$WHOLE_LINE_NOT_LOG"
     rm -f "$SAME_LINE_WITHOUT_PREVIOUS_LOG"
+    rm -f "$DAG_AFTER_LAST_LOG" "$DAG_NOT_LOG" "$DAG_NOT_BARRIER_LOG" "$DAG_OVERLAP_LOG"
 }
 
 trap cleanup EXIT
@@ -139,6 +144,52 @@ assert_file_contains "$WHOLE_LINE_NOT_LOG" "not-whole-line-anchor-fail.sh: note:
 assert_file_contains "$WHOLE_LINE_NOT_LOG" "not-whole-line-anchor-fail.sh:13: error: CHECK-NOT matched forbidden output"
 assert_file_contains "$WHOLE_LINE_NOT_LOG" "not-whole-line-anchor-fail.sh:13: note: pattern: {{^b$}}"
 assert_file_contains "$WHOLE_LINE_NOT_LOG" "not-whole-line-anchor-fail.sh:13: note: output line 2: b"
+
+set +e
+"$RUN_AND_CHECK" "$TEST_DIR/check-dag-after-last-fail.sh" >"$DAG_AFTER_LAST_LOG" 2>&1
+status=$?
+set -e
+
+[ "$status" -ne 0 ] ||
+    fail "CHECK after CHECK-DAG failure unexpectedly passed"
+assert_file_contains "$DAG_AFTER_LAST_LOG" "check-dag-after-last-fail.sh: note: RUN exit code: 0"
+assert_file_contains "$DAG_AFTER_LAST_LOG" "check-dag-after-last-fail.sh:17: error: CHECK did not match"
+assert_file_contains "$DAG_AFTER_LAST_LOG" "check-dag-after-last-fail.sh:17: note: pattern: end"
+assert_file_contains "$DAG_AFTER_LAST_LOG" "check-dag-after-last-fail.sh:17: note: there is no remaining output to search"
+
+set +e
+"$RUN_AND_CHECK" "$TEST_DIR/check-dag-not-fail.sh" >"$DAG_NOT_LOG" 2>&1
+status=$?
+set -e
+
+[ "$status" -ne 0 ] || fail "CHECK-DAG CHECK-NOT failure unexpectedly passed"
+assert_file_contains "$DAG_NOT_LOG" "check-dag-not-fail.sh: note: RUN exit code: 0"
+assert_file_contains "$DAG_NOT_LOG" "check-dag-not-fail.sh:13: error: CHECK-NOT matched forbidden output"
+assert_file_contains "$DAG_NOT_LOG" "check-dag-not-fail.sh:13: note: pattern: forbidden"
+assert_file_contains "$DAG_NOT_LOG" "check-dag-not-fail.sh:13: note: output line 2: forbidden"
+
+set +e
+"$RUN_AND_CHECK" "$TEST_DIR/check-dag-not-barrier-fail.sh" >"$DAG_NOT_BARRIER_LOG" 2>&1
+status=$?
+set -e
+
+[ "$status" -ne 0 ] ||
+    fail "CHECK-DAG CHECK-NOT barrier failure unexpectedly passed"
+assert_file_contains "$DAG_NOT_BARRIER_LOG" "check-dag-not-barrier-fail.sh: note: RUN exit code: 0"
+assert_file_contains "$DAG_NOT_BARRIER_LOG" "check-dag-not-barrier-fail.sh:13: error: CHECK-DAG did not match"
+assert_file_contains "$DAG_NOT_BARRIER_LOG" "check-dag-not-barrier-fail.sh:13: note: pattern: after"
+assert_file_contains "$DAG_NOT_BARRIER_LOG" "check-dag-not-barrier-fail.sh:13: note: there is no remaining output to search"
+
+set +e
+"$RUN_AND_CHECK" "$TEST_DIR/check-dag-overlap-fail.sh" >"$DAG_OVERLAP_LOG" 2>&1
+status=$?
+set -e
+
+[ "$status" -ne 0 ] || fail "overlapping CHECK-DAG failure unexpectedly passed"
+assert_file_contains "$DAG_OVERLAP_LOG" "check-dag-overlap-fail.sh: note: RUN exit code: 0"
+assert_file_contains "$DAG_OVERLAP_LOG" "check-dag-overlap-fail.sh:11: error: CHECK-DAG did not match"
+assert_file_contains "$DAG_OVERLAP_LOG" "check-dag-overlap-fail.sh:11: note: pattern: aa"
+assert_file_contains "$DAG_OVERLAP_LOG" "check-dag-overlap-fail.sh:11: note: output line 1: aaa"
 
 set +e
 IMGNEKO_TEST_OUTPUT_DIR= "$RUN_AND_CHECK" "$TEST_DIR/output-dir.sh" >"$OUTPUT_DIR_LOG" 2>&1

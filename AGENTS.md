@@ -51,6 +51,11 @@ message" prefer "print an error message".
   call site, e.g. `foo(arg1, arg2, /*buffer=*/arg3);`. If the values are
   descriptive enough, this is not necessary, e.g.
   `foo(num_items, item_size, buffer);`.
+- All output parameters should be documented. Prefer grouping purely output
+  parameters together at the end of the parameter list.
+- If a function has more than 3 parameters, all of them must be explained in the
+  function description, and every one of them deserves a separate line in the
+  description.
 
 ### Strings
 

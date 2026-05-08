@@ -26,6 +26,7 @@
 
 typedef enum DirectiveKind {
     DIRECTIVE_CHECK,
+    DIRECTIVE_CHECK_DAG,
     DIRECTIVE_CHECK_SAME,
     DIRECTIVE_CHECK_NEXT,
     DIRECTIVE_CHECK_NOT,
@@ -74,6 +75,7 @@ typedef struct CaptureBinding {
 
 DEFINE_ARRAY_TYPE(PatternSegmentArray, PatternSegment)
 DEFINE_ARRAY_TYPE(CaptureBindingArray, CaptureBinding)
+DEFINE_ARRAY_TYPE(LineMatchArray, LineMatch)
 
 // One check directive parsed from the source file.
 typedef struct CheckDirective {
@@ -94,8 +96,16 @@ typedef struct CompiledPattern {
 } CompiledPattern;
 
 DEFINE_ARRAY_TYPE(CheckDirectiveArray, CheckDirective)
-DEFINE_ARRAY_TYPE(CheckDirectivePtrArray, CheckDirective *)
 DEFINE_ARRAY_TYPE(OutputLineArray, OutputLine)
+
+// One pending CHECK-NOT directive compiled with the variables visible at the
+// point where the directive appears.
+typedef struct PendingNotDirective {
+    const CheckDirective *directive;
+    CompiledPattern pattern;
+} PendingNotDirective;
+
+DEFINE_ARRAY_TYPE(PendingNotDirectiveArray, PendingNotDirective)
 
 // Map variable names to owned String values.
 KHASH_MAP_INIT_STR(VariableMap, String)
@@ -197,6 +207,8 @@ static const char *directive_kind_name(DirectiveKind kind) {
     switch (kind) { // IMGNEKO_UNCOVERED_OK
     case DIRECTIVE_CHECK:
         return "CHECK";
+    case DIRECTIVE_CHECK_DAG:
+        return "CHECK-DAG";
     case DIRECTIVE_CHECK_SAME:
         return "CHECK-SAME";
     case DIRECTIVE_CHECK_NEXT:
@@ -234,6 +246,13 @@ static void capture_binding_array_free(CaptureBindingArray *bindings) {
     arr_free(*bindings);
 }
 
+static CompiledPattern compiled_pattern_empty(void) {
+    return (CompiledPattern){
+        .regex_text = str_empty,
+        .bindings = arr_empty,
+    };
+}
+
 static void compiled_pattern_free(CompiledPattern *pattern) {
     if (pattern->regex_ready)
         regfree(&pattern->regex);
@@ -241,6 +260,19 @@ static void compiled_pattern_free(CompiledPattern *pattern) {
     capture_binding_array_free(&pattern->bindings);
     pattern->capture_group_count = 0;
     pattern->regex_ready = false;
+}
+
+static void
+pending_not_directive_array_clear(PendingNotDirectiveArray *pending_not) {
+    for (size_t i = 0; i < pending_not->size; ++i)
+        compiled_pattern_free(&pending_not->data[i].pattern);
+    arr_clear(*pending_not);
+}
+
+static void
+pending_not_directive_array_free(PendingNotDirectiveArray *pending_not) {
+    pending_not_directive_array_clear(pending_not);
+    arr_free(*pending_not);
 }
 
 static void parsed_test_free(ParsedTest *parsed) {
@@ -497,6 +529,9 @@ static bool parse_test_file(const char *path, ParsedTest *parsed) {
         DirectiveKind kind;
         if (name_len == 5 && strncmp(directive_name, "CHECK", 5) == 0) {
             kind = DIRECTIVE_CHECK;
+        } else if (name_len == 9 &&
+                   strncmp(directive_name, "CHECK-DAG", 9) == 0) {
+            kind = DIRECTIVE_CHECK_DAG;
         } else if (name_len == 10 &&
                    strncmp(directive_name, "CHECK-SAME", 10) == 0) {
             kind = DIRECTIVE_CHECK_SAME;
@@ -678,6 +713,26 @@ static bool compile_pattern(const char *path, const CheckDirective *directive,
     return true;
 }
 
+// Compile and remember a CHECK-NOT directive using the variable values visible
+// at the directive. The pending list owns the compiled pattern after success.
+static bool add_pending_not_directive(const char *path,
+                                      PendingNotDirectiveArray *pending_not,
+                                      const CheckDirective *directive,
+                                      const VariableContext *variables) {
+    PendingNotDirective pending = {
+        .directive = directive,
+        .pattern = compiled_pattern_empty(),
+    };
+
+    if (!compile_pattern(path, directive, variables, &pending.pattern)) {
+        compiled_pattern_free(&pending.pattern);
+        return false;
+    }
+
+    arr_push(*pending_not, pending);
+    return true;
+}
+
 // Search one output line segment for a match. When `pmatch` is non-NULL it
 // must point at `nmatch` writable entries.
 static bool regex_search_segment(const CompiledPattern *pattern,
@@ -743,8 +798,8 @@ static bool regex_search_segment(const CompiledPattern *pattern,
 }
 
 // Read the stdout file into logical lines so matching keeps its line-oriented
-// CHECK, CHECK-SAME, and CHECK-NEXT semantics without holding the raw file
-// contents in one large string.
+// CHECK-family semantics without holding the raw file contents in one large
+// string.
 static void read_output_lines(const char *path, OutputLineArray *lines) {
     StringArray file_lines = arr_empty;
 
@@ -800,6 +855,179 @@ static bool find_check_match(const CompiledPattern *pattern,
     }
 
     return false;
+}
+
+// Return whether `candidate` shares any output bytes with a previous
+// CHECK-DAG match. Empty matches do not consume bytes, so they do not overlap.
+static bool dag_match_overlaps(const LineMatchArray *previous_matches,
+                               const LineMatch *candidate) {
+    if (candidate->start_column == candidate->end_column)
+        return false;
+
+    for (size_t i = 0; i < previous_matches->size; ++i) {
+        const LineMatch *previous = &previous_matches->data[i];
+        if (previous->start_column == previous->end_column)
+            continue;
+
+        if (previous->line_index != candidate->line_index)
+            continue;
+        if (candidate->start_column < previous->end_column &&
+            previous->start_column < candidate->end_column)
+            return true;
+    }
+
+    return false;
+}
+
+// Return whether `rhs` ends later in the output than `lhs`.
+static bool line_match_ends_after(const LineMatch *lhs, const LineMatch *rhs) {
+    if (rhs->line_index != lhs->line_index)
+        return rhs->line_index > lhs->line_index;
+    return rhs->end_column > lhs->end_column;
+}
+
+// Return whether `lhs` starts earlier in the output than `rhs`.
+static bool line_match_starts_before(const LineMatch *lhs,
+                                     const LineMatch *rhs) {
+    if (lhs->line_index != rhs->line_index)
+        return lhs->line_index < rhs->line_index;
+    return lhs->start_column < rhs->start_column;
+}
+
+// Search for the next CHECK-DAG match from `start`. The match must not overlap
+// any of the matches in `previous_matches`.
+//
+// On success, store the matched output range in `match_out`, leave `captures`
+// populated for the caller, and return true. Return false if no non-overlapping
+// match exists.
+static bool find_check_dag_match(const CompiledPattern *pattern,
+                                 const OutputLineArray *lines,
+                                 OutputPosition start,
+                                 const LineMatchArray *previous_matches,
+                                 LineMatch *match_out, regmatch_t *captures,
+                                 size_t capture_count) {
+    for (size_t line_index = start.line_index; line_index < lines->size;
+         ++line_index) {
+        const OutputLine *line = &lines->data[line_index];
+        size_t search_column =
+            line_index == start.line_index ? start.column : 0;
+
+        // Search the same line repeatedly, advancing by one column each time,
+        // until we find a match that does not overlap any previous CHECK-DAG
+        // match or we run out of matches.
+        while (true) {
+            if (!regex_search_segment(
+                    pattern, line, /*start_column=*/search_column,
+                    /*end_column=*/line->text.len, /*pmatch=*/captures,
+                    /*nmatch=*/capture_count))
+                break;
+
+            LineMatch candidate = {
+                .line_index = line_index,
+                .start_column = (size_t)captures[0].rm_so,
+                .end_column = (size_t)captures[0].rm_eo,
+            };
+
+            if (!dag_match_overlaps(previous_matches, &candidate)) {
+                *match_out = candidate;
+                return true;
+            }
+
+            search_column = candidate.start_column + 1;
+        }
+    }
+
+    return false;
+}
+
+typedef enum CheckMatchStatus {
+    CHECK_MATCH_FOUND,
+    CHECK_MATCH_NOT_FOUND,
+    CHECK_MATCH_ERROR,
+} CheckMatchStatus;
+
+typedef struct CheckDagGroupMatch {
+    const CheckDirective *failed_directive;
+    LineMatch earliest_match;
+    LineMatch latest_match;
+} CheckDagGroupMatch;
+
+static void apply_captures(VariableContext *variables,
+                           const CompiledPattern *pattern,
+                           const OutputLine *line, const regmatch_t *captures);
+
+// Match one CHECK-DAG group by finding a non-overlapping match for each
+// directive in `directives`.
+//
+// Returns CHECK_MATCH_FOUND on success and fills `result->earliest_match` and
+// `result->latest_match` (these are first and last matches in the output line
+// order, not directive order).
+//
+// Returns CHECK_MATCH_NOT_FOUND when a directive has no valid non-overlapping
+// match, and stores that directive in `result->failed_directive`.
+//
+// Returns CHECK_MATCH_ERROR after reporting a compile-time pattern error.
+//
+// Note that variable captures are applied in directive order as each member
+// matches, not in the order of matched line numbers.
+static CheckMatchStatus
+find_check_dag_group_match(const char *path, const CheckDirective *directives,
+                           size_t directive_count, const OutputLineArray *lines,
+                           OutputPosition start, VariableContext *variables,
+                           CheckDagGroupMatch *result) {
+    LineMatchArray previous_matches = arr_empty;
+    bool have_match = false;
+
+    assert(directive_count != 0);
+    result->failed_directive = NULL;
+
+    for (size_t i = 0; i < directive_count; ++i) {
+        const CheckDirective *directive = &directives[i];
+        CompiledPattern pattern = compiled_pattern_empty();
+        regmatch_t *captures = NULL;
+        size_t capture_count;
+        LineMatch match = {0};
+
+        if (!compile_pattern(path, directive, variables, &pattern)) {
+            compiled_pattern_free(&pattern);
+            arr_free(previous_matches);
+            return CHECK_MATCH_ERROR;
+        }
+
+        capture_count = pattern.capture_group_count + 1;
+        captures = calloc(capture_count, sizeof(*captures));
+        require(captures != NULL,
+                "failed to allocate regex match array: %errno");
+
+        if (!find_check_dag_match(&pattern, lines, start, &previous_matches,
+                                  &match, captures, capture_count)) {
+            result->failed_directive = directive;
+            free(captures);
+            compiled_pattern_free(&pattern);
+            arr_free(previous_matches);
+            return CHECK_MATCH_NOT_FOUND;
+        }
+
+        apply_captures(variables, &pattern, &lines->data[match.line_index],
+                       captures);
+        arr_push(previous_matches, match);
+
+        if (!have_match ||
+            line_match_starts_before(&match, &result->earliest_match)) {
+            result->earliest_match = match;
+        }
+        if (!have_match ||
+            line_match_ends_after(&result->latest_match, &match)) {
+            result->latest_match = match;
+        }
+        have_match = true;
+
+        free(captures);
+        compiled_pattern_free(&pattern);
+    }
+
+    arr_free(previous_matches);
+    return CHECK_MATCH_FOUND;
 }
 
 // Search the remainder of the current line for a CHECK-SAME match.
@@ -900,29 +1128,20 @@ static void print_output_line_note(const char *path, int directive_line,
 // When a CHECK-NOT matches forbidden output, this prints an error and a
 // matching output line note before returning false.
 static bool verify_negative_region(const char *path,
-                                   const CheckDirectivePtrArray *pending_not,
+                                   const PendingNotDirectiveArray *pending_not,
                                    OutputPosition region_start,
                                    OutputPosition region_end,
-                                   const OutputLineArray *lines,
-                                   const VariableContext *variables) {
+                                   const OutputLineArray *lines) {
     if (pending_not->size == 0 ||
         output_region_is_empty(lines, region_start, region_end)) {
         return true;
     }
 
     for (size_t i = 0; i < pending_not->size; ++i) {
-        const CheckDirective *directive = pending_not->data[i];
-        CompiledPattern pattern = {
-            .regex_text = str_empty,
-            .bindings = arr_empty,
-        };
+        const PendingNotDirective *pending = &pending_not->data[i];
+        const CheckDirective *directive = pending->directive;
         bool found = false;
         LineMatch match = {0};
-
-        if (!compile_pattern(path, directive, variables, &pattern)) {
-            compiled_pattern_free(&pattern);
-            return false;
-        }
 
         for (size_t line_index = region_start.line_index;
              line_index < lines->size && line_index <= region_end.line_index;
@@ -937,7 +1156,8 @@ static bool verify_negative_region(const char *path,
                 end_column = region_end.column;
             if (start_column == end_column)
                 continue;
-            if (!regex_search_segment(&pattern, &lines->data[line_index],
+            if (!regex_search_segment(&pending->pattern,
+                                      &lines->data[line_index],
                                       /*start_column=*/start_column,
                                       /*end_column=*/end_column,
                                       /*pmatch=*/&whole_match,
@@ -954,7 +1174,6 @@ static bool verify_negative_region(const char *path,
             break;
         }
 
-        compiled_pattern_free(&pattern);
         if (!found)
             continue;
 
@@ -1030,12 +1249,12 @@ static bool report_positive_match_failure(const char *path,
     return false;
 }
 
-// Evaluate all CHECK directives against the redirected stdout file.
+// Evaluate all CHECK superdirectives against the redirected stdout file.
 static bool run_checks(const char *path, const ParsedTest *parsed,
                        const char *stdout_path) {
     OutputLineArray lines = arr_empty;
     VariableContext variables;
-    CheckDirectivePtrArray pending_not = arr_empty;
+    PendingNotDirectiveArray pending_not = arr_empty;
     OutputPosition region_start = {.line_index = 0, .column = 0};
     LineMatch previous_positive = {0};
     bool have_previous_positive = false;
@@ -1044,11 +1263,67 @@ static bool run_checks(const char *path, const ParsedTest *parsed,
     read_output_lines(stdout_path, &lines);
     variable_context_init(&variables);
 
-    for (size_t i = 0; i < parsed->directives.size; ++i) {
+    for (size_t i = 0; i < parsed->directives.size;) {
         const CheckDirective *directive = &parsed->directives.data[i];
 
         if (directive->kind == DIRECTIVE_CHECK_NOT) {
-            arr_push(pending_not, (CheckDirective *)directive);
+            if (!add_pending_not_directive(path, &pending_not, directive,
+                                           &variables)) {
+                ok = false;
+                goto cleanup;
+            }
+            i++;
+            continue;
+        }
+
+        if (directive->kind == DIRECTIVE_CHECK_DAG) {
+            size_t group_end = i + 1;
+            while (group_end < parsed->directives.size &&
+                   parsed->directives.data[group_end].kind ==
+                       DIRECTIVE_CHECK_DAG) {
+                group_end++;
+            }
+
+            OutputPosition group_start = {.line_index = 0, .column = 0};
+            if (have_previous_positive) {
+                group_start.line_index = previous_positive.line_index + 1;
+                group_start.column = 0;
+            }
+
+            CheckDagGroupMatch group_match = {0};
+            CheckMatchStatus status = find_check_dag_group_match(
+                path, &parsed->directives.data[i], group_end - i, &lines,
+                group_start, &variables, &group_match);
+            if (status == CHECK_MATCH_ERROR) {
+                ok = false;
+                goto cleanup;
+            }
+            if (status == CHECK_MATCH_NOT_FOUND) {
+                ok = report_positive_match_failure(
+                    path, group_match.failed_directive, &lines, group_start,
+                    have_previous_positive ? &previous_positive : NULL);
+                goto cleanup;
+            }
+
+            if (!verify_negative_region(
+                    path, &pending_not, region_start,
+                    (OutputPosition){
+                        .line_index = group_match.earliest_match.line_index,
+                        .column = group_match.earliest_match.start_column,
+                    },
+                    &lines)) {
+                ok = false;
+                goto cleanup;
+            }
+
+            pending_not_directive_array_clear(&pending_not);
+            previous_positive = group_match.latest_match;
+            have_previous_positive = true;
+            region_start = (OutputPosition){
+                .line_index = previous_positive.line_index,
+                .column = previous_positive.end_column,
+            };
+            i = group_end;
             continue;
         }
 
@@ -1063,10 +1338,7 @@ static bool run_checks(const char *path, const ParsedTest *parsed,
             goto cleanup;
         }
 
-        CompiledPattern pattern = {
-            .regex_text = str_empty,
-            .bindings = arr_empty,
-        };
+        CompiledPattern pattern = compiled_pattern_empty();
         OutputPosition search_start = {.line_index = 0, .column = 0};
         regmatch_t *captures = NULL;
         size_t capture_count;
@@ -1100,7 +1372,9 @@ static bool run_checks(const char *path, const ParsedTest *parsed,
             matched =
                 find_check_next_match(&pattern, &lines, &previous_positive,
                                       &match, captures, capture_count);
-        }
+        } else { // IMGNEKO_UNCOVERED_OK_START
+            abort();
+        } // IMGNEKO_UNCOVERED_OK_END
 
         if (!matched) {
             OutputPosition failure_start = search_start;
@@ -1123,36 +1397,36 @@ static bool run_checks(const char *path, const ParsedTest *parsed,
                                         .line_index = match.line_index,
                                         .column = match.start_column,
                                     },
-                                    &lines, &variables)) {
+                                    &lines)) {
             free(captures);
             compiled_pattern_free(&pattern);
             ok = false;
             goto cleanup;
         }
 
-        apply_captures(&variables, &pattern, &lines.data[match.line_index],
-                       captures);
-        arr_clear(pending_not);
+        pending_not_directive_array_clear(&pending_not);
         previous_positive = match;
         have_previous_positive = true;
         region_start = (OutputPosition){
-            .line_index = match.line_index,
-            .column = match.end_column,
+            .line_index = previous_positive.line_index,
+            .column = previous_positive.end_column,
         };
+        apply_captures(&variables, &pattern, &lines.data[match.line_index],
+                       captures);
 
         free(captures);
         compiled_pattern_free(&pattern);
+        i++;
     }
 
     if (!verify_negative_region(path, &pending_not, region_start,
-                                output_eof_position(&lines), &lines,
-                                &variables)) {
+                                output_eof_position(&lines), &lines)) {
         ok = false;
         goto cleanup;
     }
 
 cleanup:
-    arr_free(pending_not);
+    pending_not_directive_array_free(&pending_not);
     variable_context_free(&variables);
     output_line_array_free(&lines);
     return ok;

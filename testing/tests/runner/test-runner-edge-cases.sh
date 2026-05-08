@@ -387,11 +387,11 @@ echo '== parallel timeout bookkeeping =='
 # CHECK: RUN: ignore-term.sh
 # The two workers time out independently, and their reporting order depends on
 # scheduling. macOS ASan runs can be slow enough that both orders are realistic.
-# CHECK: TIMEOUT: {{ignore-term|detached-output}}.sh
-# CHECK: TIMEOUT: {{ignore-term|detached-output}}.sh
+# CHECK-DAG: TIMEOUT: ignore-term.sh
+# CHECK-DAG: TIMEOUT: detached-output.sh
 # CHECK: timed out tests:
-# CHECK: {{ignore-term|detached-output}}.sh
-# CHECK: {{ignore-term|detached-output}}.sh
+# CHECK-DAG: ignore-term.sh
+# CHECK-DAG: detached-output.sh
 # CHECK: Summary:
 # CHECK: discovered: 2
 # CHECK: timeout: 2
@@ -407,11 +407,11 @@ echo '== parallel timeout sigkill deadlines =='
 # CHECK: RUN: ignore-term.sh
 # SIGKILL escalation for these two timed-out workers races by design, so the
 # order is not stable across platforms.
-# CHECK: TIMEOUT: ignore-term{{|-too}}.sh
-# CHECK: TIMEOUT: ignore-term{{|-too}}.sh
+# CHECK-DAG: TIMEOUT: ignore-term-too.sh
+# CHECK-DAG: TIMEOUT: ignore-term.sh
 # CHECK: timed out tests:
-# CHECK: ignore-term{{|-too}}.sh
-# CHECK: ignore-term{{|-too}}.sh
+# CHECK-DAG: ignore-term-too.sh
+# CHECK-DAG: ignore-term.sh
 # CHECK: Summary:
 # CHECK: discovered: 2
 # CHECK: timeout: 2

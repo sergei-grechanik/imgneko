@@ -108,9 +108,9 @@ cat "$COMPLETED_TIMEOUT_INTERRUPT_LOG"
 # CHECK: RUN: k-delay-slot.sh
 # k's PASS, l's RUN, and j's TIMEOUT all happen near the same scheduling window,
 # so accept any ordering among those three lines.
-# CHECK: {{PASS: k-delay-slot\.sh|RUN: l-signal-window\.sh|TIMEOUT: j-timeout-exit-on-term\.sh}}
-# CHECK: {{PASS: k-delay-slot\.sh|RUN: l-signal-window\.sh|TIMEOUT: j-timeout-exit-on-term\.sh}}
-# CHECK: {{PASS: k-delay-slot\.sh|RUN: l-signal-window\.sh|TIMEOUT: j-timeout-exit-on-term\.sh}}
+# CHECK-DAG: PASS: k-delay-slot.sh
+# CHECK-DAG: RUN: l-signal-window.sh
+# CHECK-DAG: TIMEOUT: j-timeout-exit-on-term.sh
 # CHECK: Summary:
 # CHECK: discovered: 3
 # CHECK: passed: 1
