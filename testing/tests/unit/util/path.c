@@ -176,6 +176,18 @@ static int test_resolve_absolute(TestContext *ctx) {
     if (status != 0)
         goto cleanup;
 
+    // Two-character ordinary components are kept, unlike `..` components.
+    if (!path_resolve_absolute(&resolved, "/ab/example")) {
+        status =
+            fail_message(name, "failed to resolve a two-character component");
+        goto cleanup;
+    }
+
+    status =
+        expect_string_eq(name, resolved.cstr, resolved.len, STR("/ab/example"));
+    if (status != 0)
+        goto cleanup;
+
     // Relative paths are normalized after they are joined to the current
     // working directory, so `.` and `..` do not leak into the result.
     str_free(expected);
