@@ -2,13 +2,16 @@
 # SPDX-License-Identifier: MIT-0
 # RUN: sh %s
 
-# Verify the main directive flow, regex fragments, captures, anchors, and that
-# stderr is ignored unless the RUN command redirects it into stdout.
+# Verify the main directive flow, regex fragments, captures, anchors, explicit
+# zero-width patterns, and that stderr is ignored unless the RUN command
+# redirects it into stdout.
 
+echo "empty directive sentinel"
 echo "Hello, world!"
 echo "Next line"
 echo "One more line"
 echo "Goodbye, world!"
+# CHECK: {{}}
 # CHECK:      Hello
 # CHECK-SAME: world
 # CHECK-NEXT: Next line
@@ -25,6 +28,15 @@ echo "Line with start and end"
 
 echo "Line with start and end"
 # CHECK: {{^}}Line with {{.*}} end{{$}}
+
+# Verify that empty patterns and empty captures are valid zero-width matches.
+
+echo "Empty fragments"
+echo "empty capture suffix"
+# CHECK: Empty fragments
+# CHECK: empty [[empty_value:]]capture
+# CHECK-SAME: [[empty_value]]
+# CHECK-SAME: suffix
 
 echo "stdout only"
 echo "stderr should stay hidden" >&2

@@ -164,6 +164,13 @@ static void append_regex_escaped_literal(String *out, const char *text,
     }
 }
 
+// Append a portable ERE that matches the empty string. Some POSIX regex
+// implementations accept an empty regex directly, but BSD regex rejects it as
+// an empty subexpression.
+static void append_regex_empty_match(String *out) {
+    str_append_cstr(*out, ".{0}");
+}
+
 // Count capturing groups in a POSIX ERE fragment so later named captures can
 // be mapped onto the correct `regmatch_t` slots.
 static size_t regex_capture_group_count(const char *regex_text) {
@@ -545,6 +552,13 @@ static bool parse_test_file(const char *path, ParsedTest *parsed) {
             continue;
         }
 
+        if (payload[0] == '\0') {
+            fprintf(stderr, "%s:%d: error: %s directive requires a pattern\n",
+                    path, line_number, directive_kind_name(kind));
+            ok = false;
+            break;
+        }
+
         CheckDirective directive = {
             .kind = kind,
             .line_number = line_number,
@@ -649,9 +663,13 @@ static bool compile_pattern(const char *path, const CheckDirective *directive,
                                          segment->text.cstr, segment->text.len);
             break;
         case SEGMENT_REGEX:
-            str_append_str(compiled->regex_text, segment->text);
-            compiled->capture_group_count +=
-                regex_capture_group_count(segment->text.cstr);
+            if (segment->text.len == 0) {
+                append_regex_empty_match(&compiled->regex_text);
+            } else {
+                str_append_str(compiled->regex_text, segment->text);
+                compiled->capture_group_count +=
+                    regex_capture_group_count(segment->text.cstr);
+            }
             break;
         case SEGMENT_VARIABLE_DEF: {
             if (directive->kind == DIRECTIVE_CHECK_NOT) {
@@ -670,7 +688,10 @@ static bool compile_pattern(const char *path, const CheckDirective *directive,
             };
 
             str_push(compiled->regex_text, '(');
-            str_append_str(compiled->regex_text, segment->text);
+            if (segment->text.len == 0)
+                append_regex_empty_match(&compiled->regex_text);
+            else
+                str_append_str(compiled->regex_text, segment->text);
             str_push(compiled->regex_text, ')');
             arr_push(compiled->bindings, binding);
             compiled->capture_group_count +=
@@ -695,6 +716,9 @@ static bool compile_pattern(const char *path, const CheckDirective *directive,
         }
         }
     }
+
+    if (compiled->regex_text.len == 0)
+        append_regex_empty_match(&compiled->regex_text);
 
     int rc = regcomp(&compiled->regex, compiled->regex_text.cstr, REG_EXTENDED);
     if (rc != 0) {

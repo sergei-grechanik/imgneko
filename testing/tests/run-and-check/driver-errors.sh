@@ -77,6 +77,19 @@ env IMGNEKO_TEST_OUTPUT_DIR="$OUTPUT_DIR" "$RUN_AND_CHECK" \
 # CHECK: empty-run.txt:1: error: RUN directive requires a command
 # CHECK: empty-run.txt: note: run-and-check result: FAIL
 
+# Verify that CHECK-family directives require an explicit pattern. Use `{{}}`
+# when a zero-width pattern is intended.
+write_case "$TMP_DIR/empty-check.txt" <<'EOF'
+@@ RUN: true
+@@ CHECK:
+EOF
+echo '== empty check =='
+env IMGNEKO_TEST_OUTPUT_DIR="$OUTPUT_DIR" "$RUN_AND_CHECK" \
+    "$TMP_DIR/empty-check.txt" 2>&1 || true
+# CHECK: == empty check ==
+# CHECK: empty-check.txt:2: error: CHECK directive requires a pattern
+# CHECK: empty-check.txt: note: run-and-check result: FAIL
+
 write_case "$TMP_DIR/unterminated-regex.txt" <<'EOF'
 @@ RUN: true
 @@ CHECK: {{unterminated
