@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Unicode-3.0
 
-// Convert between row/column numbers and the Unicode combining marks
-// used by image placeholders.
+// Convert between row/column numbers, the Unicode combining marks
+// used by image placeholders, and their UTF-8 byte strings.
 //
 // This file is generated from tools/rowcolumn-diacritics.txt,
 // which is derived from UnicodeData.txt. Regenerate it with
@@ -9,6 +9,7 @@
 
 #include <stdint.h>
 
+// clang-format off
 static const uint32_t rowcolumn_diacritic_codes[] = {
     0x305,   0x30d,   0x30e,   0x310,   0x312,   0x33d,   0x33e,   0x33f,
     0x346,   0x34a,   0x34b,   0x34c,   0x350,   0x351,   0x352,   0x357,
@@ -49,6 +50,101 @@ static const uint32_t rowcolumn_diacritic_codes[] = {
     0x1d188, 0x1d189, 0x1d1aa, 0x1d1ab, 0x1d1ac, 0x1d1ad, 0x1d242, 0x1d243,
     0x1d244,
 };
+
+static const char rowcolumn_diacritic_utf8[][5] = {
+    "\xcc\x85",         "\xcc\x8d",         "\xcc\x8e",         "\xcc\x90",
+    "\xcc\x92",         "\xcc\xbd",         "\xcc\xbe",         "\xcc\xbf",
+    "\xcd\x86",         "\xcd\x8a",         "\xcd\x8b",         "\xcd\x8c",
+    "\xcd\x90",         "\xcd\x91",         "\xcd\x92",         "\xcd\x97",
+    "\xcd\x9b",         "\xcd\xa3",         "\xcd\xa4",         "\xcd\xa5",
+    "\xcd\xa6",         "\xcd\xa7",         "\xcd\xa8",         "\xcd\xa9",
+    "\xcd\xaa",         "\xcd\xab",         "\xcd\xac",         "\xcd\xad",
+    "\xcd\xae",         "\xcd\xaf",         "\xd2\x83",         "\xd2\x84",
+    "\xd2\x85",         "\xd2\x86",         "\xd2\x87",         "\xd6\x92",
+    "\xd6\x93",         "\xd6\x94",         "\xd6\x95",         "\xd6\x97",
+    "\xd6\x98",         "\xd6\x99",         "\xd6\x9c",         "\xd6\x9d",
+    "\xd6\x9e",         "\xd6\x9f",         "\xd6\xa0",         "\xd6\xa1",
+    "\xd6\xa8",         "\xd6\xa9",         "\xd6\xab",         "\xd6\xac",
+    "\xd6\xaf",         "\xd7\x84",         "\xd8\x90",         "\xd8\x91",
+    "\xd8\x92",         "\xd8\x93",         "\xd8\x94",         "\xd8\x95",
+    "\xd8\x96",         "\xd8\x97",         "\xd9\x97",         "\xd9\x98",
+    "\xd9\x99",         "\xd9\x9a",         "\xd9\x9b",         "\xd9\x9d",
+    "\xd9\x9e",         "\xdb\x96",         "\xdb\x97",         "\xdb\x98",
+    "\xdb\x99",         "\xdb\x9a",         "\xdb\x9b",         "\xdb\x9c",
+    "\xdb\x9f",         "\xdb\xa0",         "\xdb\xa1",         "\xdb\xa2",
+    "\xdb\xa4",         "\xdb\xa7",         "\xdb\xa8",         "\xdb\xab",
+    "\xdb\xac",         "\xdc\xb0",         "\xdc\xb2",         "\xdc\xb3",
+    "\xdc\xb5",         "\xdc\xb6",         "\xdc\xba",         "\xdc\xbd",
+    "\xdc\xbf",         "\xdd\x80",         "\xdd\x81",         "\xdd\x83",
+    "\xdd\x85",         "\xdd\x87",         "\xdd\x89",         "\xdd\x8a",
+    "\xdf\xab",         "\xdf\xac",         "\xdf\xad",         "\xdf\xae",
+    "\xdf\xaf",         "\xdf\xb0",         "\xdf\xb1",         "\xdf\xb3",
+    "\xe0\xa0\x96",     "\xe0\xa0\x97",     "\xe0\xa0\x98",     "\xe0\xa0\x99",
+    "\xe0\xa0\x9b",     "\xe0\xa0\x9c",     "\xe0\xa0\x9d",     "\xe0\xa0\x9e",
+    "\xe0\xa0\x9f",     "\xe0\xa0\xa0",     "\xe0\xa0\xa1",     "\xe0\xa0\xa2",
+    "\xe0\xa0\xa3",     "\xe0\xa0\xa5",     "\xe0\xa0\xa6",     "\xe0\xa0\xa7",
+    "\xe0\xa0\xa9",     "\xe0\xa0\xaa",     "\xe0\xa0\xab",     "\xe0\xa0\xac",
+    "\xe0\xa0\xad",     "\xe0\xa5\x91",     "\xe0\xa5\x93",     "\xe0\xa5\x94",
+    "\xe0\xbe\x82",     "\xe0\xbe\x83",     "\xe0\xbe\x86",     "\xe0\xbe\x87",
+    "\xe1\x8d\x9d",     "\xe1\x8d\x9e",     "\xe1\x8d\x9f",     "\xe1\x9f\x9d",
+    "\xe1\xa4\xba",     "\xe1\xa8\x97",     "\xe1\xa9\xb5",     "\xe1\xa9\xb6",
+    "\xe1\xa9\xb7",     "\xe1\xa9\xb8",     "\xe1\xa9\xb9",     "\xe1\xa9\xba",
+    "\xe1\xa9\xbb",     "\xe1\xa9\xbc",     "\xe1\xad\xab",     "\xe1\xad\xad",
+    "\xe1\xad\xae",     "\xe1\xad\xaf",     "\xe1\xad\xb0",     "\xe1\xad\xb1",
+    "\xe1\xad\xb2",     "\xe1\xad\xb3",     "\xe1\xb3\x90",     "\xe1\xb3\x91",
+    "\xe1\xb3\x92",     "\xe1\xb3\x9a",     "\xe1\xb3\x9b",     "\xe1\xb3\xa0",
+    "\xe1\xb7\x80",     "\xe1\xb7\x81",     "\xe1\xb7\x83",     "\xe1\xb7\x84",
+    "\xe1\xb7\x85",     "\xe1\xb7\x86",     "\xe1\xb7\x87",     "\xe1\xb7\x88",
+    "\xe1\xb7\x89",     "\xe1\xb7\x8b",     "\xe1\xb7\x8c",     "\xe1\xb7\x91",
+    "\xe1\xb7\x92",     "\xe1\xb7\x93",     "\xe1\xb7\x94",     "\xe1\xb7\x95",
+    "\xe1\xb7\x96",     "\xe1\xb7\x97",     "\xe1\xb7\x98",     "\xe1\xb7\x99",
+    "\xe1\xb7\x9a",     "\xe1\xb7\x9b",     "\xe1\xb7\x9c",     "\xe1\xb7\x9d",
+    "\xe1\xb7\x9e",     "\xe1\xb7\x9f",     "\xe1\xb7\xa0",     "\xe1\xb7\xa1",
+    "\xe1\xb7\xa2",     "\xe1\xb7\xa3",     "\xe1\xb7\xa4",     "\xe1\xb7\xa5",
+    "\xe1\xb7\xa6",     "\xe1\xb7\xbe",     "\xe2\x83\x90",     "\xe2\x83\x91",
+    "\xe2\x83\x94",     "\xe2\x83\x95",     "\xe2\x83\x96",     "\xe2\x83\x97",
+    "\xe2\x83\x9b",     "\xe2\x83\x9c",     "\xe2\x83\xa1",     "\xe2\x83\xa7",
+    "\xe2\x83\xa9",     "\xe2\x83\xb0",     "\xe2\xb3\xaf",     "\xe2\xb3\xb0",
+    "\xe2\xb3\xb1",     "\xe2\xb7\xa0",     "\xe2\xb7\xa1",     "\xe2\xb7\xa2",
+    "\xe2\xb7\xa3",     "\xe2\xb7\xa4",     "\xe2\xb7\xa5",     "\xe2\xb7\xa6",
+    "\xe2\xb7\xa7",     "\xe2\xb7\xa8",     "\xe2\xb7\xa9",     "\xe2\xb7\xaa",
+    "\xe2\xb7\xab",     "\xe2\xb7\xac",     "\xe2\xb7\xad",     "\xe2\xb7\xae",
+    "\xe2\xb7\xaf",     "\xe2\xb7\xb0",     "\xe2\xb7\xb1",     "\xe2\xb7\xb2",
+    "\xe2\xb7\xb3",     "\xe2\xb7\xb4",     "\xe2\xb7\xb5",     "\xe2\xb7\xb6",
+    "\xe2\xb7\xb7",     "\xe2\xb7\xb8",     "\xe2\xb7\xb9",     "\xe2\xb7\xba",
+    "\xe2\xb7\xbb",     "\xe2\xb7\xbc",     "\xe2\xb7\xbd",     "\xe2\xb7\xbe",
+    "\xe2\xb7\xbf",     "\xea\x99\xaf",     "\xea\x99\xbc",     "\xea\x99\xbd",
+    "\xea\x9b\xb0",     "\xea\x9b\xb1",     "\xea\xa3\xa0",     "\xea\xa3\xa1",
+    "\xea\xa3\xa2",     "\xea\xa3\xa3",     "\xea\xa3\xa4",     "\xea\xa3\xa5",
+    "\xea\xa3\xa6",     "\xea\xa3\xa7",     "\xea\xa3\xa8",     "\xea\xa3\xa9",
+    "\xea\xa3\xaa",     "\xea\xa3\xab",     "\xea\xa3\xac",     "\xea\xa3\xad",
+    "\xea\xa3\xae",     "\xea\xa3\xaf",     "\xea\xa3\xb0",     "\xea\xa3\xb1",
+    "\xea\xaa\xb0",     "\xea\xaa\xb2",     "\xea\xaa\xb3",     "\xea\xaa\xb7",
+    "\xea\xaa\xb8",     "\xea\xaa\xbe",     "\xea\xaa\xbf",     "\xea\xab\x81",
+    "\xef\xb8\xa0",     "\xef\xb8\xa1",     "\xef\xb8\xa2",     "\xef\xb8\xa3",
+    "\xef\xb8\xa4",     "\xef\xb8\xa5",     "\xef\xb8\xa6",     "\xf0\x90\xa8\x8f",
+    "\xf0\x90\xa8\xb8", "\xf0\x9d\x86\x85", "\xf0\x9d\x86\x86", "\xf0\x9d\x86\x87",
+    "\xf0\x9d\x86\x88", "\xf0\x9d\x86\x89", "\xf0\x9d\x86\xaa", "\xf0\x9d\x86\xab",
+    "\xf0\x9d\x86\xac", "\xf0\x9d\x86\xad", "\xf0\x9d\x89\x82", "\xf0\x9d\x89\x83",
+    "\xf0\x9d\x89\x84",
+};
+
+static const uint8_t rowcolumn_diacritic_utf8_lens[] = {
+    2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
+    2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
+    2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
+    2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
+    2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3,
+    3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3,
+    3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3,
+    3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3,
+    3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3,
+    3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3,
+    3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3,
+    3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 4, 4, 4, 4, 4,
+    4, 4, 4, 4, 4, 4, 4, 4, 4,
+};
+// clang-format on
 
 static const uint16_t rowcolumn_diacritic_count =
     sizeof(rowcolumn_diacritic_codes) / sizeof(rowcolumn_diacritic_codes[0]);
@@ -447,4 +543,16 @@ uint32_t rowcolumn_num_to_diacritic(uint32_t num) {
         return 0;
 
     return rowcolumn_diacritic_codes[num - 1];
+}
+
+const char *rowcolumn_num_to_diacritic_utf8(uint32_t num, uint8_t *len_out) {
+    if (len_out != 0)
+        *len_out = 0;
+
+    if (num == 0 || num > rowcolumn_diacritic_count)
+        return 0;
+
+    if (len_out != 0)
+        *len_out = rowcolumn_diacritic_utf8_lens[num - 1];
+    return rowcolumn_diacritic_utf8[num - 1];
 }

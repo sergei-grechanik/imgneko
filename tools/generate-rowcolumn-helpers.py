@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: MIT-0
 
-# This script generates functions to convert between row/column numbers and
-# their image-placeholder diacritics.
+# This script generates functions to convert between row/column numbers,
+# image-placeholder diacritics, and their UTF-8 byte strings.
 # By default, it reads rowcolumn-diacritics.txt next to this script and writes
 # src/imgneko/rowcolumn_diacritics.c relative to the repository root.
 #
@@ -53,6 +53,20 @@ def path_for_comment(path):
         return str(path)
 
 
+def c_byte_string(data):
+    return "".join("\\x{:02x}".format(byte) for byte in data)
+
+
+def print_array_fields(file, fields, values_per_line, field_width=None):
+    if field_width is None:
+        field_width = max(len(field) for field in fields) + 1
+
+    for offset in range(0, len(fields), values_per_line):
+        line_fields = fields[offset:offset + values_per_line]
+        padded_fields = [field.ljust(field_width) for field in line_fields[:-1]]
+        print("    " + "".join(padded_fields) + line_fields[-1], file=file)
+
+
 args = parse_args()
 
 # Codes of all row/column diacritics.
@@ -86,8 +100,8 @@ with args.output_c.open("w", encoding="utf-8") as file:
 
     print("// SPDX-License-Identifier: Unicode-3.0", file=file)
     print("", file=file)
-    print("// Convert between row/column numbers and the Unicode combining marks", file=file)
-    print("// used by image placeholders.", file=file)
+    print("// Convert between row/column numbers, the Unicode combining marks", file=file)
+    print("// used by image placeholders, and their UTF-8 byte strings.", file=file)
     print("//", file=file)
     print("// This file is generated from " + path_for_comment(args.input) + ",", file=file)
     print("// which is derived from UnicodeData.txt. Regenerate it with", file=file)
@@ -96,16 +110,33 @@ with args.output_c.open("w", encoding="utf-8") as file:
     print("#include <stdint.h>", file=file)
     print("", file=file)
 
+    print("// clang-format off", file=file)
     print("static const uint32_t rowcolumn_diacritic_codes[] = {", file=file)
 
     # Print the codes in a nice format, 8 per line, with padding to align the commas.
-    for offset in range(0, len(codes), 8):
-        line_codes = codes[offset:offset + 8]
-        fields = [hex(code) + "," for code in line_codes]
-        padded_fields = [field.ljust(9) for field in fields[:-1]]
-        print("    " + "".join(padded_fields) + fields[-1], file=file)
+    print_array_fields(file, [hex(code) + "," for code in codes],
+                       values_per_line=8, field_width=9)
 
     print("};", file=file)
+    print("", file=file)
+
+    print("static const char rowcolumn_diacritic_utf8[][5] = {", file=file)
+    utf8_fields = [
+        '"' + c_byte_string(chr(code).encode("utf-8")) + '",'
+        for code in codes
+    ]
+    print_array_fields(file, utf8_fields, values_per_line=4)
+    print("};", file=file)
+    print("", file=file)
+
+    print("static const uint8_t rowcolumn_diacritic_utf8_lens[] = {", file=file)
+    utf8_len_fields = [
+        str(len(chr(code).encode("utf-8"))) + ","
+        for code in codes
+    ]
+    print_array_fields(file, utf8_len_fields, values_per_line=24)
+    print("};", file=file)
+    print("// clang-format on", file=file)
     print("", file=file)
 
     print("static const uint16_t rowcolumn_diacritic_count =", file=file)
@@ -135,6 +166,20 @@ with args.output_c.open("w", encoding="utf-8") as file:
     print("        return 0;", file=file)
     print("", file=file)
     print("    return rowcolumn_diacritic_codes[num - 1];", file=file)
+    print("}", file=file)
+    print("", file=file)
+
+    print("const char *rowcolumn_num_to_diacritic_utf8(uint32_t num,",
+          "uint8_t *len_out) {", file=file)
+    print("    if (len_out != 0)", file=file)
+    print("        *len_out = 0;", file=file)
+    print("", file=file)
+    print("    if (num == 0 || num > rowcolumn_diacritic_count)", file=file)
+    print("        return 0;", file=file)
+    print("", file=file)
+    print("    if (len_out != 0)", file=file)
+    print("        *len_out = rowcolumn_diacritic_utf8_lens[num - 1];", file=file)
+    print("    return rowcolumn_diacritic_utf8[num - 1];", file=file)
     print("}", file=file)
 
 if args.skip_checks:

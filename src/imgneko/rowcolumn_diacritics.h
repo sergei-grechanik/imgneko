@@ -16,4 +16,11 @@ uint16_t rowcolumn_diacritic_to_num(uint32_t code);
 // larger than ROWCOLUMN_DIACRITIC_MAX.
 uint32_t rowcolumn_num_to_diacritic(uint32_t num);
 
+// Return the UTF-8 byte string for the diacritic that encodes `num`, or NULL
+// when `num` is 0 or larger than ROWCOLUMN_DIACRITIC_MAX.
+//
+// `len_out`, if non-NULL, receives the byte length of the returned string. It
+// receives 0 when `num` is not representable.
+const char *rowcolumn_num_to_diacritic_utf8(uint32_t num, uint8_t *len_out);
+
 #endif
