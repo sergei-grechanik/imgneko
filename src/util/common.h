@@ -14,6 +14,12 @@
 // Return the number of elements in a fixed-size C array.
 #define ARRAY_SIZE(arr) (sizeof(arr) / sizeof((arr)[0]))
 
+// Return the smaller of two values. Arguments must not have side effects.
+#define MIN(a, b) ((a) < (b) ? (a) : (b))
+
+// Return the larger of two values. Arguments must not have side effects.
+#define MAX(a, b) ((a) > (b) ? (a) : (b))
+
 // Expand one macro argument and stringify the final token sequence.
 #define UTIL_STRINGIFY_IMPL(value) #value
 #define UTIL_STRINGIFY(value) UTIL_STRINGIFY_IMPL(value)

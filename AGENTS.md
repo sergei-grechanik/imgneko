@@ -102,6 +102,9 @@ why.
 If the user asks you to address review comments, search for the comments
 containing the `REVIEW:` marker in the files you are working on.
 
+IMPORTANT: You don't have access to github, never try to get "review comments"
+via gh.
+
 ## Don't assume the code changes for no reason
 
 Sometimes the user will modify or delete code that you have written. Usually
