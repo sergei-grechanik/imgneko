@@ -10,13 +10,11 @@
 
 #include "imgneko/placeholder.h"
 
-#include <errno.h>
 #include <limits.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
 
 #include "imgneko/rowcolumn_diacritics.h"
 #include "util/common.h"
@@ -530,21 +528,6 @@ PlaceholderError placeholder_validate(const Placeholder *placeholder,
     return validate_with_plan(placeholder, mode, NULL);
 }
 
-// Write all bytes through a possibly short-writing writer.
-int imgneko_write_all(ImgnekoWriter writer, const char *data, size_t len) {
-    if (writer.write == NULL || (data == NULL && len != 0))
-        return -1;
-
-    for (size_t offset = 0; offset < len;) {
-        ssize_t written = writer.write(writer.ctx, data + offset, len - offset);
-        if (written <= 0 || (size_t)written > len - offset)
-            return -1;
-        offset += (size_t)written;
-    }
-
-    return 0;
-}
-
 // Return remaining chunk bytes. Room for an ANSI reset is reserved when styling
 // is already active, or when `force_reserve_reset` asks for room before
 // appending bytes that will make styling active.
@@ -609,7 +592,7 @@ static PlaceholderError chunker_flush_prefix(PlaceholderChunker *chunker,
         write_len += PLACEHOLDER_RESET_LEN;
     }
 
-    if (imgneko_write_all(chunker->writer, chunker->data, write_len) != 0)
+    if (imgneko_writer_write(chunker->writer, chunker->data, write_len) != 0)
         return PLACEHOLDER_WRITE_FAILED;
 
     // Move the unwritten tail to the front of `data` and update chunker state.
@@ -988,25 +971,6 @@ cleanup:
     return error;
 }
 
-// Writer callback that writes to a file descriptor and retries EINTR.
-static ssize_t fd_writer_func(void *ctx, const char *data, size_t len) {
-    int fd = *(int *)ctx;
-    ssize_t written;
-
-    do {
-        written = write(fd, data, len);
-    } while (written < 0 && errno == EINTR); // IMGNEKO_UNCOVERED_OK
-
-    return written;
-}
-
-ImgnekoWriter imgneko_writer_fd(int *fd) {
-    return (ImgnekoWriter){
-        .write = fd_writer_func,
-        .ctx = fd,
-    };
-}
-
 PlaceholderError placeholder_write_fd(const Placeholder *placeholder,
                                       const PlaceholderOptions *options,
                                       int fd) {
@@ -1014,7 +978,7 @@ PlaceholderError placeholder_write_fd(const Placeholder *placeholder,
 }
 
 // Writer callback that copies into a fixed buffer while counting all bytes.
-static ssize_t buffer_writer_func(void *ctx, const char *data, size_t len) {
+static int buffer_writer_func(void *ctx, const char *data, size_t len) {
     BufferWriteContext *buffer = ctx;
     size_t available =
         buffer->len < buffer->out_cap ? buffer->out_cap - buffer->len : 0;
@@ -1023,7 +987,7 @@ static ssize_t buffer_writer_func(void *ctx, const char *data, size_t len) {
     if (copy_len != 0)
         memcpy(buffer->out + buffer->len, data, copy_len);
     buffer->len += len;
-    return (ssize_t)len;
+    return 0;
 }
 
 PlaceholderError placeholder_write_to_buffer(const Placeholder *placeholder,

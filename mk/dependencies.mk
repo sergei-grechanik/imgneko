@@ -4,10 +4,14 @@ $(BUILD_DIR)/obj/src/imgneko/placeholder.o: \
 	$(ROOT_DIR)/src/imgneko/placeholder.c \
 	$(ROOT_DIR)/src/imgneko/placeholder.h \
 	$(ROOT_DIR)/src/imgneko/rowcolumn_diacritics.h \
+	$(ROOT_DIR)/src/imgneko/writer.h \
 	$(ROOT_DIR)/src/util/common.h \
 	$(ROOT_DIR)/src/util/error.h
 $(BUILD_DIR)/obj/src/imgneko/rowcolumn_diacritics.o: \
 	$(ROOT_DIR)/src/imgneko/rowcolumn_diacritics.c
+$(BUILD_DIR)/obj/src/imgneko/writer.o: \
+	$(ROOT_DIR)/src/imgneko/writer.c \
+	$(ROOT_DIR)/src/imgneko/writer.h
 $(BUILD_DIR)/obj/src/main.o: \
 	$(BUILD_DIR)/generated/build_info.h \
 	$(ROOT_DIR)/src/main.c
@@ -70,6 +74,7 @@ $(BUILD_DIR)/obj/test-bin/runner/spaced-subtests.c.bin: \
 $(BUILD_DIR)/obj/test-bin/unit/imgneko/placeholder.c.bin: \
 	$(ROOT_DIR)/src/imgneko/placeholder.h \
 	$(ROOT_DIR)/src/imgneko/rowcolumn_diacritics.h \
+	$(ROOT_DIR)/src/imgneko/writer.h \
 	$(ROOT_DIR)/src/util/common.h \
 	$(ROOT_DIR)/testing/support/test_main.h \
 	$(ROOT_DIR)/testing/tests/unit/imgneko/placeholder.c

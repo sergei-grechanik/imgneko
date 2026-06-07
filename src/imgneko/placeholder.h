@@ -30,7 +30,8 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
-#include <sys/types.h>
+
+#include "imgneko/writer.h"
 
 #define PLACEHOLDER_CODEPOINT 0x10EEEEu
 #define PLACEHOLDER_UTF8 "\xF4\x8E\xBB\xAE"
@@ -149,15 +150,6 @@ typedef struct PlaceholderFormat {
     void *ctx;
     bool per_cell;
 } PlaceholderFormat;
-
-// Generic byte writer used by imgneko APIs.
-//
-// The callback writes up to `len` bytes and returns the number of bytes
-// written, or a negative value on error. Short writes are allowed.
-typedef struct ImgnekoWriter {
-    ssize_t (*write)(void *ctx, const char *data, size_t len);
-    void *ctx;
-} ImgnekoWriter;
 
 // Describes why a positioner callback is being called for a placeholder line.
 typedef enum PlaceholderPositionFlags {
@@ -358,16 +350,6 @@ static inline PlaceholderOptions placeholder_options_default(void) {
 // Validate placeholder geometry, IDs, mode, and representable coordinates.
 PlaceholderError placeholder_validate(const Placeholder *placeholder,
                                       const PlaceholderMode *mode);
-
-// Create a writer that writes to `*fd`. The caller must keep `fd` alive while
-// the returned writer is used.
-ImgnekoWriter imgneko_writer_fd(int *fd);
-
-// Write all bytes through `writer`, retrying after short writes until `len`
-// bytes are written or the writer reports failure. Returns 0 on success and -1
-// on failure. `writer.write` must be non-NULL. `data` may be NULL only when
-// `len` is zero.
-int imgneko_write_all(ImgnekoWriter writer, const char *data, size_t len);
 
 // Stream placeholder bytes through `writer`.
 PlaceholderError placeholder_write(const Placeholder *placeholder,

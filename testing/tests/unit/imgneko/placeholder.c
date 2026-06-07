@@ -20,8 +20,8 @@
 
 static const char chunk_boundary_marker = '\0';
 
-// Captures bytes written through an ImgnekoWriter and can simulate short writes
-// and writer failures.
+// Captures bytes written through an ImgnekoWriter and can simulate writer
+// failures.
 typedef struct Capture {
     char data[8192];
     // Number of bytes currently stored in `data`.
@@ -32,15 +32,8 @@ typedef struct Capture {
     size_t chunk_ends[256];
     // Number of recorded chunk end offsets.
     size_t chunk_count;
-    // Per-call write limit. Zero means a call may write the whole input.
-    size_t max_write;
     // First call number that should fail with -1. Zero disables this failure.
     size_t fail_after_calls;
-    // First call number that should return zero bytes. Zero disables this path.
-    size_t zero_after_calls;
-    // First call number that should report more bytes than requested. Zero
-    // disables this path.
-    size_t overreport_after_calls;
 } Capture;
 
 // State for a dynamic formatting callback that can be switched to failure mode.
@@ -65,36 +58,27 @@ typedef struct CountingWriter {
     size_t len;
 } CountingWriter;
 
-// ImgnekoWriter callback that records written bytes and exercises writer edge
-// cases such as short writes, zero-byte writes, failures, and invalid
-// overcounts.
-static ssize_t capture_writer(void *ctx, const char *data, size_t len) {
+// ImgnekoWriter callback that records full write spans and exercises writer
+// failure paths.
+static int capture_writer(void *ctx, const char *data, size_t len) {
     Capture *capture = ctx;
-    size_t write_len = len;
 
     ++capture->call_count;
-    if (capture->overreport_after_calls != 0 &&
-        capture->call_count >= capture->overreport_after_calls)
-        return (ssize_t)(len + 1);
     if (capture->fail_after_calls != 0 &&
         capture->call_count >= capture->fail_after_calls)
         return -1;
-    if (capture->zero_after_calls != 0 &&
-        capture->call_count >= capture->zero_after_calls)
-        return 0;
 
-    if (capture->max_write != 0 && write_len > capture->max_write)
-        write_len = capture->max_write;
-    if (capture->len + write_len > sizeof(capture->data))
+    if (capture->len + len > sizeof(capture->data))
         return -1;
     if (capture->chunk_count >= ARRAY_SIZE(capture->chunk_ends))
         return -1;
 
-    memcpy(capture->data + capture->len, data, write_len);
-    capture->len += write_len;
+    if (len != 0)
+        memcpy(capture->data + capture->len, data, len);
+    capture->len += len;
     capture->chunk_ends[capture->chunk_count] = capture->len;
     ++capture->chunk_count;
-    return (ssize_t)write_len;
+    return 0;
 }
 
 // Return an ImgnekoWriter writing to a Capture object.
@@ -106,13 +90,13 @@ static ImgnekoWriter capture_as_writer(Capture *capture) {
 }
 
 // ImgnekoWriter callback that only accumulates the number of bytes written.
-static ssize_t counting_writer(void *ctx, const char *data, size_t len) {
+static int counting_writer(void *ctx, const char *data, size_t len) {
     CountingWriter *counter = ctx;
 
     (void)data;
 
     counter->len += len;
-    return (ssize_t)len;
+    return 0;
 }
 
 // Return an ImgnekoWriter that counts bytes in a CountingWriter object.
@@ -2476,11 +2460,11 @@ static int test_chunk_size_boundaries(TestContext *ctx) {
         required_chunk_size, "row style larger than chunk");
 }
 
-// Check chunk splitting, short writes, write failures, and tiny chunk errors.
+// Check chunk splitting, writer failures, and tiny chunk errors.
 static int test_chunking_and_writers(TestContext *ctx) {
     Placeholder placeholder = base_placeholder();
     PlaceholderOptions options = placeholder_options_default();
-    Capture capture = {.max_write = 7};
+    Capture capture = {0};
 
     uint8_t row_len = 0;
     uint8_t col_len = 0;
@@ -2591,18 +2575,18 @@ static int test_chunking_and_writers(TestContext *ctx) {
                      "position-prefix flush write failure"))
         return 1;
 
-    // The public write-all helper must retry short writes and preserve byte
-    // order across callback boundaries.
+    // The public writer helper must pass full byte spans through successful
+    // callbacks.
     const char raw_data[] = "abcdef";
-    capture = (Capture){.max_write = 2};
-    if (imgneko_write_all(capture_as_writer(&capture), raw_data,
-                          strlen(raw_data)) != 0) {
-        fprintf(stderr, "%s: write all short writes failed\n", ctx->test_name);
+    capture = (Capture){0};
+    if (imgneko_writer_write(capture_as_writer(&capture), raw_data,
+                             strlen(raw_data)) != 0) {
+        fprintf(stderr, "%s: writer helper write failed\n", ctx->test_name);
         return 1;
     }
-    if (capture.call_count != 3 || capture.len != strlen(raw_data) ||
+    if (capture.call_count != 1 || capture.len != strlen(raw_data) ||
         memcmp(capture.data, raw_data, strlen(raw_data)) != 0) {
-        fprintf(stderr, "%s: write all did not retry short writes correctly\n",
+        fprintf(stderr, "%s: writer helper did not write full span\n",
                 ctx->test_name);
         return 1;
     }
@@ -2610,17 +2594,19 @@ static int test_chunking_and_writers(TestContext *ctx) {
     // A zero-length write with a NULL data pointer is valid and must not call
     // the underlying writer.
     capture = (Capture){0};
-    if (imgneko_write_all(capture_as_writer(&capture), NULL, 0) != 0 ||
+    if (imgneko_writer_write(capture_as_writer(&capture), NULL, 0) != 0 ||
         capture.call_count != 0) {
-        fprintf(stderr, "%s: write all mishandled empty input\n",
+        fprintf(stderr, "%s: writer helper mishandled empty input\n",
                 ctx->test_name);
         return 1;
     }
 
-    if (imgneko_write_all((ImgnekoWriter){0}, raw_data, strlen(raw_data)) !=
+    if (imgneko_writer_write((ImgnekoWriter){0}, raw_data, strlen(raw_data)) !=
             -1 ||
-        imgneko_write_all(capture_as_writer(&capture), NULL, 1) != -1) {
-        fprintf(stderr, "%s: write all did not reject invalid inputs\n",
+        imgneko_writer_write(capture_as_writer(&capture), NULL, 1) != -1 ||
+        imgneko_writer_write(imgneko_writer_fd(NULL), raw_data,
+                             strlen(raw_data)) != -1) {
+        fprintf(stderr, "%s: writer helper did not reject invalid inputs\n",
                 ctx->test_name);
         return 1;
     }
@@ -2639,7 +2625,7 @@ static int test_chunking_and_writers(TestContext *ctx) {
                      "chunk too small for row prefix and cell"))
         return 1;
 
-    // The writer adapter must treat a negative callback result as a write
+    // The placeholder writer adapter must treat a callback failure as a write
     // failure.
     capture = (Capture){.fail_after_calls = 1};
     options = placeholder_options_default();
@@ -2647,23 +2633,6 @@ static int test_chunking_and_writers(TestContext *ctx) {
     error =
         placeholder_write(&placeholder, &options, capture_as_writer(&capture));
     if (expect_error(ctx, error, PLACEHOLDER_WRITE_FAILED, "failing writer"))
-        return 1;
-
-    // A zero-byte writer result would otherwise cause an infinite retry loop,
-    // so it is handled as a write failure.
-    capture = (Capture){.zero_after_calls = 1};
-    error =
-        placeholder_write(&placeholder, &options, capture_as_writer(&capture));
-    if (expect_error(ctx, error, PLACEHOLDER_WRITE_FAILED, "zero writer"))
-        return 1;
-
-    // A writer that reports more bytes than requested violates the writer
-    // contract and must be rejected.
-    capture = (Capture){.overreport_after_calls = 1};
-    error =
-        placeholder_write(&placeholder, &options, capture_as_writer(&capture));
-    if (expect_error(ctx, error, PLACEHOLDER_WRITE_FAILED,
-                     "overreporting writer"))
         return 1;
 
     // ANSI chunks smaller than the reset sequence cannot safely contain even an
