@@ -526,6 +526,23 @@ static int test_predicates(TestContext *ctx) {
     if (str_char_is_ascii_digit('x'))
         return fail_message(name, "ascii digit accepted letter");
 
+    if (str_ascii_hex_digit_value('0') != 0)
+        return fail_message(name, "ascii hex rejected zero");
+    if (str_ascii_hex_digit_value('9') != 9)
+        return fail_message(name, "ascii hex rejected nine");
+    if (str_ascii_hex_digit_value('a') != 10)
+        return fail_message(name, "ascii hex rejected lowercase a");
+    if (str_ascii_hex_digit_value('f') != 15)
+        return fail_message(name, "ascii hex rejected lowercase f");
+    if (str_ascii_hex_digit_value('A') != 10)
+        return fail_message(name, "ascii hex rejected uppercase A");
+    if (str_ascii_hex_digit_value('F') != 15)
+        return fail_message(name, "ascii hex rejected uppercase F");
+    if (str_ascii_hex_digit_value('g') != -1)
+        return fail_message(name, "ascii hex accepted letter after f");
+    if (str_ascii_hex_digit_value('/') != -1)
+        return fail_message(name, "ascii hex accepted punctuation before zero");
+
     if (!str_char_is_ascii_alnum('x'))
         return fail_message(name, "ascii alnum rejected letter");
     if (!str_char_is_ascii_alnum('7'))

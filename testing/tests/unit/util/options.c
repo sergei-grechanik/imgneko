@@ -491,6 +491,7 @@ static int test_low_level_parse_helpers(TestContext *ctx) {
     bool bool_value = false;
     double double_value = 0.0;
     int int_value = 0;
+    int64_t int64_value = 0;
     char huge_double[] = "1e5000";
     char huge_int[63];
     char too_long_double[80];
@@ -536,6 +537,46 @@ static int test_low_level_parse_helpers(TestContext *ctx) {
     }
     if (opt_parse_int_span("-2147483649", strlen("-2147483649"), &int_value)) {
         status = fail_message(name, "underflowing integer unexpectedly parsed");
+        goto cleanup;
+    }
+    if (opt_parse_int64_span(NULL, 1, &int64_value)) {
+        status = fail_message(name, "NULL int64 input unexpectedly parsed");
+        goto cleanup;
+    }
+    if (opt_parse_int64_span("", 0, &int64_value)) {
+        status = fail_message(name, "empty int64 input unexpectedly parsed");
+        goto cleanup;
+    }
+    if (opt_parse_int64_span(too_long_int, sizeof(too_long_int),
+                             &int64_value)) {
+        status =
+            fail_message(name, "oversized int64 input unexpectedly parsed");
+        goto cleanup;
+    }
+    if (opt_parse_int64_span(huge_int, strlen(huge_int), &int64_value)) {
+        status = fail_message(name, "ERANGE int64 input unexpectedly parsed");
+        goto cleanup;
+    }
+    if (opt_parse_int64_span("9223372036854775808",
+                             strlen("9223372036854775808"), &int64_value)) {
+        status = fail_message(name, "overflowing int64 unexpectedly parsed");
+        goto cleanup;
+    }
+    if (opt_parse_int64_span("-9223372036854775809",
+                             strlen("-9223372036854775809"), &int64_value)) {
+        status = fail_message(name, "underflowing int64 unexpectedly parsed");
+        goto cleanup;
+    }
+    if (!opt_parse_int64_span("9223372036854775807",
+                              strlen("9223372036854775807"), &int64_value) ||
+        int64_value != INT64_MAX) {
+        status = fail_message(name, "maximum int64 did not parse correctly");
+        goto cleanup;
+    }
+    if (!opt_parse_int64_span("-9223372036854775808",
+                              strlen("-9223372036854775808"), &int64_value) ||
+        int64_value != INT64_MIN) {
+        status = fail_message(name, "minimum int64 did not parse correctly");
         goto cleanup;
     }
     if (opt_parse_double_span(NULL, 1, &double_value)) {

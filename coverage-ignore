@@ -41,6 +41,3 @@ src/util/options.h *_deinit
 
 # We don't care about coverage of the tests themselves.
 testing/tests/*
-
-# TODO: src/main.c is currently rudimentary
-src/main.c

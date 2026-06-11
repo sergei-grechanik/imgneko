@@ -29,6 +29,12 @@ echo "Line with start and end"
 echo "Line with start and end"
 # CHECK: {{^}}Line with {{.*}} end{{$}}
 
+printf '\033[0m\n'
+# CHECK: {{^\x1b\[0m$}}
+
+printf '\033\n'
+# CHECK: {{^\x1B$}}
+
 # Verify that empty patterns and empty captures are valid zero-width matches.
 
 echo "Empty fragments"

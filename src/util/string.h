@@ -53,6 +53,16 @@ ARRLIB_INLINE bool str_char_is_ascii_digit(char ch) {
     return '0' <= ch && ch <= '9';
 }
 
+ARRLIB_INLINE int str_ascii_hex_digit_value(char ch) {
+    if (str_char_is_ascii_digit(ch))
+        return ch - '0';
+    if ('a' <= ch && ch <= 'f')
+        return ch - 'a' + 10;
+    if ('A' <= ch && ch <= 'F')
+        return ch - 'A' + 10;
+    return -1;
+}
+
 ARRLIB_INLINE bool str_char_is_ascii_alnum(char ch) {
     return str_char_is_ascii_alpha(ch) || str_char_is_ascii_digit(ch);
 }

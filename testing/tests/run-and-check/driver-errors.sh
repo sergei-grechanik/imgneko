@@ -170,6 +170,83 @@ env IMGNEKO_TEST_OUTPUT_DIR="$OUTPUT_DIR" "$RUN_AND_CHECK" \
 # CHECK: invalid-regex.txt:2: note: expanded regex: (
 # CHECK: invalid-regex.txt: note: run-and-check result: FAIL
 
+write_case "$TMP_DIR/trailing-regex-backslash.txt" <<'EOF'
+@@ RUN: echo "hello"
+@@ CHECK: {{\}}
+EOF
+echo '== trailing regex backslash =='
+env IMGNEKO_TEST_OUTPUT_DIR="$OUTPUT_DIR" "$RUN_AND_CHECK" \
+    "$TMP_DIR/trailing-regex-backslash.txt" 2>&1 || true
+# CHECK: == trailing regex backslash ==
+# CHECK: trailing-regex-backslash.txt:2: error: invalid regex in CHECK:
+# CHECK: trailing-regex-backslash.txt: note: run-and-check result: FAIL
+
+write_case "$TMP_DIR/short-hex-regex.txt" <<'EOF'
+@@ RUN: echo "hello"
+@@ CHECK: {{\x}}
+EOF
+echo '== short hex regex =='
+env IMGNEKO_TEST_OUTPUT_DIR="$OUTPUT_DIR" "$RUN_AND_CHECK" \
+    "$TMP_DIR/short-hex-regex.txt" 2>&1 || true
+# CHECK: == short hex regex ==
+# CHECK: short-hex-regex.txt:2: error: invalid \xHH regex escape
+# CHECK: short-hex-regex.txt: note: run-and-check result: FAIL
+
+write_case "$TMP_DIR/bad-high-hex-regex.txt" <<'EOF'
+@@ RUN: echo "hello"
+@@ CHECK: {{\xz1}}
+EOF
+echo '== bad high hex regex =='
+env IMGNEKO_TEST_OUTPUT_DIR="$OUTPUT_DIR" "$RUN_AND_CHECK" \
+    "$TMP_DIR/bad-high-hex-regex.txt" 2>&1 || true
+# CHECK: == bad high hex regex ==
+# CHECK: bad-high-hex-regex.txt:2: error: invalid \xHH regex escape
+# CHECK: bad-high-hex-regex.txt: note: run-and-check result: FAIL
+
+write_case "$TMP_DIR/bad-punctuation-hex-regex.txt" <<'EOF'
+@@ RUN: echo "hello"
+@@ CHECK: {{\x/1}}
+EOF
+echo '== bad punctuation hex regex =='
+env IMGNEKO_TEST_OUTPUT_DIR="$OUTPUT_DIR" "$RUN_AND_CHECK" \
+    "$TMP_DIR/bad-punctuation-hex-regex.txt" 2>&1 || true
+# CHECK: == bad punctuation hex regex ==
+# CHECK: bad-punctuation-hex-regex.txt:2: error: invalid \xHH regex escape
+# CHECK: bad-punctuation-hex-regex.txt: note: run-and-check result: FAIL
+
+write_case "$TMP_DIR/bad-low-hex-regex.txt" <<'EOF'
+@@ RUN: echo "hello"
+@@ CHECK: {{\x1z}}
+EOF
+echo '== bad low hex regex =='
+env IMGNEKO_TEST_OUTPUT_DIR="$OUTPUT_DIR" "$RUN_AND_CHECK" \
+    "$TMP_DIR/bad-low-hex-regex.txt" 2>&1 || true
+# CHECK: == bad low hex regex ==
+# CHECK: bad-low-hex-regex.txt:2: error: invalid \xHH regex escape
+# CHECK: bad-low-hex-regex.txt: note: run-and-check result: FAIL
+
+write_case "$TMP_DIR/nul-hex-regex.txt" <<'EOF'
+@@ RUN: echo "hello"
+@@ CHECK: {{\x00}}
+EOF
+echo '== nul hex regex =='
+env IMGNEKO_TEST_OUTPUT_DIR="$OUTPUT_DIR" "$RUN_AND_CHECK" \
+    "$TMP_DIR/nul-hex-regex.txt" 2>&1 || true
+# CHECK: == nul hex regex ==
+# CHECK: nul-hex-regex.txt:2: error: regex escape \x00 is unsupported
+# CHECK: nul-hex-regex.txt: note: run-and-check result: FAIL
+
+write_case "$TMP_DIR/short-hex-var-def.txt" <<'EOF'
+@@ RUN: echo "hello"
+@@ CHECK: [[value:\x]]
+EOF
+echo '== short hex var def =='
+env IMGNEKO_TEST_OUTPUT_DIR="$OUTPUT_DIR" "$RUN_AND_CHECK" \
+    "$TMP_DIR/short-hex-var-def.txt" 2>&1 || true
+# CHECK: == short hex var def ==
+# CHECK: short-hex-var-def.txt:2: error: invalid \xHH regex escape
+# CHECK: short-hex-var-def.txt: note: run-and-check result: FAIL
+
 write_case "$TMP_DIR/run-fails.txt" <<'EOF'
 @@ RUN: sh -c 'echo stdout-line; echo stderr-line >&2; exit 7'
 @@ CHECK: unreachable

@@ -223,6 +223,10 @@ enum {
 // and junk.
 bool opt_parse_int_span(const char *text, size_t text_len, int *out);
 
+// Parse a strict base-10 int64_t from raw text, rejecting empty input,
+// overflow, and junk.
+bool opt_parse_int64_span(const char *text, size_t text_len, int64_t *out);
+
 // Parse a strict floating-point value from raw text, rejecting empty input,
 // overflow, and junk.
 bool opt_parse_double_span(const char *text, size_t text_len, double *out);

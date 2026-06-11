@@ -152,16 +152,21 @@ static bool is_valid_variable_name(const char *name) {
     return true;
 }
 
+// Append one literal byte to a regex, escaping it first when the byte is an
+// ASCII metacharacter under POSIX extended regex rules.
+static void append_regex_escaped_byte(String *out, unsigned char ch) {
+    static const char *const metacharacters = ".^$[()\\*+?{|";
+
+    if (ch < 0x80 && strchr(metacharacters, (char)ch) != NULL)
+        str_push(*out, '\\');
+    str_push(*out, (char)ch);
+}
+
 // Escape literal text so it matches itself under POSIX extended regex rules.
 static void append_regex_escaped_literal(String *out, const char *text,
                                          size_t len) {
-    static const char *const metacharacters = ".^$[()\\*+?{|";
-
-    for (size_t i = 0; i < len; ++i) {
-        if (strchr(metacharacters, text[i]) != NULL)
-            str_push(*out, '\\');
-        str_push(*out, text[i]);
-    }
+    for (size_t i = 0; i < len; ++i)
+        append_regex_escaped_byte(out, (unsigned char)text[i]);
 }
 
 // Append a portable ERE that matches the empty string. Some POSIX regex
@@ -207,6 +212,43 @@ static size_t regex_capture_group_count(const char *regex_text) {
     }
 
     return groups;
+}
+
+// Append a regex fragment, decoding `\xHH` escapes as literal bytes.
+static bool append_regex_fragment(const char *path, int line_number,
+                                  const char *text, size_t len, String *out) {
+    for (size_t i = 0; i < len; ++i) {
+        if (text[i] != '\\' || i + 1 >= len || text[i + 1] != 'x') {
+            str_push(*out, text[i]);
+            continue;
+        }
+
+        if (i + 3 >= len) {
+            fprintf(stderr, "%s:%d: error: invalid \\xHH regex escape\n", path,
+                    line_number);
+            return false;
+        }
+
+        int high = str_ascii_hex_digit_value(text[i + 2]);
+        int low = str_ascii_hex_digit_value(text[i + 3]);
+        if (high < 0 || low < 0) {
+            fprintf(stderr, "%s:%d: error: invalid \\xHH regex escape\n", path,
+                    line_number);
+            return false;
+        }
+
+        unsigned char byte = (unsigned char)((high << 4) | low);
+        if (byte == '\0') {
+            fprintf(stderr, "%s:%d: error: regex escape \\x00 is unsupported\n",
+                    path, line_number);
+            return false;
+        }
+
+        append_regex_escaped_byte(out, byte);
+        i += 3;
+    }
+
+    return true;
 }
 
 // Return the user-facing name for the directive kind.
@@ -666,7 +708,11 @@ static bool compile_pattern(const char *path, const CheckDirective *directive,
             if (segment->text.len == 0) {
                 append_regex_empty_match(&compiled->regex_text);
             } else {
-                str_append_str(compiled->regex_text, segment->text);
+                if (!append_regex_fragment(
+                        path, directive->line_number, segment->text.cstr,
+                        segment->text.len, &compiled->regex_text)) {
+                    return false;
+                }
                 compiled->capture_group_count +=
                     regex_capture_group_count(segment->text.cstr);
             }
@@ -690,8 +736,11 @@ static bool compile_pattern(const char *path, const CheckDirective *directive,
             str_push(compiled->regex_text, '(');
             if (segment->text.len == 0)
                 append_regex_empty_match(&compiled->regex_text);
-            else
-                str_append_str(compiled->regex_text, segment->text);
+            else if (!append_regex_fragment(
+                         path, directive->line_number, segment->text.cstr,
+                         segment->text.len, &compiled->regex_text)) {
+                return false;
+            }
             str_push(compiled->regex_text, ')');
             arr_push(compiled->bindings, binding);
             compiled->capture_group_count +=

@@ -3,6 +3,7 @@
 #include "util/options.h"
 
 #include <errno.h>
+#include <inttypes.h>
 #include <limits.h>
 #include <math.h>
 #include <stdio.h>
@@ -1060,11 +1061,11 @@ static bool opt_text_equals_ignore_case(const char *text, size_t text_len,
     return true;
 }
 
-// Parse a strict decimal integer from raw text into out.
-bool opt_parse_int_span(const char *text, size_t text_len, int *out) {
+// Parse a strict decimal int64_t from raw text into out.
+bool opt_parse_int64_span(const char *text, size_t text_len, int64_t *out) {
     char parsed_text[64];
     char *end = NULL;
-    long parsed = 0;
+    intmax_t parsed = 0;
 
     if (text == NULL || text_len == 0)
         return false;
@@ -1075,8 +1076,23 @@ bool opt_parse_int_span(const char *text, size_t text_len, int *out) {
     parsed_text[text_len] = '\0';
 
     errno = 0;
-    parsed = strtol(parsed_text, &end, 10);
+    parsed = strtoimax(parsed_text, &end, 10);
     if (errno != 0 || *end != '\0')
+        return false;
+    // IMGNEKO_UNCOVERED_OK[3 lines]: On platforms where intmax_t is exactly
+    // 64-bit, strtoimax reports ERANGE before this defensive guard can fire.
+    if (parsed < INT64_MIN || parsed > INT64_MAX)
+        return false;
+
+    *out = (int64_t)parsed;
+    return true;
+}
+
+// Parse a strict decimal integer from raw text into out.
+bool opt_parse_int_span(const char *text, size_t text_len, int *out) {
+    int64_t parsed = 0;
+
+    if (!opt_parse_int64_span(text, text_len, &parsed))
         return false;
     if (parsed < INT_MIN || parsed > INT_MAX)
         return false;

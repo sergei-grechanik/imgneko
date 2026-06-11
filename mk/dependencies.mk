@@ -14,7 +14,13 @@ $(BUILD_DIR)/obj/src/imgneko/writer.o: \
 	$(ROOT_DIR)/src/imgneko/writer.h
 $(BUILD_DIR)/obj/src/main.o: \
 	$(BUILD_DIR)/generated/build_info.h \
-	$(ROOT_DIR)/src/main.c
+	$(ROOT_DIR)/src/imgneko/placeholder.h \
+	$(ROOT_DIR)/src/imgneko/writer.h \
+	$(ROOT_DIR)/src/main.c \
+	$(ROOT_DIR)/src/util/array.h \
+	$(ROOT_DIR)/src/util/common.h \
+	$(ROOT_DIR)/src/util/options.h \
+	$(ROOT_DIR)/src/util/string.h
 $(BUILD_DIR)/obj/src/util/error.o: \
 	$(ROOT_DIR)/src/util/error.c \
 	$(ROOT_DIR)/src/util/error.h
