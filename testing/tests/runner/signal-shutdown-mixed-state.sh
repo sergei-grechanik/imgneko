@@ -27,7 +27,7 @@ run_runner_pending_signal_mixed_state_test() {
     IMGNEKO_RUNNER_SIGNAL_STATE_DIR="$state_dir" \
         "$RUNNER" --tests-dir "$RUNNER_SIGNAL_TEST_DIR" --output-dir "$output_dir" \
         --output-passthrough --debug-parent-output-chunk-delay 6 --timeout 5.0 \
-        -j 3 --filter 'g-output-then-exit.sh|h-closed-fds-fast-success.sh|i-ignore-term-timeout.sh' \
+        -j 3 'g-output-then-exit.sh|h-closed-fds-fast-success.sh|i-ignore-term-timeout.sh' \
         >"$log_path" 2>&1 &
     runner_pid=$!
 

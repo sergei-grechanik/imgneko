@@ -24,7 +24,7 @@ run_runner_pending_signal_shutdown_test() {
     IMGNEKO_RUNNER_SIGNAL_STATE_DIR="$state_dir" \
         "$RUNNER" --tests-dir "$RUNNER_SIGNAL_TEST_DIR" --output-dir "$output_dir" \
         --output-passthrough --debug-parent-output-chunk-delay 1 \
-        -j 2 --filter 'e-output-pending-stop.sh|f-closed-fds-success.sh' \
+        -j 2 'e-output-pending-stop.sh|f-closed-fds-success.sh' \
         >"$log_path" 2>&1 &
     runner_pid=$!
 

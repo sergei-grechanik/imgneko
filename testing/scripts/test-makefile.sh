@@ -191,7 +191,7 @@ restrict_coverage_run_to_subset() {
         fail "missing expected coverage test-runner recipe in $ROOT_DIR/Makefile"
     fi
 
-    sed -i "/^\$(COVERAGE_TESTS_STAMP):/,/COMPILE_DB_REFRESH/ s#--all#--filter '$COVERAGE_TEST_FILTER'#" \
+    sed -i "/^\$(COVERAGE_TESTS_STAMP):/,/COMPILE_DB_REFRESH/ s#--all#'$COVERAGE_TEST_FILTER'#" \
         "$ROOT_DIR/Makefile"
 }
 

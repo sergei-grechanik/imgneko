@@ -79,7 +79,7 @@ chmod +x "$MARKER_TEST_DIR/plain-marker.sh"
 
 echo '== marker boundaries =='
 "$RUNNER" --jobs=1 --list --tests-dir="$MARKER_TEST_DIR" \
-    --filter 'start-marker.sh|alnum-marker.sh|underscore-marker.sh|plain-marker.sh' \
+    'start-marker.sh|alnum-marker.sh|underscore-marker.sh|plain-marker.sh' \
     2>&1
 # CHECK: == marker boundaries ==
 # CHECK: alnum-marker.sh XFAIL
@@ -91,7 +91,7 @@ echo '== marker boundaries =='
 ROOT_PREFIX_SAFE_OUTPUT_DIR=$(dirname "$IMGNEKO_ROOT_DIR")/fake-output-dir
 echo '== tests dir equals and similar prefix output =='
 "$RUNNER" --jobs=1 --list --output-dir "$ROOT_PREFIX_SAFE_OUTPUT_DIR" \
-    --tests-dir="$MARKER_TEST_DIR" --filter start-marker.sh 2>&1
+    --tests-dir="$MARKER_TEST_DIR" start-marker.sh 2>&1
 # CHECK: == tests dir equals and similar prefix output ==
 # CHECK-NEXT: start-marker.sh XFAIL
 
@@ -110,14 +110,14 @@ env -u PATH \
 echo 'stale output path' >"$FILE_OUTPUT_PATH"
 echo '== output path is file =='
 "$RUNNER" --jobs=1 --output-dir "$FILE_OUTPUT_PATH" \
-    --filter runner/output.sh 2>&1 || true
+    runner/output.sh 2>&1 || true
 # CHECK: == output path is file ==
 # CHECK: error: test output path exists and is not a directory: {{.*output-file}}
 
 chmod 000 "$BLOCKED_OUTPUT_DIR"
 echo '== blocked output dir =='
 "$RUNNER" --jobs=1 --output-dir "$BLOCKED_OUTPUT_DIR" \
-    --filter runner/output.sh 2>&1 || true
+    runner/output.sh 2>&1 || true
 # CHECK: == blocked output dir ==
 # CHECK: error: failed to open output directory: Permission denied
 
@@ -175,7 +175,7 @@ chmod +x "$FAKE_TEST_BIN_DIR/runner/many-subtests.c.bin"
 echo '== single-char c subtests =='
 "$RUNNER" --jobs=1 --list --tests-dir "$FAKE_C_TEST_DIR" \
     --test-bin-dir "$FAKE_TEST_BIN_DIR" \
-    --filter runner/single-char-subtests.c 2>&1
+    runner/single-char-subtests.c 2>&1
 # CHECK: == single-char c subtests ==
 # CHECK: runner/single-char-subtests.c/short_xfail XFAIL
 # CHECK: runner/single-char-subtests.c/x
@@ -187,7 +187,7 @@ echo '== probabilistic debug flip =='
     --test-bin-dir "$FAKE_TEST_BIN_DIR" \
     --output-dir "$FLIP_MANY_OUTPUT_DIR" \
     --debug-flip-exit-probability 0.5 \
-    --filter runner/many-subtests.c 2>&1 || true
+    runner/many-subtests.c 2>&1 || true
 # CHECK: == probabilistic debug flip ==
 # CHECK: RUN: runner/many-subtests.c/case-0
 # CHECK: DEBUG: flipped exit code for runner/many-subtests.c/
@@ -240,7 +240,7 @@ echo '== parent setpgid eacces =='
 "$RUNNER" --jobs=1 --tests-dir "$SETPGID_RACE_TEST_DIR" \
     --output-dir "$SETPGID_RACE_OUTPUT_DIR" \
     --debug-parent-setpgid-delay 1 \
-    --filter eacces-after-exec.sh 2>&1
+    eacces-after-exec.sh 2>&1
 # CHECK: == parent setpgid eacces ==
 # CHECK: RUN: eacces-after-exec.sh
 # CHECK: PASS: eacces-after-exec.sh
@@ -267,7 +267,7 @@ echo '== child reaped before output drain =='
 "$RUNNER" --jobs=1 --tests-dir "$OUTPUT_DRAIN_RACE_TEST_DIR" \
     --output-dir "$OUTPUT_DRAIN_RACE_OUTPUT_DIR" \
     --debug-parent-output-chunk-delay 0.01 \
-    --filter reaped-before-output-drain.sh 2>&1
+    reaped-before-output-drain.sh 2>&1
 # CHECK: == child reaped before output drain ==
 # CHECK: RUN: reaped-before-output-drain.sh
 # CHECK: PASS: reaped-before-output-drain.sh
@@ -292,7 +292,7 @@ chmod +x "$PARALLEL_TEST_DIR/slow-success.sh"
 echo '== parallel completed child before wait =='
 "$RUNNER" --tests-dir "$PARALLEL_TEST_DIR" \
     --output-dir "$PARALLEL_COMPLETION_OUTPUT_DIR" \
-    -j 2 --filter 'instant-success.sh|slow-success.sh' 2>&1
+    -j 2 'instant-success.sh|slow-success.sh' 2>&1
 # CHECK: == parallel completed child before wait ==
 # CHECK: RUN: instant-success.sh
 # CHECK: RUN: slow-success.sh
@@ -320,7 +320,7 @@ chmod +x "$PARALLEL_TEST_DIR/delayed-output.sh"
 echo '== parallel closed fds =='
 "$RUNNER" --tests-dir "$PARALLEL_TEST_DIR" \
     --output-dir "$PARALLEL_CLOSED_FDS_OUTPUT_DIR" \
-    -j 2 --filter 'closed-fds-sleeper.sh|delayed-output.sh' 2>&1
+    -j 2 'closed-fds-sleeper.sh|delayed-output.sh' 2>&1
 # CHECK: == parallel closed fds ==
 # CHECK: RUN: closed-fds-sleeper.sh
 # CHECK: RUN: delayed-output.sh
@@ -369,7 +369,7 @@ chmod +x "$TIMEOUT_TEST_DIR/detached-output.sh"
 echo '== timeout sigkill =='
 "$RUNNER" --jobs=1 --tests-dir "$TIMEOUT_TEST_DIR" \
     --output-dir "$TIMEOUT_SIGKILL_OUTPUT_DIR" \
-    --timeout 1 --filter ignore-term.sh 2>&1 || true
+    --timeout 1 ignore-term.sh 2>&1 || true
 # CHECK: == timeout sigkill ==
 # CHECK: RUN: ignore-term.sh
 # CHECK: TIMEOUT: ignore-term.sh
@@ -381,7 +381,7 @@ echo '== parallel timeout bookkeeping =='
 "$RUNNER" --tests-dir "$TIMEOUT_TEST_DIR" \
     --output-dir "$PARALLEL_TIMEOUT_OUTPUT_DIR" \
     -j 2 --timeout 1 \
-    --filter 'ignore-term.sh|detached-output.sh' 2>&1 || true
+    'ignore-term.sh|detached-output.sh' 2>&1 || true
 # CHECK: == parallel timeout bookkeeping ==
 # CHECK: RUN: detached-output.sh
 # CHECK: RUN: ignore-term.sh
@@ -401,7 +401,7 @@ echo '== parallel timeout sigkill deadlines =='
 "$RUNNER" --tests-dir "$TIMEOUT_TEST_DIR" \
     --output-dir "$PARALLEL_TIMEOUT_OUTPUT_DIR-sigkill" \
     -j 2 --timeout 1 \
-    --filter 'ignore-term.sh|ignore-term-too.sh' 2>&1 || true
+    'ignore-term.sh|ignore-term-too.sh' 2>&1 || true
 # CHECK: == parallel timeout sigkill deadlines ==
 # CHECK: RUN: ignore-term-too.sh
 # CHECK: RUN: ignore-term.sh
@@ -420,7 +420,7 @@ echo '== parallel timeout sigkill deadlines =='
 echo '== timeout passthrough =='
 "$RUNNER" --jobs=1 --tests-dir "$TIMEOUT_TEST_DIR" \
     --output-dir "$TIMEOUT_PASSTHROUGH_OUTPUT_DIR" \
-    --output-passthrough --timeout 1 --filter timeout-passthrough.sh \
+    --output-passthrough --timeout 1 timeout-passthrough.sh \
     2>&1 || true
 # CHECK: == timeout passthrough ==
 # CHECK: RUN: timeout-passthrough.sh

@@ -103,18 +103,19 @@ typedef struct TestCase {
     String c_subtest;
 } TestCase;
 
-// A path supplied on the command line to limit the discovered test set.
+// A flattened command-line test selection pattern.
 //
-// `path` is the argument normalized to an absolute path. Relative arguments are
-// resolved against the invocation cwd before the runner changes directory for
-// discovery and test execution.
-typedef struct TestPathSelector {
-    String arg;
-    String path;
-    bool matched_path;
-} TestPathSelector;
+// `text` is the shell-style pattern supplied by the user, after splitting `|`
+// alternation into separate atoms. `abs_path_text` is the same pattern resolved
+// as an absolute path pattern against the invocation cwd, for the fallback path
+// match after name matching misses.
+typedef struct TestPattern {
+    String text;
+    String abs_path_text;
+    bool matched;
+} TestPattern;
 
-DEFINE_ARRAY_TYPE(TestPathSelectorArray, TestPathSelector)
+DEFINE_ARRAY_TYPE(TestPatternArray, TestPattern)
 
 // Result of running a test case in a child process.
 typedef struct TestRunResult {
@@ -148,10 +149,9 @@ typedef struct TestRunConfig {
     double debug_parent_setpgid_delay_seconds;
 } TestRunConfig;
 
-// Parsed command-line options plus their derived filter/path state.
+// Parsed command-line options plus their derived selection patterns.
 typedef struct CliOptions {
-    StringArray filters;
-    TestPathSelectorArray path_selectors;
+    TestPatternArray patterns;
     bool list_only;
     bool run_all;
     bool output_passthrough;
@@ -343,10 +343,10 @@ static void c_subtest_array_free(CSubtestArray *array) {
     arr_free(*array);
 }
 
-static void test_path_selector_array_free(TestPathSelectorArray *array) {
+static void test_pattern_array_free(TestPatternArray *array) {
     for (size_t i = 0; i < array->size; ++i) {
-        str_free(array->data[i].arg);
-        str_free(array->data[i].path);
+        str_free(array->data[i].text);
+        str_free(array->data[i].abs_path_text);
     }
     arr_free(*array);
 }
@@ -546,32 +546,6 @@ static bool path_is_prefix(const char *prefix, const char *path) {
 
     // IMGNEKO_UNCOVERED_OK: path[prefix_len] != '/' hard to trigger cleanly.
     return path[prefix_len] == '\0' || path[prefix_len] == '/';
-}
-
-// Store a positional PATH argument as an absolute path prefix to compare with
-// discovered test cases later. No filesystem probing is needed here: after
-// discovery, an unmatched selector is reported as "no tests matched".
-static void parse_test_path_selector(const char *arg,
-                                     TestPathSelectorArray *selectors) {
-    String path = str_empty;
-
-    if (!path_resolve_absolute(&path, arg))
-        die_errno("failed to resolve test path");
-
-    TestPathSelector selector = {
-        .arg = str_from_cstr(arg),
-        .path = path,
-        .matched_path = false,
-    };
-
-    arr_push(*selectors, selector);
-}
-
-// Parse all positional PATH arguments into selector prefixes.
-static void parse_test_path_selectors(const StringArray *path_args,
-                                      TestPathSelectorArray *selectors) {
-    for (size_t i = 0; i < path_args->size; ++i)
-        parse_test_path_selector(path_args->data[i].cstr, selectors);
 }
 
 // Comparator for deterministic sorting of discovered files by relative path.
@@ -777,8 +751,8 @@ static void validate_output_dir(const char *output_dir) {
     str_free(build_dir_abs);
 }
 
-// CLI schema for test-runner. `--filter` limits tests by shell-style id
-// patterns; positional arguments limit tests by filesystem path.
+// CLI schema for test-runner. Positional patterns first match test names, then
+// fall back to absolute test paths resolved against the invocation cwd.
 #define TEST_RUNNER_CLI_OPTIONS(X, S)                                          \
     X(S, list_only, OptBool,                                                   \
       OPT_BOOL_FLAG(.cli = "--list",                                           \
@@ -798,10 +772,6 @@ static void validate_output_dir(const char *output_dir) {
       OPT_BOOL_FLAG(.cli = "--output-tmp --out-tmp",                           \
                     .descr = "Create a temporary output directory instead of " \
                              "using --out-dir."))                              \
-    X(S, filter_patterns, OptStringList,                                       \
-      OPT_STRING_LIST(.cli = "--filter -f PATTERN",                            \
-                      .descr = "Match tests with shell-style wildcard "        \
-                               "PATTERN values. Use '|' for alternation."))    \
     X(S, tests_dir, OptString,                                                 \
       OPT_STRING(.cli = "--tests-dir DIR",                                     \
                  .descr = "Discover runnable tests under DIR.",                \
@@ -835,15 +805,14 @@ static void validate_output_dir(const char *output_dir) {
                  .validate = opt_validate_non_negative_double,                 \
                  .descr = "Sleep between captured-output chunks to exercise "  \
                           "drain timing."))                                    \
-    X(S, positional_paths, OptStringList,                                      \
-      OPT_STRING_LIST(.cli = "PATH",                                           \
+    X(S, patterns, OptStringList,                                              \
+      OPT_STRING_LIST(.cli = "PATTERN",                                        \
                       .descr =                                                 \
-                          "Select tests by file, directory, or "               \
-                          "C-subtest path. Relative PATHs are resolved "       \
-                          "against the current directory (NOT the tests "      \
-                          "directory). Multiple PATHs are ORed; "              \
-                          "--filter patterns are ORed; the final set is the "  \
-                          "intersection of PATH and filter matches.",          \
+                          "Select tests by shell-style wildcard PATTERN. "     \
+                          "Patterns first match test names, then absolute "    \
+                          "test paths. Relative path patterns are resolved "   \
+                          "against the current directory. Use '|' for "        \
+                          "alternation.",                                      \
                       .positional = true))
 
 OPT_DEFINE_STRUCT(TestRunnerCliArgs, TEST_RUNNER_CLI_OPTIONS)
@@ -1582,15 +1551,15 @@ static void print_output_tail(const char *output_file_path, size_t max_lines) {
     str_array_free(&lines);
 }
 
-// Check whether a test case matches a pattern.
+// Check whether a test case's name matches a pattern.
 //
 // C tests with discovered subtests have two stable identifiers:
 // - id:      `foo.c/subtest_name`
 // - file_id: `foo.c`
 //
-// Matching succeeds if at least one of these two matches the pattern.
-static bool test_matches_pattern(const TestCase *test_case,
-                                 const char *pattern) {
+// Name matching succeeds if at least one of these two matches the pattern.
+static bool test_name_matches_pattern(const TestCase *test_case,
+                                      const char *pattern) {
     if (fnmatch(pattern, test_case->id.cstr, 0) == 0) {
         return true;
     }
@@ -1604,73 +1573,57 @@ static bool test_matches_pattern(const TestCase *test_case,
     return false;
 }
 
-// Check whether a test matches any already-flattened filter pattern. Empty
-// filter arrays match everything.
-static bool test_matches_filters(const TestCase *test_case,
-                                 const StringArray *filters) {
-    if (filters->size == 0)
-        return true;
-
-    for (size_t i = 0; i < filters->size; ++i)
-        if (test_matches_pattern(test_case, filters->data[i].cstr))
-            return true;
-
-    return false;
-}
-
-// Check whether a prefix selects the test case's absolute id. For C subtests,
+// Check whether a test case's absolute path matches a pattern. For C subtests,
 // the absolute id is the source path plus the subtest name:
 // `/tests/root/foo.c/subtest_name`.
-static bool test_abs_id_has_prefix(const TestCase *test_case,
-                                   const char *prefix) {
-    if (path_is_prefix(prefix, test_case->file_abs_path.cstr))
+static bool test_abs_path_matches_pattern(const TestCase *test_case,
+                                          const char *pattern) {
+    if (fnmatch(pattern, test_case->file_abs_path.cstr, 0) == 0)
         return true;
 
     if (test_case->c_subtest.len == 0)
         return false;
 
-    size_t file_len = test_case->file_abs_path.len;
-    size_t prefix_len = strlen(prefix);
-    if (prefix_len <= file_len ||
-        strncmp(prefix, test_case->file_abs_path.cstr, file_len) != 0 ||
-        prefix[file_len] != '/') {
-        return false;
-    }
+    String abs_id = copy_str(test_case->file_abs_path);
+    str_push(abs_id, '/');
+    str_append_str(abs_id, test_case->c_subtest);
+    bool matched = fnmatch(pattern, abs_id.cstr, 0) == 0;
 
-    return path_is_prefix(prefix + file_len + 1, test_case->c_subtest.cstr);
-}
-
-// Check whether a test case is selected by the absolute spelling of a PATH
-// argument.
-static bool test_matches_selector_path(const TestCase *test_case,
-                                       const TestPathSelector *selector) {
-    return test_abs_id_has_prefix(test_case, selector->path.cstr);
-}
-
-// Check whether a test matches any path selector. Empty selector arrays match
-// everything. Matched selectors are marked before filters are applied so a path
-// combined with an overly narrow filter is not reported as an invalid path.
-static bool test_matches_path_selectors(const TestCase *test_case,
-                                        TestPathSelectorArray *selectors) {
-    bool matched = false;
-
-    if (selectors->size == 0)
-        return true;
-
-    for (size_t i = 0; i < selectors->size; ++i) {
-        if (!test_matches_selector_path(test_case, &selectors->data[i]))
-            continue;
-
-        selectors->data[i].matched_path = true;
-        matched = true;
-    }
-
+    str_free(abs_id);
     return matched;
 }
 
-// Expand `|` alternation in filter patterns into individual match patterns.
+// Check whether a test case matches a flattened command-line pattern.
+static bool test_matches_pattern(const TestCase *test_case,
+                                 const TestPattern *pattern) {
+    if (test_name_matches_pattern(test_case, pattern->text.cstr))
+        return true;
+
+    return test_abs_path_matches_pattern(test_case,
+                                         pattern->abs_path_text.cstr);
+}
+
+// Add one flattened pattern atom to `out`. The absolute-path fallback is
+// computed now so relative patterns use the invocation cwd before the runner
+// changes directories for discovery and execution.
+static void push_test_pattern(const char *text, size_t len,
+                              TestPatternArray *out) {
+    TestPattern pattern = {
+        .text = str_from_data(text, len),
+        .abs_path_text = str_empty,
+        .matched = false,
+    };
+
+    if (!path_resolve_absolute(&pattern.abs_path_text, pattern.text.cstr))
+        die_errno("failed to resolve test pattern");
+
+    arr_push(*out, pattern);
+}
+
+// Expand `|` alternation in test patterns into individual match patterns.
 // Return false after reporting a CLI error if any alternation part is empty.
-static bool flatten_filters(const StringArray *patterns, StringArray *out) {
+static bool flatten_test_patterns(const StringArray *patterns,
+                                  TestPatternArray *out) {
     for (size_t i = 0; i < patterns->size; ++i) {
         const char *pattern = patterns->data[i].cstr;
         const char *cursor = pattern;
@@ -1680,11 +1633,11 @@ static bool flatten_filters(const StringArray *patterns, StringArray *out) {
             size_t len = bar != NULL ? (size_t)(bar - cursor) : strlen(cursor);
 
             if (len == 0) {
-                fprintf(stderr, "error: invalid filter pattern: %s\n", pattern);
+                fprintf(stderr, "error: invalid test pattern: %s\n", pattern);
                 return false;
             }
 
-            arr_push(*out, str_from_data(cursor, len));
+            push_test_pattern(cursor, len, out);
             if (bar == NULL)
                 break;
 
@@ -2208,8 +2161,7 @@ static void prepare_env_vars(void) {
 
 static void cli_options_init(CliOptions *options) {
     *options = (CliOptions){
-        .filters = arr_empty,
-        .path_selectors = arr_empty,
+        .patterns = arr_empty,
         .tests_dir = str_empty,
         .output_dir = str_empty,
         .test_bin_dir = str_empty,
@@ -2220,8 +2172,7 @@ static void cli_options_deinit(CliOptions *options) {
     str_free(options->test_bin_dir);
     str_free(options->output_dir);
     str_free(options->tests_dir);
-    test_path_selector_array_free(&options->path_selectors);
-    str_array_free(&options->filters);
+    test_pattern_array_free(&options->patterns);
 }
 
 static void test_runner_state_init(TestRunnerState *state) {
@@ -2311,25 +2262,19 @@ static bool parse_cli_args(int argc, char **argv, CliOptions *options,
                             parsed_options->test_bin_dir.value.cstr,
                             "failed to resolve test-bin directory");
 
-    if (!flatten_filters(&parsed_options->filter_patterns.value,
-                         &options->filters)) {
+    if (!flatten_test_patterns(&parsed_options->patterns.value,
+                               &options->patterns)) {
         *exit_code_out = 2;
         TestRunnerCliArgs_deinit(&parsed.top_level);
         return false;
     }
 
-    if (options->run_all &&
-        (options->filters.size != 0 ||
-         parsed_options->positional_paths.value.size != 0)) {
-        fprintf(stderr,
-                "error: --all cannot be combined with --filter or paths\n");
+    if (options->run_all && options->patterns.size != 0) {
+        fprintf(stderr, "error: --all cannot be combined with patterns\n");
         *exit_code_out = 2;
         TestRunnerCliArgs_deinit(&parsed.top_level);
         return false;
     }
-
-    parse_test_path_selectors(&parsed_options->positional_paths.value,
-                              &options->path_selectors);
 
     TestRunnerCliArgs_deinit(&parsed.top_level);
     return true;
@@ -2384,37 +2329,41 @@ static bool discover_tests_for_run(const CliOptions *options,
     return true;
 }
 
-// Append every discovered test case that matches the active path selectors and
-// filters to selected_cases, preserving discovery order.
+// Append every discovered test case that matches the active patterns to
+// selected_cases, preserving discovery order. An empty pattern list selects the
+// whole discovered test set.
 static void collect_selected_test_cases(const TestCaseArray *cases,
-                                        TestPathSelectorArray *path_selectors,
-                                        const StringArray *filters,
+                                        TestPatternArray *patterns,
                                         TestCasePtrArray *selected_cases) {
     for (size_t i = 0; i < cases->size; ++i) {
         const TestCase *test_case = &cases->data[i];
+        bool selected = patterns->size == 0;
 
-        if (!test_matches_path_selectors(test_case, path_selectors))
-            continue;
+        for (size_t j = 0; j < patterns->size; ++j) {
+            TestPattern *pattern = &patterns->data[j];
 
-        if (!test_matches_filters(test_case, filters))
-            continue;
+            if (!test_matches_pattern(test_case, pattern))
+                continue;
 
-        arr_push(*selected_cases, test_case);
+            pattern->matched = true;
+            selected = true;
+        }
+
+        if (selected)
+            arr_push(*selected_cases, test_case);
     }
 }
 
-// Report path arguments that resolved successfully but did not select any
-// discovered test case.
-static bool
-validate_path_selectors_matched(const TestPathSelectorArray *path_selectors) {
+// Report pattern atoms that did not select any discovered test case.
+static bool validate_test_patterns_matched(const TestPatternArray *patterns) {
     bool ok = true;
 
-    for (size_t i = 0; i < path_selectors->size; ++i) {
-        const TestPathSelector *selector = &path_selectors->data[i];
+    for (size_t i = 0; i < patterns->size; ++i) {
+        const TestPattern *pattern = &patterns->data[i];
 
-        if (!selector->matched_path) {
-            fprintf(stderr, "error: no tests matched test path: %s\n",
-                    selector->arg.cstr);
+        if (!pattern->matched) {
+            fprintf(stderr, "error: no tests matched pattern: %s\n",
+                    pattern->text.cstr);
             ok = false;
         }
     }
@@ -2573,23 +2522,17 @@ int main(int argc, char **argv) {
     prepare_test_run_environment();
     if (!discover_tests_for_run(&options, &state, &exit_code))
         goto cleanup;
-    collect_selected_test_cases(&state.cases, &options.path_selectors,
-                                &options.filters, &state.selected_cases);
+    collect_selected_test_cases(&state.cases, &options.patterns,
+                                &state.selected_cases);
     state.discovered = state.selected_cases.size;
 
-    if (!validate_path_selectors_matched(&options.path_selectors)) {
+    if (!validate_test_patterns_matched(&options.patterns)) {
         exit_code = 2;
         goto cleanup;
     }
 
     if (options.list_only) {
         list_selected_tests(&state);
-        goto cleanup;
-    }
-
-    if (state.discovered == 0) {
-        fprintf(stderr, "error: no tests matched the requested filters\n");
-        exit_code = 2;
         goto cleanup;
     }
 

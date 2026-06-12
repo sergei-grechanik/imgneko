@@ -21,7 +21,6 @@ TESTS_ROOT=$IMGNEKO_ROOT_DIR/testing/tests
 NO_SUBTESTS_ABS_PATH=$TESTS_ROOT/runner/no-subtests.c
 NO_SUBTESTS_REPO_PATH=testing/tests/runner/no-subtests.c
 NO_SUBTESTS_PATH=$NO_SUBTESTS_ABS_PATH
-RUNNER_DIR_PATH=$TESTS_ROOT/runner
 OUTPUT_C_SUBTEST_PATH=$TESTS_ROOT/runner/output.c/emit_output
 OPTION_TEST_DIR=$IMGNEKO_TEST_OUTPUT_DIR/cli-tests-dir
 EMPTY_OUTPUT_DIR=$IMGNEKO_TEST_OUTPUT_DIR/existing-empty-output
@@ -85,15 +84,14 @@ chmod +x "$OPTION_TEST_DIR/shadow/custom.sh"
 echo '== help =='
 "$RUNNER" --help 2>&1
 # CHECK: == help ==
-# CHECK-NEXT: Usage: test-runner [options] [--] [PATH...]
+# CHECK-NEXT: Usage: test-runner [options] [--] [PATTERN...]
 # CHECK: Positional arguments:
-# CHECK: PATH...
+# CHECK: PATTERN...
 # CHECK: Options:
 # CHECK: --list                    List matching tests without running them.
 # CHECK: --all                     Run the entire discovered test set.
 # CHECK: -j, --jobs JOBS
 # CHECK: --output-dir, --out-dir DIR
-# CHECK: --filter, -f PATTERN...
 # CHECK: --tests-dir DIR
 # CHECK: --test-bin-dir DIR
 # CHECK: --timeout SECONDS
@@ -102,11 +100,11 @@ echo '== help =='
 echo '== short help =='
 "$RUNNER" -h 2>&1
 # CHECK: == short help ==
-# CHECK-NEXT: Usage: test-runner [options] [--] [PATH...]
+# CHECK-NEXT: Usage: test-runner [options] [--] [PATTERN...]
 
 echo '== jobs short option =='
 "$RUNNER" --output-dir "$JOBS_OUTPUT_DIR" -j 2 \
-    --filter runner/output.sh 2>&1
+    runner/output.sh 2>&1
 # CHECK: == jobs short option ==
 # CHECK: RUN: runner/output.sh
 # CHECK: PASS: runner/output.sh
@@ -136,30 +134,26 @@ echo '== relative path =='
 # CHECK: == relative path ==
 # CHECK-NEXT: runner/no-subtests.c
 
-# Verify that a tests-dir-relative spelling works only when the invocation cwd
+# Verify that a tests-dir-relative path pattern works when the invocation cwd
 # is the tests directory.
 echo '== tests cwd relative path =='
 (
     cd "$TESTS_ROOT"
-    "$RUNNER" --list runner/no-subtests.c 2>&1
+    "$RUNNER" --list ./runner/no-subtests.c 2>&1
 )
 # CHECK: == tests cwd relative path ==
 # CHECK-NEXT: runner/no-subtests.c
 
-# Verify that a tests-dir-relative spelling is not accepted from another cwd.
-echo '== tests-dir relative path rejected =='
-set +e
+# Verify that a test-name pattern works regardless of the invocation cwd.
+echo '== name pattern =='
 "$RUNNER" --list runner/no-subtests.c 2>&1
-printf 'status=%d\n' "$?"
-set -e
-# CHECK: == tests-dir relative path rejected ==
-# CHECK: error: no tests matched test path: runner/no-subtests.c
-# CHECK: status=2
+# CHECK: == name pattern ==
+# CHECK-NEXT: runner/no-subtests.c
 
 echo '== option equals =='
 "$RUNNER" --list --output-dir="$EMPTY_OUTPUT_DIR" \
     --test-bin-dir="$IMGNEKO_BUILD_DIR/obj/test-bin" \
-    --filter=runner/spaced-subtests.c --timeout=0 2>&1
+    --timeout=0 runner/spaced-subtests.c 2>&1
 # CHECK: == option equals ==
 # CHECK: runner/spaced-subtests.c/marked_disabled DISABLED
 # CHECK: runner/spaced-subtests.c/marked_xfail XFAIL
@@ -172,7 +166,7 @@ echo '== explicit test bin dir =='
 # CHECK-NEXT: runner/no-subtests.c
 
 echo '== explicit tests dir =='
-"$RUNNER" --list --tests-dir "$OPTION_TEST_DIR" -f custom.sh 2>&1
+"$RUNNER" --list --tests-dir "$OPTION_TEST_DIR" custom.sh 2>&1
 # CHECK: == explicit tests dir ==
 # CHECK-NEXT: custom.sh
 
@@ -191,7 +185,7 @@ echo '== end =='
 echo '== relative path uses cwd only =='
 (
     cd "$OPTION_TEST_DIR/shadow"
-    "$RUNNER" --list --tests-dir "$OPTION_TEST_DIR" custom.sh 2>&1
+    "$RUNNER" --list --tests-dir "$OPTION_TEST_DIR" ./custom.sh 2>&1
 )
 echo '== end =='
 # CHECK: == relative path uses cwd only ==
@@ -203,30 +197,30 @@ echo '== tests-dir path not used from outside cwd =='
 set +e
 (
     cd "$OUTSIDE_CWD_DIR"
-    "$RUNNER" --list --tests-dir "$OPTION_TEST_DIR" custom.sh 2>&1
+    "$RUNNER" --list --tests-dir "$OPTION_TEST_DIR" ./custom.sh 2>&1
 )
 printf 'status=%d\n' "$?"
 set -e
 # CHECK: == tests-dir path not used from outside cwd ==
-# CHECK: error: no tests matched test path: custom.sh
+# CHECK: error: no tests matched pattern: ./custom.sh
 # CHECK: status=2
 
-# Verify that a directory path selects tests below that directory.
-echo '== directory path =='
+# Verify that a directory wildcard pattern selects tests below that directory.
+echo '== directory wildcard pattern =='
 (
     cd "$OPTION_TEST_DIR"
-    "$RUNNER" --list --tests-dir "$OPTION_TEST_DIR" dir 2>&1
+    "$RUNNER" --list --tests-dir "$OPTION_TEST_DIR" 'dir/*' 2>&1
 )
-# CHECK: == directory path ==
+# CHECK: == directory wildcard pattern ==
 # CHECK-NEXT: dir/nested.sh
 
-# Verify that `.` selects tests below the invocation cwd.
-echo '== cwd root path =='
+# Verify that a cwd-relative wildcard selects tests below the invocation cwd.
+echo '== cwd root wildcard pattern =='
 (
     cd "$OPTION_TEST_DIR"
-    "$RUNNER" --list --tests-dir "$OPTION_TEST_DIR" . 2>&1
+    "$RUNNER" --list --tests-dir "$OPTION_TEST_DIR" './*' 2>&1
 )
-# CHECK: == cwd root path ==
+# CHECK: == cwd root wildcard pattern ==
 # CHECK-NEXT: custom.sh
 # CHECK-NEXT: dir/nested.sh
 # CHECK-NEXT: shadow/custom.sh
@@ -239,14 +233,14 @@ echo '== c subtest path =='
 # CHECK: == c subtest path ==
 # CHECK-NEXT: runner/output.c/emit_output
 
-# Verify that path selection is intersected with explicit filters.
-echo '== path with filter =='
-"$RUNNER" --list "$RUNNER_DIR_PATH" --filter runner/output.sh 2>&1
-# CHECK: == path with filter ==
+# Verify that multiple positional patterns are ORed.
+echo '== multiple patterns =='
+"$RUNNER" --list runner/no-subtests.c runner/output.sh 2>&1
+# CHECK: == multiple patterns ==
+# CHECK-NEXT: runner/no-subtests.c
 # CHECK-NEXT: runner/output.sh
 
-# Verify that an existing non-test path is accepted as a path selector but
-# reports that no tests matched.
+# Verify that an existing non-test path pattern reports that no tests matched.
 echo '== path selects no tests =='
 set +e
 "$RUNNER" --list --tests-dir "$OPTION_TEST_DIR" \
@@ -254,10 +248,10 @@ set +e
 printf 'status=%d\n' "$?"
 set -e
 # CHECK: == path selects no tests ==
-# CHECK: error: no tests matched test path: {{.*not-a-test.txt}}
+# CHECK: error: no tests matched pattern: {{.*not-a-test.txt}}
 # CHECK: status=2
 
-# Verify that an existing C test with an unknown subtest reports no path match.
+# Verify that an existing C test with an unknown subtest reports no match.
 echo '== missing c subtest =='
 set +e
 (
@@ -267,7 +261,7 @@ set +e
 printf 'status=%d\n' "$?"
 set -e
 # CHECK: == missing c subtest ==
-# CHECK: error: no tests matched test path: {{.*output.c/not_a_subtest}}
+# CHECK: error: no tests matched pattern: {{.*output.c/not_a_subtest}}
 # CHECK: status=2
 
 # Verify that a trailing slash after a C file path is normalized to the test
@@ -284,7 +278,7 @@ set +e
 printf 'status=%d\n' "$?"
 set -e
 # CHECK: == missing c subtest file ==
-# CHECK: error: no tests matched test path: {{.*missing.c/subtest}}
+# CHECK: error: no tests matched pattern: {{.*missing.c/subtest}}
 # CHECK: status=2
 
 # Verify that `.c` must end a path component before the remaining path is
@@ -295,7 +289,7 @@ set +e
 printf 'status=%d\n' "$?"
 set -e
 # CHECK: == absolute c path non boundary ==
-# CHECK: error: no tests matched test path: {{.*output.c-extra/subtest}}
+# CHECK: error: no tests matched pattern: {{.*output.c-extra/subtest}}
 # CHECK: status=2
 
 # Verify that a directory named like a C file is not interpreted as a C test.
@@ -308,7 +302,7 @@ set +e
 printf 'status=%d\n' "$?"
 set -e
 # CHECK: == c subtest prefix is directory ==
-# CHECK: error: no tests matched test path: fake.c/subtest
+# CHECK: error: no tests matched pattern: fake.c/subtest
 # CHECK: status=2
 
 # Verify that a short unmatched relative path reports no path match.
@@ -321,7 +315,7 @@ set +e
 printf 'status=%d\n' "$?"
 set -e
 # CHECK: == short missing path ==
-# CHECK: error: no tests matched test path: x
+# CHECK: error: no tests matched pattern: x
 # CHECK: status=2
 
 # Verify that a trailing slash on a missing non-C path reports no path match.
@@ -334,7 +328,7 @@ set +e
 printf 'status=%d\n' "$?"
 set -e
 # CHECK: == non c trailing slash path ==
-# CHECK: error: no tests matched test path: abx/
+# CHECK: error: no tests matched pattern: abx/
 # CHECK: status=2
 
 # Verify that a trailing slash on a missing C file path reports no path match.
@@ -347,7 +341,7 @@ set +e
 printf 'status=%d\n' "$?"
 set -e
 # CHECK: == missing c file trailing slash path ==
-# CHECK: error: no tests matched test path: ab.c/
+# CHECK: error: no tests matched pattern: ab.c/
 # CHECK: status=2
 
 # Verify that dotted non-C paths are not interpreted as virtual subtest paths.
@@ -360,11 +354,11 @@ set +e
 printf 'status=%d\n' "$?"
 set -e
 # CHECK: == non c dotted virtual path ==
-# CHECK: error: no tests matched test path: missing.x/subtest
+# CHECK: error: no tests matched pattern: missing.x/subtest
 # CHECK: status=2
 
 # Verify that unsupported filesystem nodes are treated as unmatched path
-# selectors, not as test files.
+# patterns, not as test files.
 echo '== unsupported path type =='
 set +e
 "$RUNNER" --list --tests-dir "$IMGNEKO_TEST_OUTPUT_DIR" \
@@ -372,7 +366,7 @@ set +e
 printf 'status=%d\n' "$?"
 set -e
 # CHECK: == unsupported path type ==
-# CHECK: error: no tests matched test path: {{.*fifo-test-path}}
+# CHECK: error: no tests matched pattern: {{.*fifo-test-path}}
 # CHECK: status=2
 
 # Verify that an absolute path outside the tests directory reports no match,
@@ -385,7 +379,7 @@ printf 'status=%d\n' "$?"
 set -e
 chmod 700 "$OUTSIDE_BLOCKED_TEST_PATH_DIR"
 # CHECK: == outside test path ==
-# CHECK: error: no tests matched test path: {{.*outside-blocked-test-path-dir/child}}
+# CHECK: error: no tests matched pattern: {{.*outside-blocked-test-path-dir/child}}
 # CHECK: status=2
 
 # Verify that a cwd-relative path outside the tests directory reports no match
@@ -401,7 +395,7 @@ printf 'status=%d\n' "$?"
 set -e
 chmod 700 "$OUTSIDE_BLOCKED_TEST_PATH_DIR"
 # CHECK: == relative blocked outside test path ==
-# CHECK: error: no tests matched test path: outside-blocked-test-path-dir/child
+# CHECK: error: no tests matched pattern: outside-blocked-test-path-dir/child
 # CHECK: status=2
 
 # Verify that a cwd-relative path inside an unreadable test directory reaches
@@ -425,7 +419,7 @@ chmod 700 "$BLOCKED_TEST_PATH_DIR"
 echo '== empty PATH =='
 env PATH= "$RUNNER" --tests-dir "$OPTION_TEST_DIR" \
     --output-dir "$PATH_OUTPUT_DIR" --output-passthrough \
-    --filter show-path.sh 2>&1
+    show-path.sh 2>&1
 # CHECK: == empty PATH ==
 # CHECK: RUN: show-path.sh
 # CHECK: PATH ok
@@ -433,7 +427,7 @@ env PATH= "$RUNNER" --tests-dir "$OPTION_TEST_DIR" \
 
 echo '== passthrough long option =='
 "$RUNNER" --output-dir "$EMPTY_OUTPUT_DIR" --output-passthrough \
-    --filter runner/output.sh 2>&1
+    runner/output.sh 2>&1
 # CHECK: == passthrough long option ==
 # CHECK: RUN: runner/output.sh
 # CHECK: output script stdout marker
@@ -444,7 +438,7 @@ echo '== passthrough long option =='
 echo '== debug flip arg =='
 "$RUNNER" --output-dir "$FLIP_OUTPUT_DIR" \
     --debug-flip-exit-probability 0.5 \
-    --filter runner/output.sh 2>&1 || true
+    runner/output.sh 2>&1 || true
 # CHECK: == debug flip arg ==
 # CHECK: RUN: runner/output.sh
 # CHECK: {{PASS|FAIL}}: runner/output.sh
@@ -456,7 +450,7 @@ echo '== debug flip arg =='
 echo '== debug flip failing test =='
 "$RUNNER" --output-dir "$XPASS_OUTPUT_DIR" \
     --debug-flip-exit-probability=1 \
-    --filter runner/xfail.sh 2>&1 || true
+    runner/xfail.sh 2>&1 || true
 # CHECK: == debug flip failing test ==
 # CHECK: RUN: runner/xfail.sh
 # CHECK: DEBUG: flipped exit code for runner/xfail.sh (1 -> 0)
@@ -507,10 +501,23 @@ echo '== jobs huge =='
 # CHECK: == jobs huge ==
 # CHECK: error: invalid value for --jobs: 999999999999999999999999999999
 
-echo '== missing filter =='
-"$RUNNER" --filter 2>&1 || true
-# CHECK: == missing filter ==
-# CHECK: error: --filter requires a value
+echo '== removed filter option =='
+set +e
+"$RUNNER" --filter 2>&1
+printf 'status=%d\n' "$?"
+set -e
+# CHECK: == removed filter option ==
+# CHECK: error: unknown option: --filter
+# CHECK: status=2
+
+echo '== removed short filter option =='
+set +e
+"$RUNNER" -f 2>&1
+printf 'status=%d\n' "$?"
+set -e
+# CHECK: == removed short filter option ==
+# CHECK: error: unknown option: -f
+# CHECK: status=2
 
 echo '== missing tests dir =='
 "$RUNNER" --tests-dir 2>&1 || true
@@ -632,55 +639,57 @@ set -e
 # CHECK: error: unknown option: --definitely-unknown
 # CHECK: status=2
 
-echo '== all with filter =='
-"$RUNNER" --all --filter runner/no-subtests.c 2>&1 || true
-# CHECK: == all with filter ==
-# CHECK: error: --all cannot be combined with --filter or paths
+echo '== all with pattern =='
+"$RUNNER" --all runner/no-subtests.c 2>&1 || true
+# CHECK: == all with pattern ==
+# CHECK: error: --all cannot be combined with patterns
 
-# Verify that --all rejects positional paths, matching the --filter conflict.
+# Verify that --all rejects absolute path patterns too.
 echo '== all with path =='
 "$RUNNER" --all "$NO_SUBTESTS_PATH" 2>&1 || true
 # CHECK: == all with path ==
-# CHECK: error: --all cannot be combined with --filter or paths
+# CHECK: error: --all cannot be combined with patterns
 
-echo '== empty filter parts =='
+echo '== empty pattern parts =='
 set +e
-"$RUNNER" --list --filter '||runner/no-subtests.c|' 2>&1
+"$RUNNER" --list '||runner/no-subtests.c|' 2>&1
 printf 'status=%d\n' "$?"
 set -e
-# CHECK: == empty filter parts ==
-# CHECK: error: invalid filter pattern: ||runner/no-subtests.c|
+# CHECK: == empty pattern parts ==
+# CHECK: error: invalid test pattern: ||runner/no-subtests.c|
 # CHECK: status=2
 
-# Verify that legacy positional filter syntax is now treated as a path and
-# reports no matching tests.
-echo '== legacy positional pattern rejected =='
+# Verify that every alternation atom must match at least one test.
+echo '== unmatched alternation part =='
 set +e
-"$RUNNER" --list -- '||runner/no-subtests.c|' 2>&1
+"$RUNNER" --list 'does/not/exist|runner/no-subtests.c' 2>&1
 printf 'status=%d\n' "$?"
 set -e
-# CHECK: == legacy positional pattern rejected ==
-# CHECK: error: no tests matched test path: ||runner/no-subtests.c|
+# CHECK: == unmatched alternation part ==
+# CHECK: error: no tests matched pattern: does/not/exist
 # CHECK: status=2
 
 echo '== list no matches =='
-"$RUNNER" --list --filter does/not/exist 2>&1 || true
-echo '== end list no matches =='
+set +e
+"$RUNNER" --list does/not/exist 2>&1
+printf 'status=%d\n' "$?"
+set -e
 # CHECK: == list no matches ==
-# CHECK-NEXT: == end list no matches ==
+# CHECK: error: no tests matched pattern: does/not/exist
+# CHECK: status=2
 
 echo '== run no matches =='
 set +e
-"$RUNNER" --output-dir "$NO_MATCH_OUTPUT_DIR" --filter does/not/exist 2>&1
+"$RUNNER" --output-dir "$NO_MATCH_OUTPUT_DIR" does/not/exist 2>&1
 printf 'status=%d\n' "$?"
 set -e
 # CHECK: == run no matches ==
-# CHECK: error: no tests matched the requested filters
+# CHECK: error: no tests matched pattern: does/not/exist
 # CHECK: status=2
 
 echo '== nonempty output dir =='
 "$RUNNER" --output-dir "$NONEMPTY_OUTPUT_DIR" \
-    --filter runner/output.sh 2>&1 || true
+    runner/output.sh 2>&1 || true
 # CHECK: == nonempty output dir ==
 # CHECK: error: test output directory is not empty: {{.*nonempty-output}}
 # CHECK: remove it first with rm -rf '{{.*nonempty-output}}'
@@ -712,7 +721,7 @@ set +e
     cd "$BAD_CWD_CHILD"
     rmdir "$BAD_CWD_CHILD"
     "$RUNNER" --list --output-dir relative-output \
-        --filter runner/no-subtests.c 2>&1
+        runner/no-subtests.c 2>&1
 )
 printf 'status=%d\n' "$?"
 set -e
@@ -720,7 +729,7 @@ set -e
 # CHECK: error: failed to resolve output directory: No such file or directory
 # CHECK: status=1
 
-# Verify that a relative test path cannot be resolved when the invocation cwd
+# Verify that a relative test pattern cannot be resolved when the invocation cwd
 # has been deleted.
 mkdir -p "$BAD_TEST_CWD_CHILD"
 echo '== relative test path from deleted cwd =='
@@ -733,7 +742,7 @@ set +e
 printf 'status=%d\n' "$?"
 set -e
 # CHECK: == relative test path from deleted cwd ==
-# CHECK: error: failed to resolve test path: No such file or directory
+# CHECK: error: failed to resolve test pattern: No such file or directory
 # CHECK: status=1
 
 echo "== --out-tmp =="

@@ -34,7 +34,7 @@ printf 'expected timing file: %s\n' "$PASS_TIMING_FILE"
 # CHECK-NEXT: expected timing file: [[pass_timing_file:.*/reporting-pass/test-times\.txt]]
 
 "$RUNNER" --jobs=1 --output-dir "$PASS_OUTPUT_DIR" \
-    --filter runner/output.sh 2>&1
+    runner/output.sh 2>&1
 # CHECK: Starting test run: 1 job, 1 discovered test
 # CHECK: RUN: runner/output.sh
 # CHECK: PASS: runner/output.sh
@@ -59,7 +59,7 @@ printf 'expected timing file: %s\n' "$MARKERS_TIMING_FILE"
 # CHECK-NEXT: expected timing file: [[markers_timing_file:.*/reporting-markers/test-times\.txt]]
 
 "$RUNNER" --jobs=1 --output-dir "$MARKERS_OUTPUT_DIR" \
-    --filter 'runner/markers.c|runner/xfail.sh|runner/disabled.sh' 2>&1
+    'runner/markers.c|runner/xfail.sh|runner/disabled.sh' 2>&1
 # CHECK: Starting test run: 1 job, 4 discovered tests
 # CHECK: DISABLED: runner/disabled.sh
 # CHECK: DISABLED: runner/markers.c/marked_disabled
@@ -90,7 +90,7 @@ printf 'expected timing file: %s\n' "$TIMEOUT_TIMING_FILE"
 # CHECK-NEXT: expected timing file: [[timeout_timing_file:.*/reporting-timeout/test-times\.txt]]
 
 "$RUNNER" --jobs=1 --output-dir "$TIMEOUT_OUTPUT_DIR" --timeout 1 \
-    --filter runner/timeout.sh 2>&1 || true
+    runner/timeout.sh 2>&1 || true
 # CHECK: Starting test run: 1 job, 1 discovered test
 # CHECK: RUN: runner/timeout.sh
 # CHECK: TIMEOUT: runner/timeout.sh

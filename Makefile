@@ -364,7 +364,7 @@ install: check-config-date all
 # Run tests.
 test: check-config-date test-deps clean-test-output
 	@set --; \
-	if [ -n "$(FILTER)" ]; then set -- --filter "$(FILTER)"; else set -- --all; fi; \
+	if [ -n "$(FILTER)" ]; then set -- "$(FILTER)"; else set -- --all; fi; \
 	"$(BIN_TEST_RUNNER)" -j "$(TEST_RUNNER_JOBS)" "$$@"
 
 ifeq ($(COVERAGE_REPORT),ON)
@@ -413,7 +413,7 @@ endif
 # List tests.
 test-list: check-config-date test-tools test-c-bins
 	@set -- --list; \
-	if [ -n "$(FILTER)" ]; then set -- "$$@" --filter "$(FILTER)"; fi; \
+	if [ -n "$(FILTER)" ]; then set -- "$$@" "$(FILTER)"; fi; \
 	"$(BIN_TEST_RUNNER)" "$$@"
 
 # Remove captured per-test output files so each `make test` run starts fresh.

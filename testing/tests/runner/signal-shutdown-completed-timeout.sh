@@ -24,7 +24,7 @@ run_runner_completed_timeout_shutdown_test() {
     IMGNEKO_RUNNER_SIGNAL_STATE_DIR="$state_dir" \
         "$RUNNER" --tests-dir "$RUNNER_SIGNAL_TEST_DIR" --output-dir "$output_dir" \
         --timeout 5.0 -j 2 \
-        --filter 'j-timeout-exit-on-term.sh|k-delay-slot.sh|l-signal-window.sh' \
+        'j-timeout-exit-on-term.sh|k-delay-slot.sh|l-signal-window.sh' \
         >"$log_path" 2>&1 &
     runner_pid=$!
 
