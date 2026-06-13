@@ -22,8 +22,9 @@ echo '== placeholder help =='
 # CHECK-NEXT: {{^}}                            0x-prefixed hex.{{$}}
 # CHECK-NEXT: {{^}}  --placement-id ID         Placement ID to encode in the placeholder, as{{$}}
 # CHECK-NEXT: {{^}}                            decimal or 0x-prefixed hex. (default: 0){{$}}
-# CHECK-NEXT: {{^}}  --rows ROWS               Placeholder height in terminal cells.{{$}}
-# CHECK-NEXT: {{^}}  --cols COLS               Placeholder width in terminal cells.{{$}}
+# CHECK-NEXT: {{^}}  -p, --place CxR           Placeholder size as COLSxROWS terminal cells.{{$}}
+# CHECK-NEXT: {{^}}  -r, --rows ROWS           Placeholder height in terminal cells.{{$}}
+# CHECK-NEXT: {{^}}  -c, --cols COLS           Placeholder width in terminal cells.{{$}}
 # CHECK-NEXT: {{^}}  -h, --help                Show this help message and exit.{{$}}
 # CHECK-NEXT: {{^$}}
 
@@ -34,6 +35,26 @@ echo '== placeholder bytes =='
 # CHECK-NEXT: {{^}}== placeholder bytes =={{$}}
 # CHECK-NEXT: {{^\x1b\[0m\x1b\[38;2;}}[[rgb(1234)]]m[[ph(0, "0:2")]]{{\x1b\[0m$}}
 # CHECK-NEXT: {{^\x1b\[0m\x1b\[38;2;}}[[rgb(1234)]]m[[ph(1, "0:2")]]{{\x1b\[0m$}}
+
+echo '== short dimension options =='
+# Verify that -r and -c are aliases for --rows and --cols.
+"$IMGNEKO" placeholder --id 1234 -r 1 -c 2
+# CHECK-NEXT: {{^}}== short dimension options =={{$}}
+# CHECK-NEXT: {{^\x1b\[0m\x1b\[38;2;}}[[rgb(1234)]]m[[ph(0, "0:1")]]{{\x1b\[0m$}}
+
+echo '== place dimensions =='
+# Verify that -p accepts CxR, where C is columns and R is rows.
+"$IMGNEKO" placeholder --id 1234 -p 3x2
+# CHECK-NEXT: {{^}}== place dimensions =={{$}}
+# CHECK-NEXT: {{^\x1b\[0m\x1b\[38;2;}}[[rgb(1234)]]m[[ph(0, "0:2")]]{{\x1b\[0m$}}
+# CHECK-NEXT: {{^\x1b\[0m\x1b\[38;2;}}[[rgb(1234)]]m[[ph(1, "0:2")]]{{\x1b\[0m$}}
+
+echo '== place dimensions X =='
+# Capital X works too.
+"$IMGNEKO" placeholder --id 1234 -p 5X2
+# CHECK-NEXT: {{^}}== place dimensions X =={{$}}
+# CHECK-NEXT: {{^\x1b\[0m\x1b\[38;2;}}[[rgb(1234)]]m[[ph(0, "0:4")]]{{\x1b\[0m$}}
+# CHECK-NEXT: {{^\x1b\[0m\x1b\[38;2;}}[[rgb(1234)]]m[[ph(1, "0:4")]]{{\x1b\[0m$}}
 
 echo '== image id high byte =='
 # Verify that the optional third placeholder diacritic is based only on the

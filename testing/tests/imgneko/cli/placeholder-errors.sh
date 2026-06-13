@@ -22,6 +22,16 @@ check_exit_code 2 "$IMGNEKO" placeholder --id 1 --cols 1
 check_exit_code 2 "$IMGNEKO" placeholder --id 1 --rows 1
 # CHECK-NEXT: {{^}}error: missing required option: --cols{{$}}
 
+echo '== conflicting dimensions =='
+# --place supplies both rows and columns, so mixing it with either explicit
+# dimension option would make the requested size ambiguous.
+check_exit_code 2 "$IMGNEKO" placeholder --id 1 --place 1x1 --rows 1
+# CHECK-NEXT: {{^}}== conflicting dimensions =={{$}}
+# CHECK-NEXT: {{^}}error: --place cannot be used with --rows or --cols{{$}}
+
+check_exit_code 2 "$IMGNEKO" placeholder --id 1 --place 1x1 --cols 1
+# CHECK-NEXT: {{^}}error: --place cannot be used with --rows or --cols{{$}}
+
 echo '== invalid placement id =='
 check_exit_code 2 "$IMGNEKO" placeholder --id 1 --placement-id 0x1000000 \
     --rows 1 --cols 1
@@ -72,6 +82,24 @@ check_exit_code 2 "$IMGNEKO" placeholder --id 1 --rows -1 --cols 1
 
 check_exit_code 2 "$IMGNEKO" placeholder --id 1 --rows 4294967296 --cols 1
 # CHECK-NEXT: {{^}}error: invalid value for --rows: 4294967296 (expected a 32-bit unsigned integer){{$}}
+
+check_exit_code 2 "$IMGNEKO" placeholder --id 1 --place ""
+# CHECK-NEXT: {{^}}error: invalid value for --place:  (expected CxR with positive base-10 unsigned integers){{$}}
+
+check_exit_code 2 "$IMGNEKO" placeholder --id 1 --place 1
+# CHECK-NEXT: {{^}}error: invalid value for --place: 1 (expected CxR with positive base-10 unsigned integers){{$}}
+
+check_exit_code 2 "$IMGNEKO" placeholder --id 1 --place 1xx1
+# CHECK-NEXT: {{^}}error: invalid value for --place: 1xx1 (expected exactly one x separator in CxR value){{$}}
+
+check_exit_code 2 "$IMGNEKO" placeholder --id 1 --place x
+# CHECK-NEXT: {{^}}error: invalid value for --place: x (expected CxR with positive base-10 unsigned integers){{$}}
+
+check_exit_code 2 "$IMGNEKO" placeholder --id 1 --place 1x0
+# CHECK-NEXT: {{^}}error: invalid value for --place: 1x0 (expected CxR with positive base-10 unsigned integers){{$}}
+
+check_exit_code 2 "$IMGNEKO" placeholder --id 1 --place 4294967296x1
+# CHECK-NEXT: {{^}}error: invalid value for --place: 4294967296x1 (expected CxR with positive base-10 unsigned integers){{$}}
 
 echo '== broken stdout =='
 # Close the only FIFO reader before the child writes so imgneko reports a write

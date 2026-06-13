@@ -12,6 +12,15 @@
 
 OPT_DEFINE_WRAPPER_STRUCT(OptUint32, uint32_t);
 
+// Parsed value for the `--place CxR` size option. The CLI spelling uses
+// columns first and rows second, matching the width-by-height convention.
+typedef struct PlaceSize {
+    uint32_t cols;
+    uint32_t rows;
+} PlaceSize;
+
+OPT_DEFINE_WRAPPER_STRUCT(OptPlaceSize, PlaceSize);
+
 // Parse an unsigned 32-bit decimal integer from an option value.
 static bool parse_uint32_option(void *value, const char *text, size_t text_len,
                                 String *error_out) {
@@ -39,6 +48,56 @@ static bool parse_id_option(void *value, const char *text, size_t text_len,
         return opt_parse_error(error_out, "expected a 32-bit unsigned integer");
 
     *(uint32_t *)value = (uint32_t)parsed;
+    return true;
+}
+
+// Parse a positive unsigned 32-bit decimal integer from raw text.
+static bool parse_positive_uint32_span(const char *text, size_t text_len,
+                                       uint32_t *out) {
+    int64_t parsed = 0;
+
+    if (!opt_parse_int64_span(text, text_len, &parsed) || parsed <= 0 ||
+        parsed > UINT32_MAX) {
+        return false;
+    }
+
+    *out = (uint32_t)parsed;
+    return true;
+}
+
+// Parse a placeholder size from a COLSxROWS option value.
+static bool parse_place_option(void *value, const char *text, size_t text_len,
+                               String *error_out) {
+    const char *separator = NULL;
+    size_t cols_len = 0;
+    size_t rows_len = 0;
+    PlaceSize parsed = {0};
+
+    if (text_len == 0)
+        return opt_parse_error(
+            error_out, "expected CxR with positive base-10 unsigned integers");
+
+    for (size_t i = 0; i < text_len; ++i) {
+        if (text[i] != 'x' && text[i] != 'X')
+            continue;
+        if (separator != NULL)
+            return opt_parse_error(
+                error_out, "expected exactly one x separator in CxR value");
+        separator = text + i;
+    }
+    if (separator == NULL)
+        return opt_parse_error(
+            error_out, "expected CxR with positive base-10 unsigned integers");
+
+    cols_len = (size_t)(separator - text);
+    rows_len = text_len - cols_len - 1;
+    if (!parse_positive_uint32_span(text, cols_len, &parsed.cols) ||
+        !parse_positive_uint32_span(separator + 1, rows_len, &parsed.rows)) {
+        return opt_parse_error(
+            error_out, "expected CxR with positive base-10 unsigned integers");
+    }
+
+    *(PlaceSize *)value = parsed;
     return true;
 }
 
@@ -75,13 +134,18 @@ static bool validate_placement_id(const void *value, String *error_out) {
                  .descr = "Placement ID to encode in the placeholder, as "     \
                           "decimal or 0x-prefixed hex.",                       \
                  .dflt = "0"))                                                 \
+    X(S, place, OptPlaceSize,                                                  \
+      OPT_CUSTOM(.parse = parse_place_option, .cli = "-p --place CxR",         \
+                 .descr = "Placeholder size as COLSxROWS terminal cells."))    \
     X(S, rows, OptUint32,                                                      \
       OPT_CUSTOM(.parse = parse_uint32_option,                                 \
-                 .validate = validate_positive_uint32, .cli = "--rows ROWS",   \
+                 .validate = validate_positive_uint32,                         \
+                 .cli = "-r --rows ROWS",                                      \
                  .descr = "Placeholder height in terminal cells."))            \
     X(S, cols, OptUint32,                                                      \
       OPT_CUSTOM(.parse = parse_uint32_option,                                 \
-                 .validate = validate_positive_uint32, .cli = "--cols COLS",   \
+                 .validate = validate_positive_uint32,                         \
+                 .cli = "-c --cols COLS",                                      \
                  .descr = "Placeholder width in terminal cells."))
 
 OPT_DEFINE_STRUCT(ProgramOptions, PROGRAM_OPTIONS)
@@ -123,10 +187,28 @@ static bool require_option(bool is_set, const char *cli_name) {
 
 // Run the placeholder command.
 static int run_placeholder_command(const PlaceholderCliOptions *options) {
-    if (!require_option(options->id.is_set, "--id") ||
-        !require_option(options->rows.is_set, "--rows") ||
-        !require_option(options->cols.is_set, "--cols")) {
+    if (!require_option(options->id.is_set, "--id"))
         return 2;
+
+    if (options->place.is_set &&
+        (options->rows.is_set || options->cols.is_set)) {
+        fprintf(stderr,
+                "error: --place cannot be used with --rows or --cols\n");
+        return 2;
+    }
+
+    uint32_t cols = 0;
+    uint32_t rows = 0;
+    if (options->place.is_set) {
+        cols = options->place.value.cols;
+        rows = options->place.value.rows;
+    } else {
+        if (!require_option(options->rows.is_set, "--rows") ||
+            !require_option(options->cols.is_set, "--cols")) {
+            return 2;
+        }
+        cols = options->cols.value;
+        rows = options->rows.value;
     }
 
     Placeholder placeholder = {
@@ -134,8 +216,8 @@ static int run_placeholder_command(const PlaceholderCliOptions *options) {
         .placement_id = options->placement_id.value,
         .rect = {.start_col = 0,
                  .start_row = 0,
-                 .end_col = options->cols.value,
-                 .end_row = options->rows.value},
+                 .end_col = cols,
+                 .end_row = rows},
     };
     PlaceholderOptions placeholder_options = placeholder_options_default();
 
