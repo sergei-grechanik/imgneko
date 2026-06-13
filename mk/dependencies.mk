@@ -139,6 +139,14 @@ $(BUILD_DIR)/obj/test-bin/unit/util/time.c.bin: \
 $(BUILD_DIR)/obj/testing/support/test_main.o: \
 	$(ROOT_DIR)/testing/support/test_main.c \
 	$(ROOT_DIR)/testing/support/test_main.h
+$(BUILD_DIR)/obj/testing/tools/run-and-check-expr.o: \
+	$(ROOT_DIR)/src/imgneko/rowcolumn_diacritics.h \
+	$(ROOT_DIR)/src/util/array.h \
+	$(ROOT_DIR)/src/util/common.h \
+	$(ROOT_DIR)/src/util/options.h \
+	$(ROOT_DIR)/src/util/string.h \
+	$(ROOT_DIR)/testing/tools/run-and-check-expr.c \
+	$(ROOT_DIR)/testing/tools/run-and-check-expr.h
 $(BUILD_DIR)/obj/testing/tools/run-and-check.o: \
 	$(ROOT_DIR)/src/util/array.h \
 	$(ROOT_DIR)/src/util/error.h \
@@ -146,6 +154,7 @@ $(BUILD_DIR)/obj/testing/tools/run-and-check.o: \
 	$(ROOT_DIR)/src/util/klib/khash.h \
 	$(ROOT_DIR)/src/util/path.h \
 	$(ROOT_DIR)/src/util/string.h \
+	$(ROOT_DIR)/testing/tools/run-and-check-expr.h \
 	$(ROOT_DIR)/testing/tools/run-and-check.c
 $(BUILD_DIR)/obj/testing/tools/run-in-pty.o: \
 	$(ROOT_DIR)/src/util/array.h \

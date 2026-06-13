@@ -81,7 +81,9 @@ APP_SOURCES := src/main.c
 IMGNEKO_SOURCES := $(shell if [ -d "$(ROOT_DIR)/src/imgneko" ]; then cd "$(ROOT_DIR)" && find src/imgneko -type f -name '*.c' -print | LC_ALL=C sort; fi)
 UTIL_SOURCES := $(shell if [ -d "$(ROOT_DIR)/src/util" ]; then cd "$(ROOT_DIR)" && find src/util -type f -name '*.c' -print | LC_ALL=C sort; fi)
 TEST_RUNNER_SOURCE := testing/tools/test-runner.c
-RUN_AND_CHECK_SOURCE := testing/tools/run-and-check.c
+RUN_AND_CHECK_SOURCES := \
+	testing/tools/run-and-check.c \
+	testing/tools/run-and-check-expr.c
 TEST_TOOL_SOURCES := $(addprefix testing/tools/,$(addsuffix .c,$(TEST_TOOL_NAMES)))
 TEST_SUPPORT_SOURCES := $(shell if [ -d "$(ROOT_DIR)/testing/support" ]; then cd "$(ROOT_DIR)" && find testing/support -type f -name '*.c' -print | LC_ALL=C sort; fi)
 TEST_SOURCES := $(shell if [ -d "$(ROOT_DIR)/testing/tests" ]; then cd "$(ROOT_DIR)" && find testing/tests -type f -print | LC_ALL=C sort; fi)
@@ -95,13 +97,13 @@ UTIL_OBJECTS := $(addprefix $(OBJ_DIR)/,$(UTIL_SOURCES:.c=.o))
 SHARED_OBJECTS := $(IMGNEKO_OBJECTS) $(UTIL_OBJECTS)
 OBJECTS := $(APP_OBJECTS) $(SHARED_OBJECTS)
 TEST_RUNNER_OBJECT := $(OBJ_DIR)/$(TEST_RUNNER_SOURCE:.c=.o)
-RUN_AND_CHECK_OBJECT := $(OBJ_DIR)/$(RUN_AND_CHECK_SOURCE:.c=.o)
+RUN_AND_CHECK_OBJECTS := $(addprefix $(OBJ_DIR)/,$(RUN_AND_CHECK_SOURCES:.c=.o))
 TEST_TOOL_OBJECTS := $(addprefix $(OBJ_DIR)/,$(TEST_TOOL_SOURCES:.c=.o))
 TEST_SUPPORT_OBJECTS := $(addprefix $(OBJ_DIR)/,$(TEST_SUPPORT_SOURCES:.c=.o))
 TEST_TOOLS := $(BIN_TEST_RUNNER) $(BIN_RUN_AND_CHECK) $(TEST_TOOL_BINS)
 TEST_C_BINS := $(patsubst testing/tests/%.c,$(TEST_BIN_DIR)/%.c.bin,$(TEST_C_SOURCES))
 ALL_OBJECTS_AND_BINS := \
-		$(OBJECTS) $(TEST_RUNNER_OBJECT) $(RUN_AND_CHECK_OBJECT) \
+		$(OBJECTS) $(TEST_RUNNER_OBJECT) $(RUN_AND_CHECK_OBJECTS) \
 		$(TEST_TOOL_OBJECTS) \
 		$(TEST_SUPPORT_OBJECTS) $(TEST_C_BINS)
 
@@ -280,9 +282,9 @@ $(BIN_TEST_RUNNER): $(TEST_RUNNER_OBJECT) $(SHARED_OBJECTS) $(CONFIG_MK) $(BUILD
 	@mkdir -p "$(dir $@)"
 	$(CC) $(COMMON_LINK_FLAGS) -o "$@" $(TEST_RUNNER_OBJECT) $(SHARED_OBJECTS) $(LDLIBS)
 
-$(BIN_RUN_AND_CHECK): $(RUN_AND_CHECK_OBJECT) $(SHARED_OBJECTS) $(CONFIG_MK) $(BUILD_INFO_H) | check-config-date
+$(BIN_RUN_AND_CHECK): $(RUN_AND_CHECK_OBJECTS) $(SHARED_OBJECTS) $(CONFIG_MK) $(BUILD_INFO_H) | check-config-date
 	@mkdir -p "$(dir $@)"
-	$(CC) $(COMMON_LINK_FLAGS) -o "$@" $(RUN_AND_CHECK_OBJECT) $(SHARED_OBJECTS) $(LDLIBS)
+	$(CC) $(COMMON_LINK_FLAGS) -o "$@" $(RUN_AND_CHECK_OBJECTS) $(SHARED_OBJECTS) $(LDLIBS)
 
 # Link each helper listed in TEST_TOOL_NAMES against the shared utility
 # objects. This is a static pattern rule: make expands the explicit target list

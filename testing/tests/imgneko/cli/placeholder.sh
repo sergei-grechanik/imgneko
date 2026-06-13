@@ -31,20 +31,34 @@ echo '== placeholder bytes =='
 # rectangle so the expected byte sequence remains readable.
 "$IMGNEKO" placeholder --id 1234 --rows 2 --cols 3
 # CHECK-NEXT: {{^}}== placeholder bytes =={{$}}
-# CHECK-NEXT: {{^\x1b\[0m\x1b\[38;2;0;4;210m\xf4\x8e\xbb\xae\xcc\x85\xcc\x85\xf4\x8e\xbb\xae\xcc\x85\xcc\x8d\xf4\x8e\xbb\xae\xcc\x85\xcc\x8e\x1b\[0m$}}
-# CHECK-NEXT: {{^\x1b\[0m\x1b\[38;2;0;4;210m\xf4\x8e\xbb\xae\xcc\x8d\xcc\x85\xf4\x8e\xbb\xae\xcc\x8d\xcc\x8d\xf4\x8e\xbb\xae\xcc\x8d\xcc\x8e\x1b\[0m$}}
+# CHECK-NEXT: {{^\x1b\[0m\x1b\[38;2;}}[[rgb(1234)]]m[[ph(0, "0:2")]]{{\x1b\[0m$}}
+# CHECK-NEXT: {{^\x1b\[0m\x1b\[38;2;}}[[rgb(1234)]]m[[ph(1, "0:2")]]{{\x1b\[0m$}}
+
+echo '== image id high byte =='
+# Verify that the optional third placeholder diacritic is based only on the
+# high image ID byte while the SGR color still uses the low 24 bits.
+# 16777216 = 0x1000000
+"$IMGNEKO" placeholder --id 16777216 --rows 1 --cols 1
+# CHECK-NEXT: {{^}}== image id high byte =={{$}}
+# CHECK-NEXT: {{^\x1b\[0m\x1b\[38;5;0m}}[[ph(0, 0, 16777216)]]{{\x1b\[0m$}}
 
 echo '== placement id bytes =='
 # Verify that --placement-id overrides the default placement ID and emits its
 # underline color metadata.
 "$IMGNEKO" placeholder --id 7 --placement-id 8 --rows 1 --cols 1
 # CHECK-NEXT: {{^}}== placement id bytes =={{$}}
-# CHECK-NEXT: {{^\x1b\[0m\x1b\[38;5;7m\x1b\[58;2;0;0;8m\xf4\x8e\xbb\xae\xcc\x85\xcc\x85\x1b\[0m$}}
+# CHECK-NEXT: {{^\x1b\[0m\x1b\[38;5;7m\x1b\[58;2;}}[[rgb(8)]]m[[ph(0, 0)]]{{\x1b\[0m$}}
 
 echo '== requested dimensions =='
-# Run the documented 20x10 form and check representative start/end bytes. The
-# full output is large, so this intentionally leaves the middle wildcarded.
 "$IMGNEKO" placeholder --id 1234 --rows 10 --cols 20
 # CHECK-NEXT: {{^}}== requested dimensions =={{$}}
-# CHECK-NEXT: {{^\x1b\[0m\x1b\[38;2;0;4;210m\xf4\x8e\xbb\xae\xcc\x85\xcc\x85.*\xf4\x8e\xbb\xae\xcc\x85\xcd\xa5\x1b\[0m$}}
-# CHECK: {{^\x1b\[0m\x1b\[38;2;0;4;210m\xf4\x8e\xbb\xae\xcd\x8a\xcc\x85.*\xf4\x8e\xbb\xae\xcd\x8a\xcd\xa5\x1b\[0m$}}
+# CHECK-NEXT: {{^\x1b\[0m\x1b\[38;2;}}[[rgb(1234)]]m[[ph(0, "0:19")]]{{\x1b\[0m$}}
+# CHECK-NEXT: {{^\x1b\[0m\x1b\[38;2;}}[[rgb(1234)]]m[[ph(1, "0:19")]]{{\x1b\[0m$}}
+# CHECK-NEXT: {{^\x1b\[0m\x1b\[38;2;}}[[rgb(1234)]]m[[ph(2, "0:19")]]{{\x1b\[0m$}}
+# CHECK-NEXT: {{^\x1b\[0m\x1b\[38;2;}}[[rgb(1234)]]m[[ph(3, "0:19")]]{{\x1b\[0m$}}
+# CHECK-NEXT: {{^\x1b\[0m\x1b\[38;2;}}[[rgb(1234)]]m[[ph(4, "0:19")]]{{\x1b\[0m$}}
+# CHECK-NEXT: {{^\x1b\[0m\x1b\[38;2;}}[[rgb(1234)]]m[[ph(5, "0:19")]]{{\x1b\[0m$}}
+# CHECK-NEXT: {{^\x1b\[0m\x1b\[38;2;}}[[rgb(1234)]]m[[ph(6, "0:19")]]{{\x1b\[0m$}}
+# CHECK-NEXT: {{^\x1b\[0m\x1b\[38;2;}}[[rgb(1234)]]m[[ph(7, "0:19")]]{{\x1b\[0m$}}
+# CHECK-NEXT: {{^\x1b\[0m\x1b\[38;2;}}[[rgb(1234)]]m[[ph(8, "0:19")]]{{\x1b\[0m$}}
+# CHECK-NEXT: {{^\x1b\[0m\x1b\[38;2;}}[[rgb(1234)]]m[[ph(9, "0:19")]]{{\x1b\[0m$}}

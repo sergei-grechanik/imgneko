@@ -17,6 +17,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include "run-and-check-expr.h"
 #include "util/array.h"
 #include "util/error.h"
 #include "util/file.h"
@@ -39,8 +40,8 @@ typedef enum PatternSegmentKind {
     SEGMENT_VARIABLE_USE,
 } PatternSegmentKind;
 
-// One parsed pattern fragment. `name` is used for variable defs/uses, and
-// `text` holds either literal bytes or the regex body.
+// A parsed pattern fragment. `name` is used for variable definitions, and
+// `text` holds literal bytes, the regex body, or the expression to expand.
 typedef struct PatternSegment {
     PatternSegmentKind kind;
     String name;
@@ -356,6 +357,11 @@ static const char *variable_context_get(const VariableContext *ctx,
     return kh_value(ctx->map, it).cstr;
 }
 
+static const char *lookup_expression_variable(const void *user_data,
+                                              const char *name) {
+    return variable_context_get(user_data, name);
+}
+
 // Replace the stored value for `name` with a newly allocated copy.
 static void variable_context_set(VariableContext *ctx, const char *name,
                                  const char *value, size_t value_len) {
@@ -382,14 +388,6 @@ static void parse_error(const char *path, int line_number,
     fprintf(stderr, "%s:%d: error: %s\n", path, line_number, message);
 }
 
-// Write an invalid-variable-name parse error with the name quoted so the empty
-// name case is still explicit in diagnostics.
-static void parse_invalid_variable_name_error(const char *path, int line_number,
-                                              const char *name) {
-    fprintf(stderr, "%s:%d: error: invalid variable name: '%s'\n", path,
-            line_number, name);
-}
-
 static void check_directive_free(CheckDirective *directive) {
     str_free(directive->raw_pattern);
     pattern_segment_array_free(&directive->segments);
@@ -405,10 +403,10 @@ static void append_pattern_segment(PatternSegmentArray *segments,
         .text = str_empty,
     };
 
+    assert(text != NULL);
     if (name != NULL)
         segment.name = str_from_cstr(name);
-    if (text != NULL)
-        segment.text = str_from_data(text, text_len);
+    segment.text = str_from_data(text, text_len);
 
     arr_push(*segments, segment);
 }
@@ -469,37 +467,23 @@ static bool parse_pattern_segments(const char *path, int line_number,
             body = pattern_text + cursor + 2;
             body_len = (size_t)(end - body);
             colon = memchr(body, ':', body_len);
-            if (colon == NULL) {
-                String name = str_from_data(body, body_len);
+            if (colon != NULL) {
+                String name = str_from_data(body, (size_t)(colon - body));
                 bool valid = is_valid_variable_name(name.cstr);
 
-                if (!valid) {
-                    parse_invalid_variable_name_error(path, line_number,
-                                                      name.cstr);
+                if (valid) {
+                    append_pattern_segment(
+                        segments, SEGMENT_VARIABLE_DEF, name.cstr, colon + 1,
+                        body_len - (size_t)(colon - body) - 1);
                     str_free(name);
-                    return false;
+                    cursor = (size_t)(end - pattern_text) + 2;
+                    continue;
                 }
-
-                append_pattern_segment(segments, SEGMENT_VARIABLE_USE,
-                                       name.cstr, NULL, 0);
                 str_free(name);
-                cursor = (size_t)(end - pattern_text) + 2;
-                continue;
             }
 
-            String name = str_from_data(body, (size_t)(colon - body));
-            bool valid = is_valid_variable_name(name.cstr);
-
-            if (!valid) {
-                parse_invalid_variable_name_error(path, line_number, name.cstr);
-                str_free(name);
-                return false;
-            }
-
-            append_pattern_segment(segments, SEGMENT_VARIABLE_DEF, name.cstr,
-                                   colon + 1,
-                                   body_len - (size_t)(colon - body) - 1);
-            str_free(name);
+            append_pattern_segment(segments, SEGMENT_VARIABLE_USE, NULL, body,
+                                   body_len);
             cursor = (size_t)(end - pattern_text) + 2;
             continue;
         }
@@ -748,19 +732,23 @@ static bool compile_pattern(const char *path, const CheckDirective *directive,
             break;
         }
         case SEGMENT_VARIABLE_USE: {
-            const char *value =
-                variable_context_get(variables, segment->name.cstr);
+            String value = str_empty;
+            RunAndCheckExprContext expr_ctx = {
+                .path = path,
+                .line_number = directive->line_number,
+                .directive_name = directive_kind_name(directive->kind),
+                .lookup_variable = lookup_expression_variable,
+                .lookup_user_data = variables,
+            };
 
-            if (value == NULL) {
-                fprintf(stderr,
-                        "%s:%d: error: undefined variable [[%s]] in %s\n", path,
-                        directive->line_number, segment->name.cstr,
-                        directive_kind_name(directive->kind));
+            if (!run_and_check_evaluate_expression(
+                    &expr_ctx, segment->text.cstr, &value)) {
                 return false;
             }
 
-            append_regex_escaped_literal(&compiled->regex_text, value,
-                                         strlen(value));
+            append_regex_escaped_literal(&compiled->regex_text, value.cstr,
+                                         value.len);
+            str_free(value);
             break;
         }
         }
