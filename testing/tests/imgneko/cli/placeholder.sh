@@ -18,9 +18,10 @@ echo '== placeholder help =='
 # CHECK-NEXT: {{^$}}
 # CHECK-NEXT: {{^}}Options:{{$}}
 # CHECK-NEXT: {{^}}  -v, --version             Show program version and exit.{{$}}
-# CHECK-NEXT: {{^}}  --id ID                   Image ID to encode in the placeholder.{{$}}
-# CHECK-NEXT: {{^}}  --placement-id ID         Placement ID to encode in the placeholder. (default:{{$}}
-# CHECK-NEXT: {{^}}                            0){{$}}
+# CHECK-NEXT: {{^}}  --id ID                   Image ID to encode in the placeholder, as decimal or{{$}}
+# CHECK-NEXT: {{^}}                            0x-prefixed hex.{{$}}
+# CHECK-NEXT: {{^}}  --placement-id ID         Placement ID to encode in the placeholder, as{{$}}
+# CHECK-NEXT: {{^}}                            decimal or 0x-prefixed hex. (default: 0){{$}}
 # CHECK-NEXT: {{^}}  --rows ROWS               Placeholder height in terminal cells.{{$}}
 # CHECK-NEXT: {{^}}  --cols COLS               Placeholder width in terminal cells.{{$}}
 # CHECK-NEXT: {{^}}  -h, --help                Show this help message and exit.{{$}}
@@ -41,6 +42,13 @@ echo '== image id high byte =='
 "$IMGNEKO" placeholder --id 16777216 --rows 1 --cols 1
 # CHECK-NEXT: {{^}}== image id high byte =={{$}}
 # CHECK-NEXT: {{^\x1b\[0m\x1b\[38;5;0m}}[[ph(0, 0, 16777216)]]{{\x1b\[0m$}}
+
+echo '== hex ids =='
+# Verify that image and placement IDs accept 0x-prefixed hexadecimal values.
+"$IMGNEKO" placeholder --id 0x01000000 --placement-id 0x123456 \
+    --rows 1 --cols 1
+# CHECK-NEXT: {{^}}== hex ids =={{$}}
+# CHECK-NEXT: {{^\x1b\[0m\x1b\[38;5;0m\x1b\[58;2;18;52;86m}}[[ph(0, 0, 0x01000000)]]{{\x1b\[0m$}}
 
 echo '== placement id bytes =='
 # Verify that --placement-id overrides the default placement ID and emits its

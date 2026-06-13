@@ -3,6 +3,7 @@
 #define _POSIX_C_SOURCE 200809L
 
 #include <math.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -492,6 +493,7 @@ static int test_low_level_parse_helpers(TestContext *ctx) {
     double double_value = 0.0;
     int int_value = 0;
     int64_t int64_value = 0;
+    uint64_t uint64_value = 0;
     char huge_double[] = "1e5000";
     char huge_int[63];
     char too_long_double[80];
@@ -577,6 +579,122 @@ static int test_low_level_parse_helpers(TestContext *ctx) {
                               strlen("-9223372036854775808"), &int64_value) ||
         int64_value != INT64_MIN) {
         status = fail_message(name, "minimum int64 did not parse correctly");
+        goto cleanup;
+    }
+    if (opt_parse_uint64_hex_or_decimal_span(NULL, 1, &uint64_value)) {
+        status = fail_message(name, "NULL uint64 input unexpectedly parsed");
+        goto cleanup;
+    }
+    if (opt_parse_uint64_hex_or_decimal_span("", 0, &uint64_value)) {
+        status = fail_message(name, "empty uint64 input unexpectedly parsed");
+        goto cleanup;
+    }
+    if (opt_parse_uint64_hex_or_decimal_span("-1", strlen("-1"),
+                                             &uint64_value)) {
+        status = fail_message(name, "negative uint64 unexpectedly parsed");
+        goto cleanup;
+    }
+    if (opt_parse_uint64_hex_or_decimal_span("+1", strlen("+1"),
+                                             &uint64_value)) {
+        status = fail_message(name, "signed uint64 unexpectedly parsed");
+        goto cleanup;
+    }
+    if (opt_parse_uint64_hex_or_decimal_span(too_long_int, sizeof(too_long_int),
+                                             &uint64_value)) {
+        status =
+            fail_message(name, "oversized uint64 input unexpectedly parsed");
+        goto cleanup;
+    }
+    if (opt_parse_uint64_hex_or_decimal_span(huge_int, strlen(huge_int),
+                                             &uint64_value)) {
+        status = fail_message(name, "ERANGE uint64 input unexpectedly parsed");
+        goto cleanup;
+    }
+    if (opt_parse_uint64_hex_or_decimal_span("12x", strlen("12x"),
+                                             &uint64_value)) {
+        status = fail_message(name, "junk decimal uint64 unexpectedly parsed");
+        goto cleanup;
+    }
+    if (opt_parse_uint64_hex_or_decimal_span("0z", strlen("0z"),
+                                             &uint64_value)) {
+        status =
+            fail_message(name, "zero-prefixed junk uint64 unexpectedly parsed");
+        goto cleanup;
+    }
+    if (opt_parse_uint64_hex_or_decimal_span("0x", strlen("0x"),
+                                             &uint64_value)) {
+        status = fail_message(name, "hex uint64 prefix without digits parsed");
+        goto cleanup;
+    }
+    if (opt_parse_uint64_hex_or_decimal_span("0x12x", strlen("0x12x"),
+                                             &uint64_value)) {
+        status = fail_message(name, "junk hex uint64 unexpectedly parsed");
+        goto cleanup;
+    }
+    if (opt_parse_uint64_hex_or_decimal_span("18446744073709551616",
+                                             strlen("18446744073709551616"),
+                                             &uint64_value)) {
+        status = fail_message(name, "overflowing decimal uint64 parsed");
+        goto cleanup;
+    }
+    if (opt_parse_uint64_hex_or_decimal_span("0x10000000000000000",
+                                             strlen("0x10000000000000000"),
+                                             &uint64_value)) {
+        status = fail_message(name, "overflowing hex uint64 parsed");
+        goto cleanup;
+    }
+    if (!opt_parse_uint64_hex_or_decimal_span("123", strlen("123"),
+                                              &uint64_value) ||
+        uint64_value != 123) {
+        status = fail_message(name, "decimal uint64 did not parse correctly");
+        goto cleanup;
+    }
+    if (!opt_parse_uint64_hex_or_decimal_span(
+            "4294967295", strlen("4294967295"), &uint64_value) ||
+        uint64_value != UINT32_MAX) {
+        status =
+            fail_message(name, "maximum uint32-sized decimal did not parse");
+        goto cleanup;
+    }
+    if (!opt_parse_uint64_hex_or_decimal_span(
+            "0xffffffff", strlen("0xffffffff"), &uint64_value) ||
+        uint64_value != UINT32_MAX) {
+        status = fail_message(name, "maximum uint32-sized hex did not parse");
+        goto cleanup;
+    }
+    if (!opt_parse_uint64_hex_or_decimal_span(
+            "4294967296", strlen("4294967296"), &uint64_value) ||
+        uint64_value != (uint64_t)UINT32_MAX + 1) {
+        status = fail_message(name, "large decimal uint64 did not parse");
+        goto cleanup;
+    }
+    if (!opt_parse_uint64_hex_or_decimal_span(
+            "0x100000000", strlen("0x100000000"), &uint64_value) ||
+        uint64_value != (uint64_t)UINT32_MAX + 1) {
+        status = fail_message(name, "large hex uint64 did not parse");
+        goto cleanup;
+    }
+    if (!opt_parse_uint64_hex_or_decimal_span("18446744073709551615",
+                                              strlen("18446744073709551615"),
+                                              &uint64_value) ||
+        uint64_value != UINT64_MAX) {
+        status = fail_message(name,
+                              "maximum decimal uint64 did not parse correctly");
+        goto cleanup;
+    }
+    if (!opt_parse_uint64_hex_or_decimal_span("0xffffffffffffffff",
+                                              strlen("0xffffffffffffffff"),
+                                              &uint64_value) ||
+        uint64_value != UINT64_MAX) {
+        status =
+            fail_message(name, "maximum hex uint64 did not parse correctly");
+        goto cleanup;
+    }
+    if (!opt_parse_uint64_hex_or_decimal_span("0X123", strlen("0X123"),
+                                              &uint64_value) ||
+        uint64_value != 0x123) {
+        status =
+            fail_message(name, "uppercase-prefix hex uint64 did not parse");
         goto cleanup;
     }
     if (opt_parse_double_span(NULL, 1, &double_value)) {

@@ -220,13 +220,23 @@ static bool evaluate_ph_call(const ExprParser *parser, const StringArray *args,
         return false;
     }
 
+    uint64_t parsed_image_id = 0;
     uint32_t image_id = 0;
     uint32_t image_id_num = 0;
     if (args->size >= 3 &&
-        !parse_uint32_decimal_span(parser, "ph() image id", args->data[2].cstr,
-                                   args->data[2].len, &image_id)) {
+        !opt_parse_uint64_hex_or_decimal_span(
+            args->data[2].cstr, args->data[2].len, &parsed_image_id)) {
+        expression_errorf(
+            parser,
+            "ph() image id must be an unsigned decimal or hexadecimal integer");
         return false;
     }
+    if (args->size >= 3 && parsed_image_id > UINT32_MAX) {
+        expression_errorf(parser,
+                          "ph() image id must be a 32-bit unsigned integer");
+        return false;
+    }
+    image_id = (uint32_t)parsed_image_id;
     if (args->size >= 3)
         image_id_num = ((image_id >> 24) & 0xff) + 1;
 
@@ -378,11 +388,23 @@ static bool expr_parser_parse_string_literal(ExprParser *parser, String *out) {
     return false;
 }
 
-static bool expr_parser_parse_decimal_literal(ExprParser *parser, String *out) {
+static bool expr_parser_parse_number_literal(ExprParser *parser, String *out) {
     size_t start = parser->cursor;
 
-    while (str_char_is_ascii_digit(parser->text[parser->cursor]))
-        parser->cursor++;
+    if (parser->text[parser->cursor] == '0' &&
+        (parser->text[parser->cursor + 1] == 'x' ||
+         parser->text[parser->cursor + 1] == 'X')) {
+        parser->cursor += 2;
+        if (str_ascii_hex_digit_value(parser->text[parser->cursor]) < 0) {
+            expression_expected_error(parser, "a hexadecimal digit");
+            return false;
+        }
+        while (str_ascii_hex_digit_value(parser->text[parser->cursor]) >= 0)
+            parser->cursor++;
+    } else {
+        while (str_char_is_ascii_digit(parser->text[parser->cursor]))
+            parser->cursor++;
+    }
 
     str_free(*out);
     *out = str_from_data(parser->text + start, parser->cursor - start);
@@ -478,7 +500,7 @@ static bool expr_parser_parse_primary(ExprParser *parser, String *out) {
     if (ch == '"')
         return expr_parser_parse_string_literal(parser, out);
     if (str_char_is_ascii_digit(ch))
-        return expr_parser_parse_decimal_literal(parser, out);
+        return expr_parser_parse_number_literal(parser, out);
     if (str_char_is_ascii_alpha(ch) || ch == '_')
         return expr_parser_parse_identifier_or_call(parser, out);
 

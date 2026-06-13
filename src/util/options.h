@@ -227,6 +227,12 @@ bool opt_parse_int_span(const char *text, size_t text_len, int *out);
 // overflow, and junk.
 bool opt_parse_int64_span(const char *text, size_t text_len, int64_t *out);
 
+// Parse a strict unsigned 64-bit integer from raw text. Values without a
+// prefix are parsed as decimal; values with a 0x or 0X prefix are parsed as
+// hexadecimal. Empty input, signs, overflow, and junk are rejected.
+bool opt_parse_uint64_hex_or_decimal_span(const char *text, size_t text_len,
+                                          uint64_t *out);
+
 // Parse a strict floating-point value from raw text, rejecting empty input,
 // overflow, and junk.
 bool opt_parse_double_span(const char *text, size_t text_len, double *out);

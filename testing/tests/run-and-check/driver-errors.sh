@@ -254,7 +254,7 @@ env IMGNEKO_TEST_OUTPUT_DIR="$OUTPUT_DIR" "$RUN_AND_CHECK" \
     "$TMP_DIR/variable-before-comma.txt" 2>&1 || true
 # CHECK: == variable before comma ==
 # CHECK: variable-before-comma.txt:3: error: invalid expression
-# CHECK-SAME: ph() image id must be an unsigned 32-bit decimal integer
+# CHECK-SAME: ph() image id must be an unsigned decimal or hexadecimal integer
 # CHECK: variable-before-comma.txt: note: run-and-check result: FAIL
 
 write_case "$TMP_DIR/range-bad-start.txt" <<'EOF'
@@ -389,6 +389,18 @@ env IMGNEKO_TEST_OUTPUT_DIR="$OUTPUT_DIR" "$RUN_AND_CHECK" \
 # CHECK-SAME: rgb() argument must be an unsigned 32-bit decimal integer
 # CHECK: overflow-number.txt: note: run-and-check result: FAIL
 
+write_case "$TMP_DIR/missing-hex-digit.txt" <<'EOF'
+@@ RUN: true
+@@ CHECK: [[0x]]
+EOF
+echo '== missing hex digit =='
+env IMGNEKO_TEST_OUTPUT_DIR="$OUTPUT_DIR" "$RUN_AND_CHECK" \
+    "$TMP_DIR/missing-hex-digit.txt" 2>&1 || true
+# CHECK: == missing hex digit ==
+# CHECK: missing-hex-digit.txt:2: error: invalid expression
+# CHECK-SAME: expected a hexadecimal digit, got end of expression
+# CHECK: missing-hex-digit.txt: note: run-and-check result: FAIL
+
 write_case "$TMP_DIR/bad-expression-argument.txt" <<'EOF'
 @@ RUN: true
 @@ CHECK: [[rgb(,)]]
@@ -518,8 +530,20 @@ env IMGNEKO_TEST_OUTPUT_DIR="$OUTPUT_DIR" "$RUN_AND_CHECK" \
     "$TMP_DIR/ph-bad-image-id-number.txt" 2>&1 || true
 # CHECK: == ph bad image id number ==
 # CHECK: ph-bad-image-id-number.txt:2: error: invalid expression
-# CHECK-SAME: ph() image id must be an unsigned 32-bit decimal integer
+# CHECK-SAME: ph() image id must be an unsigned decimal or hexadecimal integer
 # CHECK: ph-bad-image-id-number.txt: note: run-and-check result: FAIL
+
+write_case "$TMP_DIR/ph-large-image-id.txt" <<'EOF'
+@@ RUN: true
+@@ CHECK: [[ph(0, 0, 0x100000000)]]
+EOF
+echo '== ph large image id =='
+env IMGNEKO_TEST_OUTPUT_DIR="$OUTPUT_DIR" "$RUN_AND_CHECK" \
+    "$TMP_DIR/ph-large-image-id.txt" 2>&1 || true
+# CHECK: == ph large image id ==
+# CHECK: ph-large-image-id.txt:2: error: invalid expression
+# CHECK-SAME: ph() image id must be a 32-bit unsigned integer
+# CHECK: ph-large-image-id.txt: note: run-and-check result: FAIL
 
 write_case "$TMP_DIR/bad-string-escape.txt" <<'EOF'
 @@ RUN: true

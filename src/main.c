@@ -27,6 +27,21 @@ static bool parse_uint32_option(void *value, const char *text, size_t text_len,
     return true;
 }
 
+// Parse an image or placement ID from an option value.
+static bool parse_id_option(void *value, const char *text, size_t text_len,
+                            String *error_out) {
+    uint64_t parsed = 0;
+
+    if (!opt_parse_uint64_hex_or_decimal_span(text, text_len, &parsed))
+        return opt_parse_error(
+            error_out, "expected an unsigned decimal or hexadecimal integer");
+    if (parsed > UINT32_MAX)
+        return opt_parse_error(error_out, "expected a 32-bit unsigned integer");
+
+    *(uint32_t *)value = (uint32_t)parsed;
+    return true;
+}
+
 // Validate that an unsigned integer is positive.
 static bool validate_positive_uint32(const void *value, String *error_out) {
     if (*(const uint32_t *)value == 0)
@@ -50,14 +65,15 @@ static bool validate_placement_id(const void *value, String *error_out) {
 // Options for the `placeholder` command.
 #define PLACEHOLDER_OPTIONS(X, S)                                              \
     X(S, id, OptUint32,                                                        \
-      OPT_CUSTOM(.parse = parse_uint32_option,                                 \
+      OPT_CUSTOM(.parse = parse_id_option,                                     \
                  .validate = validate_positive_uint32, .cli = "--id ID",       \
-                 .descr = "Image ID to encode in the placeholder."))           \
+                 .descr = "Image ID to encode in the placeholder, as decimal " \
+                          "or 0x-prefixed hex."))                              \
     X(S, placement_id, OptUint32,                                              \
-      OPT_CUSTOM(.parse = parse_uint32_option,                                 \
-                 .validate = validate_placement_id,                            \
+      OPT_CUSTOM(.parse = parse_id_option, .validate = validate_placement_id,  \
                  .cli = "--placement-id ID",                                   \
-                 .descr = "Placement ID to encode in the placeholder.",        \
+                 .descr = "Placement ID to encode in the placeholder, as "     \
+                          "decimal or 0x-prefixed hex.",                       \
                  .dflt = "0"))                                                 \
     X(S, rows, OptUint32,                                                      \
       OPT_CUSTOM(.parse = parse_uint32_option,                                 \

@@ -1101,6 +1101,42 @@ bool opt_parse_int_span(const char *text, size_t text_len, int *out) {
     return true;
 }
 
+// Parse a strict unsigned 64-bit integer from raw text into out.
+bool opt_parse_uint64_hex_or_decimal_span(const char *text, size_t text_len,
+                                          uint64_t *out) {
+    char parsed_text[64];
+    char *end = NULL;
+    int base = 10;
+    uintmax_t parsed = 0;
+
+    if (text == NULL || text_len == 0)
+        return false;
+    if (text[0] == '-' || text[0] == '+')
+        return false;
+    if (text_len >= sizeof(parsed_text))
+        return false;
+    if (text_len >= 2 && text[0] == '0' && (text[1] == 'x' || text[1] == 'X')) {
+        if (text_len == 2)
+            return false;
+        base = 16;
+    }
+
+    memcpy(parsed_text, text, text_len);
+    parsed_text[text_len] = '\0';
+
+    errno = 0;
+    parsed = strtoumax(parsed_text, &end, base);
+    if (errno != 0 || *end != '\0')
+        return false;
+#if UINTMAX_MAX > UINT64_MAX
+    if (parsed > UINT64_MAX)
+        return false;
+#endif
+
+    *out = (uint64_t)parsed;
+    return true;
+}
+
 // Parse a strict floating-point value from raw text into out.
 bool opt_parse_double_span(const char *text, size_t text_len, double *out) {
     char parsed_text[64];

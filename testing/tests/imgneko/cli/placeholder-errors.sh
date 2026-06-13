@@ -23,10 +23,10 @@ check_exit_code 2 "$IMGNEKO" placeholder --id 1 --rows 1
 # CHECK-NEXT: {{^}}error: missing required option: --cols{{$}}
 
 echo '== invalid placement id =='
-check_exit_code 2 "$IMGNEKO" placeholder --id 1 --placement-id 16777216 \
+check_exit_code 2 "$IMGNEKO" placeholder --id 1 --placement-id 0x1000000 \
     --rows 1 --cols 1
 # CHECK-NEXT: {{^}}== invalid placement id =={{$}}
-# CHECK-NEXT: {{^}}error: invalid value for --placement-id: 16777216 (expected a value up to 16777215){{$}}
+# CHECK-NEXT: {{^}}error: invalid value for --placement-id: 0x1000000 (expected a value up to 16777215){{$}}
 
 echo '== invalid rectangle =='
 # Cover placeholder validation failures that occur after CLI option parsing.
@@ -39,23 +39,39 @@ echo '== invalid numeric options =='
 # command.
 check_exit_code 2 "$IMGNEKO" placeholder --id= --rows 1 --cols 1
 # CHECK-NEXT: {{^}}== invalid numeric options =={{$}}
-# CHECK-NEXT: {{^}}error: invalid value for --id:  (expected a base-10 unsigned integer){{$}}
+# CHECK-NEXT: {{^}}error: invalid value for --id:  (expected an unsigned decimal or hexadecimal integer){{$}}
 
 check_exit_code 2 "$IMGNEKO" placeholder --id -1 --rows 1 --cols 1
-# CHECK-NEXT: {{^}}error: invalid value for --id: -1 (expected a base-10 unsigned integer){{$}}
+# CHECK-NEXT: {{^}}error: invalid value for --id: -1 (expected an unsigned decimal or hexadecimal integer){{$}}
 
 check_exit_code 2 "$IMGNEKO" placeholder --id /1 --rows 1 --cols 1
-# CHECK-NEXT: {{^}}error: invalid value for --id: /1 (expected a base-10 unsigned integer){{$}}
+# CHECK-NEXT: {{^}}error: invalid value for --id: /1 (expected an unsigned decimal or hexadecimal integer){{$}}
 
 check_exit_code 2 "$IMGNEKO" placeholder --id x --rows 1 --cols 1
-# CHECK-NEXT: {{^}}error: invalid value for --id: x (expected a base-10 unsigned integer){{$}}
+# CHECK-NEXT: {{^}}error: invalid value for --id: x (expected an unsigned decimal or hexadecimal integer){{$}}
+
+check_exit_code 2 "$IMGNEKO" placeholder --id 0x --rows 1 --cols 1
+# CHECK-NEXT: {{^}}error: invalid value for --id: 0x (expected an unsigned decimal or hexadecimal integer){{$}}
 
 check_exit_code 2 "$IMGNEKO" placeholder --id 4294967296 --rows 1 \
     --cols 1
 # CHECK-NEXT: {{^}}error: invalid value for --id: 4294967296 (expected a 32-bit unsigned integer){{$}}
 
+check_exit_code 2 "$IMGNEKO" placeholder --id 0x100000000 --rows 1 \
+    --cols 1
+# CHECK-NEXT: {{^}}error: invalid value for --id: 0x100000000 (expected a 32-bit unsigned integer){{$}}
+
 check_exit_code 2 "$IMGNEKO" placeholder --id 0 --rows 1 --cols 1
 # CHECK-NEXT: {{^}}error: invalid value for --id: 0 (expected a positive integer){{$}}
+
+check_exit_code 2 "$IMGNEKO" placeholder --id 1 --rows x --cols 1
+# CHECK-NEXT: {{^}}error: invalid value for --rows: x (expected a base-10 unsigned integer){{$}}
+
+check_exit_code 2 "$IMGNEKO" placeholder --id 1 --rows -1 --cols 1
+# CHECK-NEXT: {{^}}error: invalid value for --rows: -1 (expected a base-10 unsigned integer){{$}}
+
+check_exit_code 2 "$IMGNEKO" placeholder --id 1 --rows 4294967296 --cols 1
+# CHECK-NEXT: {{^}}error: invalid value for --rows: 4294967296 (expected a 32-bit unsigned integer){{$}}
 
 echo '== broken stdout =='
 # Close the only FIFO reader before the child writes so imgneko reports a write

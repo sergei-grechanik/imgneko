@@ -22,6 +22,8 @@ echo "b 999"
 # Verify variable-use expressions: top-level string and integer literals,
 # function calls with literals, and function calls with captured variables.
 echo "literal a:b 42"
+echo "hex literal 0x123"
+echo "hex uppercase 0X123"
 echo "color 1193046"
 echo "rgb 18;52;86"
 echo "string rgb 0;4;210"
@@ -29,9 +31,12 @@ echo "underscore 77"
 echo "underscore again 77"
 printf 'placeholder bare \364\216\273\256\n'
 printf 'placeholder row \364\216\273\256\314\205\n'
+printf 'placeholder image hex \364\216\273\256\314\205\314\205\314\215\n'
 printf 'escapes A " \\ \011\n'
 echo 'quote-colon x":y'
 # CHECK: literal [["a:b"]] [[42]]
+# CHECK-NEXT: hex literal [[0x123]]
+# CHECK-NEXT: hex uppercase [[0X123]]
 # CHECK-NEXT: color [[rgb_num:[0-9]+]]
 # CHECK-NEXT: rgb [[rgb(rgb_num)]]
 # CHECK-NEXT: string rgb [[rgb("1234")]]
@@ -39,5 +44,6 @@ echo 'quote-colon x":y'
 # CHECK-NEXT: underscore again [[_expr]]
 # CHECK-NEXT: placeholder bare [[ph()]]
 # CHECK-NEXT: placeholder row [[ph(0)]]
+# CHECK-NEXT: placeholder image hex [[ph(0, 0, 0x01000000)]]
 # CHECK-NEXT: escapes [["\x41"]] [["\""]] [["\\"]] [["\t"]]
 # CHECK-NEXT: quote-colon [["x\":y"]]
