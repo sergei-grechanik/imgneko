@@ -22,6 +22,7 @@ echo '== placeholder help =='
 # CHECK-NEXT: {{^}}                            0x-prefixed hex.{{$}}
 # CHECK-NEXT: {{^}}  --placement-id ID         Placement ID to encode in the placeholder, as{{$}}
 # CHECK-NEXT: {{^}}                            decimal or 0x-prefixed hex. (default: 0){{$}}
+# CHECK-NEXT: {{^}}  -D, --diacritics MODE     Diacritic mode: minimal, default, or complete.{{$}}
 # CHECK-NEXT: {{^}}  -p, --place CxR           Placeholder size as COLSxROWS terminal cells.{{$}}
 # CHECK-NEXT: {{^}}  -r, --rows ROWS           Placeholder height in terminal cells.{{$}}
 # CHECK-NEXT: {{^}}  -c, --cols COLS           Placeholder width in terminal cells.{{$}}
@@ -55,6 +56,27 @@ echo '== place dimensions X =='
 # CHECK-NEXT: {{^}}== place dimensions X =={{$}}
 # CHECK-NEXT: {{^\x1b\[0m\x1b\[38;2;}}[[rgb(1234)]]m[[ph(0, "0:4")]]{{\x1b\[0m$}}
 # CHECK-NEXT: {{^\x1b\[0m\x1b\[38;2;}}[[rgb(1234)]]m[[ph(1, "0:4")]]{{\x1b\[0m$}}
+
+echo '== diacritics minimal =='
+# Minimal mode keeps full metadata on the first cell in a row and omits
+# metadata diacritics from the later cells.
+"$IMGNEKO" placeholder --id 1234 --place 3x2 -D minimal
+# CHECK-NEXT: {{^}}== diacritics minimal =={{$}}
+# CHECK-NEXT: {{^\x1b\[0m\x1b\[38;2;}}[[rgb(1234)]]m[[ph(0, 0)]][[ph()]][[ph()]]{{\x1b\[0m$}}
+# CHECK-NEXT: {{^\x1b\[0m\x1b\[38;2;}}[[rgb(1234)]]m[[ph(1, 0)]][[ph()]][[ph()]]{{\x1b\[0m$}}
+
+echo '== diacritics default =='
+# The explicit default mode matches the default command behavior.
+"$IMGNEKO" placeholder --id 1234 --place 2x1 --diacritics default
+# CHECK-NEXT: {{^}}== diacritics default =={{$}}
+# CHECK-NEXT: {{^\x1b\[0m\x1b\[38;2;}}[[rgb(1234)]]m[[ph(0, "0:1")]]{{\x1b\[0m$}}
+
+echo '== diacritics complete =='
+# Complete mode always emits the high image-ID byte diacritic, even when that
+# byte is zero.
+"$IMGNEKO" placeholder --id 1234 --place 2x1 --diacritics complete
+# CHECK-NEXT: {{^}}== diacritics complete =={{$}}
+# CHECK-NEXT: {{^\x1b\[0m\x1b\[38;2;}}[[rgb(1234)]]m[[ph(0, "0:1", 1234)]]{{\x1b\[0m$}}
 
 echo '== image id high byte =='
 # Verify that the optional third placeholder diacritic is based only on the

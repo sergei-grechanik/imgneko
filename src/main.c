@@ -4,6 +4,7 @@
 
 #include <stdint.h>
 #include <stdio.h>
+#include <string.h>
 #include <unistd.h>
 
 #include "build_info.h"
@@ -20,6 +21,7 @@ typedef struct PlaceSize {
 } PlaceSize;
 
 OPT_DEFINE_WRAPPER_STRUCT(OptPlaceSize, PlaceSize);
+OPT_DEFINE_WRAPPER_STRUCT(OptPlaceholderMode, PlaceholderMode);
 
 // Parse an unsigned 32-bit decimal integer from an option value.
 static bool parse_uint32_option(void *value, const char *text, size_t text_len,
@@ -101,6 +103,37 @@ static bool parse_place_option(void *value, const char *text, size_t text_len,
     return true;
 }
 
+// Parse a placeholder diacritic mode name.
+static bool parse_diacritics_option(void *value, const char *text,
+                                    size_t text_len, String *error_out) {
+    if (text_len == 0)
+        return opt_parse_error(error_out,
+                               "expected one of minimal, default, or complete");
+
+    // REVIEW: Create a helper for this kind of string comparison: char and len
+    // against cstring
+    if (text_len == sizeof("minimal") - 1 &&
+        memcmp(text, "minimal", sizeof("minimal") - 1) == 0) {
+        *(PlaceholderMode *)value = placeholder_mode_minimal();
+        return true;
+    }
+
+    if (text_len == sizeof("default") - 1 &&
+        memcmp(text, "default", sizeof("default") - 1) == 0) {
+        *(PlaceholderMode *)value = placeholder_mode_default();
+        return true;
+    }
+
+    if (text_len == sizeof("complete") - 1 &&
+        memcmp(text, "complete", sizeof("complete") - 1) == 0) {
+        *(PlaceholderMode *)value = placeholder_mode_complete();
+        return true;
+    }
+
+    return opt_parse_error(error_out,
+                           "expected one of minimal, default, or complete");
+}
+
 // Validate that an unsigned integer is positive.
 static bool validate_positive_uint32(const void *value, String *error_out) {
     if (*(const uint32_t *)value == 0)
@@ -134,6 +167,10 @@ static bool validate_placement_id(const void *value, String *error_out) {
                  .descr = "Placement ID to encode in the placeholder, as "     \
                           "decimal or 0x-prefixed hex.",                       \
                  .dflt = "0"))                                                 \
+    X(S, diacritics, OptPlaceholderMode,                                       \
+      OPT_CUSTOM(.parse = parse_diacritics_option,                             \
+                 .cli = "-D --diacritics MODE",                                \
+                 .descr = "Diacritic mode: minimal, default, or complete."))   \
     X(S, place, OptPlaceSize,                                                  \
       OPT_CUSTOM(.parse = parse_place_option, .cli = "-p --place CxR",         \
                  .descr = "Placeholder size as COLSxROWS terminal cells."))    \
@@ -220,6 +257,8 @@ static int run_placeholder_command(const PlaceholderCliOptions *options) {
                  .end_row = rows},
     };
     PlaceholderOptions placeholder_options = placeholder_options_default();
+    if (options->diacritics.is_set)
+        placeholder_options.mode = options->diacritics.value;
 
     PlaceholderError error =
         placeholder_validate(&placeholder, &placeholder_options.mode);

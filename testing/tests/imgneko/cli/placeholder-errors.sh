@@ -83,6 +83,18 @@ check_exit_code 2 "$IMGNEKO" placeholder --id 1 --rows -1 --cols 1
 check_exit_code 2 "$IMGNEKO" placeholder --id 1 --rows 4294967296 --cols 1
 # CHECK-NEXT: {{^}}error: invalid value for --rows: 4294967296 (expected a 32-bit unsigned integer){{$}}
 
+check_exit_code 2 "$IMGNEKO" placeholder --id 1 --rows 1 --cols 1 \
+    --diacritics ""
+# CHECK-NEXT: {{^}}error: invalid value for --diacritics:  (expected one of minimal, default, or complete){{$}}
+
+check_exit_code 2 "$IMGNEKO" placeholder --id 1 --rows 1 --cols 1 \
+    --diacritics minimum
+# CHECK-NEXT: {{^}}error: invalid value for --diacritics: minimum (expected one of minimal, default, or complete){{$}}
+
+check_exit_code 2 "$IMGNEKO" placeholder --id 1 --rows 1 --cols 1 \
+    --diacritics computed
+# CHECK-NEXT: {{^}}error: invalid value for --diacritics: computed (expected one of minimal, default, or complete){{$}}
+
 check_exit_code 2 "$IMGNEKO" placeholder --id 1 --place ""
 # CHECK-NEXT: {{^}}error: invalid value for --place:  (expected CxR with positive base-10 unsigned integers){{$}}
 
