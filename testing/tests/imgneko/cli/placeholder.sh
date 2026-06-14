@@ -66,6 +66,14 @@ echo '== diacritics minimal =='
 # CHECK-NEXT: {{^\x1b\[0m\x1b\[38;2;}}[[rgb(1234)]]m[[ph(0, 0)]][[ph()]][[ph()]]{{\x1b\[0m$}}
 # CHECK-NEXT: {{^\x1b\[0m\x1b\[38;2;}}[[rgb(1234)]]m[[ph(1, 0)]][[ph()]][[ph()]]{{\x1b\[0m$}}
 
+echo '== diacritics minimal =='
+# Minimal mode keeps full metadata on the first cell in a row and omits
+# metadata diacritics from the later cells.
+"$IMGNEKO" placeholder --id 0x12345678 --place 3x2 -D minimal
+# CHECK-NEXT: {{^}}== diacritics minimal =={{$}}
+# CHECK-NEXT: {{^\x1b\[0m\x1b\[38;2;}}[[rgb(0x12345678)]]m[[ph(0, 0, 0x12345678)]][[ph()]][[ph()]]{{\x1b\[0m$}}
+# CHECK-NEXT: {{^\x1b\[0m\x1b\[38;2;}}[[rgb(0x12345678)]]m[[ph(1, 0, 0x12345678)]][[ph()]][[ph()]]{{\x1b\[0m$}}
+
 echo '== diacritics default =='
 # The explicit default mode matches the default command behavior.
 "$IMGNEKO" placeholder --id 1234 --place 2x1 --diacritics default

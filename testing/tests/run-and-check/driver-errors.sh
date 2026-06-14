@@ -228,7 +228,7 @@ env IMGNEKO_TEST_OUTPUT_DIR="$OUTPUT_DIR" "$RUN_AND_CHECK" \
     "$TMP_DIR/range-variable-argument.txt" 2>&1 || true
 # CHECK: == range variable argument ==
 # CHECK: range-variable-argument.txt:3: error: invalid expression
-# CHECK-SAME: rgb() argument must be an unsigned 32-bit decimal integer
+# CHECK-SAME: rgb() argument must be an unsigned 32-bit decimal or hexadecimal integer
 # CHECK: range-variable-argument.txt: note: run-and-check result: FAIL
 
 write_case "$TMP_DIR/unquoted-variable-range.txt" <<'EOF'
@@ -326,7 +326,7 @@ env IMGNEKO_TEST_OUTPUT_DIR="$OUTPUT_DIR" "$RUN_AND_CHECK" \
     "$TMP_DIR/range-as-number.txt" 2>&1 || true
 # CHECK: == range as number ==
 # CHECK: range-as-number.txt:2: error: invalid expression
-# CHECK-SAME: rgb() argument must be an unsigned 32-bit decimal integer
+# CHECK-SAME: rgb() argument must be an unsigned 32-bit decimal or hexadecimal integer
 # CHECK: range-as-number.txt: note: run-and-check result: FAIL
 
 write_case "$TMP_DIR/empty-number.txt" <<'EOF'
@@ -338,7 +338,7 @@ env IMGNEKO_TEST_OUTPUT_DIR="$OUTPUT_DIR" "$RUN_AND_CHECK" \
     "$TMP_DIR/empty-number.txt" 2>&1 || true
 # CHECK: == empty number ==
 # CHECK: empty-number.txt:2: error: invalid expression
-# CHECK-SAME: rgb() argument must be an unsigned 32-bit decimal integer
+# CHECK-SAME: rgb() argument must be an unsigned 32-bit decimal or hexadecimal integer
 # CHECK: empty-number.txt: note: run-and-check result: FAIL
 
 write_case "$TMP_DIR/bad-number.txt" <<'EOF'
@@ -350,7 +350,7 @@ env IMGNEKO_TEST_OUTPUT_DIR="$OUTPUT_DIR" "$RUN_AND_CHECK" \
     "$TMP_DIR/bad-number.txt" 2>&1 || true
 # CHECK: == bad number ==
 # CHECK: bad-number.txt:2: error: invalid expression
-# CHECK-SAME: rgb() argument must be an unsigned 32-bit decimal integer
+# CHECK-SAME: rgb() argument must be an unsigned 32-bit decimal or hexadecimal integer
 # CHECK: bad-number.txt: note: run-and-check result: FAIL
 
 write_case "$TMP_DIR/negative-number.txt" <<'EOF'
@@ -362,7 +362,7 @@ env IMGNEKO_TEST_OUTPUT_DIR="$OUTPUT_DIR" "$RUN_AND_CHECK" \
     "$TMP_DIR/negative-number.txt" 2>&1 || true
 # CHECK: == negative number ==
 # CHECK: negative-number.txt:2: error: invalid expression
-# CHECK-SAME: rgb() argument must be an unsigned 32-bit decimal integer
+# CHECK-SAME: rgb() argument must be an unsigned 32-bit decimal or hexadecimal integer
 # CHECK: negative-number.txt: note: run-and-check result: FAIL
 
 write_case "$TMP_DIR/large-number.txt" <<'EOF'
@@ -374,7 +374,7 @@ env IMGNEKO_TEST_OUTPUT_DIR="$OUTPUT_DIR" "$RUN_AND_CHECK" \
     "$TMP_DIR/large-number.txt" 2>&1 || true
 # CHECK: == large number ==
 # CHECK: large-number.txt:2: error: invalid expression
-# CHECK-SAME: rgb() argument must be an unsigned 32-bit decimal integer
+# CHECK-SAME: rgb() argument must be an unsigned 32-bit decimal or hexadecimal integer
 # CHECK: large-number.txt: note: run-and-check result: FAIL
 
 write_case "$TMP_DIR/overflow-number.txt" <<'EOF'
@@ -386,7 +386,7 @@ env IMGNEKO_TEST_OUTPUT_DIR="$OUTPUT_DIR" "$RUN_AND_CHECK" \
     "$TMP_DIR/overflow-number.txt" 2>&1 || true
 # CHECK: == overflow number ==
 # CHECK: overflow-number.txt:2: error: invalid expression
-# CHECK-SAME: rgb() argument must be an unsigned 32-bit decimal integer
+# CHECK-SAME: rgb() argument must be an unsigned 32-bit decimal or hexadecimal integer
 # CHECK: overflow-number.txt: note: run-and-check result: FAIL
 
 write_case "$TMP_DIR/missing-hex-digit.txt" <<'EOF'
@@ -508,6 +508,30 @@ env IMGNEKO_TEST_OUTPUT_DIR="$OUTPUT_DIR" "$RUN_AND_CHECK" \
 # CHECK: ph-bad-row-number.txt:2: error: invalid expression
 # CHECK-SAME: ph() row must be an unsigned 32-bit decimal integer
 # CHECK: ph-bad-row-number.txt: note: run-and-check result: FAIL
+
+write_case "$TMP_DIR/ph-negative-row-number.txt" <<'EOF'
+@@ RUN: true
+@@ CHECK: [[ph("-1")]]
+EOF
+echo '== ph negative row number =='
+env IMGNEKO_TEST_OUTPUT_DIR="$OUTPUT_DIR" "$RUN_AND_CHECK" \
+    "$TMP_DIR/ph-negative-row-number.txt" 2>&1 || true
+# CHECK: == ph negative row number ==
+# CHECK: ph-negative-row-number.txt:2: error: invalid expression
+# CHECK-SAME: ph() row must be an unsigned 32-bit decimal integer
+# CHECK: ph-negative-row-number.txt: note: run-and-check result: FAIL
+
+write_case "$TMP_DIR/ph-large-row-number.txt" <<'EOF'
+@@ RUN: true
+@@ CHECK: [[ph(4294967296)]]
+EOF
+echo '== ph large row number =='
+env IMGNEKO_TEST_OUTPUT_DIR="$OUTPUT_DIR" "$RUN_AND_CHECK" \
+    "$TMP_DIR/ph-large-row-number.txt" 2>&1 || true
+# CHECK: == ph large row number ==
+# CHECK: ph-large-row-number.txt:2: error: invalid expression
+# CHECK-SAME: ph() row must be an unsigned 32-bit decimal integer
+# CHECK: ph-large-row-number.txt: note: run-and-check result: FAIL
 
 write_case "$TMP_DIR/ph-bad-column-number.txt" <<'EOF'
 @@ RUN: true

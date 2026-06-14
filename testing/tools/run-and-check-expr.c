@@ -83,6 +83,36 @@ static bool parse_uint32_decimal_span(const ExprParser *parser,
     return true;
 }
 
+// Parse a decimal or 0x-prefixed hexadecimal byte span as a uint32 value.
+//
+// `parser`
+//     Expression parser used for diagnostics.
+// `what`
+//     Human-readable value name used in diagnostics.
+// `text`
+//     Decimal or hexadecimal byte span to parse.
+// `len`
+//     Byte length of `text`.
+// `out`
+//     Receives the parsed integer on success.
+static bool parse_uint32_hex_or_decimal_span(const ExprParser *parser,
+                                             const char *what, const char *text,
+                                             size_t len, uint32_t *out) {
+    uint64_t parsed = 0;
+
+    if (!opt_parse_uint64_hex_or_decimal_span(text, len, &parsed) ||
+        parsed > UINT32_MAX) {
+        expression_errorf(parser,
+                          "%s must be an unsigned 32-bit decimal or "
+                          "hexadecimal integer",
+                          what);
+        return false;
+    }
+
+    *out = (uint32_t)parsed;
+    return true;
+}
+
 static void append_placeholder_diacritic(String *out, uint32_t num) {
     uint8_t len = 0;
     const char *bytes = rowcolumn_num_to_diacritic_utf8(num, &len);
@@ -265,8 +295,9 @@ static bool evaluate_rgb_call(const ExprParser *parser, const StringArray *args,
     }
 
     uint32_t num = 0;
-    if (!parse_uint32_decimal_span(parser, "rgb() argument", args->data[0].cstr,
-                                   args->data[0].len, &num)) {
+    if (!parse_uint32_hex_or_decimal_span(parser, "rgb() argument",
+                                          args->data[0].cstr, args->data[0].len,
+                                          &num)) {
         return false;
     }
 
