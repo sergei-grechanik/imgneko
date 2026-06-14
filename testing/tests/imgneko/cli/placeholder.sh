@@ -23,6 +23,7 @@ echo '== placeholder help =='
 # CHECK-NEXT: {{^}}  --placement-id ID         Placement ID to encode in the placeholder, as{{$}}
 # CHECK-NEXT: {{^}}                            decimal or 0x-prefixed hex. (default: 0){{$}}
 # CHECK-NEXT: {{^}}  -D, --diacritics MODE     Diacritic mode: minimal, default, or complete.{{$}}
+# CHECK-NEXT: {{^}}  --grapheme-only           Emit grapheme-only output without SGR colors.{{$}}
 # CHECK-NEXT: {{^}}  -p, --place CxR           Placeholder size as COLSxROWS terminal cells.{{$}}
 # CHECK-NEXT: {{^}}  -r, --rows ROWS           Placeholder height in terminal cells.{{$}}
 # CHECK-NEXT: {{^}}  -c, --cols COLS           Placeholder width in terminal cells.{{$}}
@@ -77,6 +78,14 @@ echo '== diacritics complete =='
 "$IMGNEKO" placeholder --id 1234 --place 2x1 --diacritics complete
 # CHECK-NEXT: {{^}}== diacritics complete =={{$}}
 # CHECK-NEXT: {{^\x1b\[0m\x1b\[38;2;}}[[rgb(1234)]]m[[ph(0, "0:1", 1234)]]{{\x1b\[0m$}}
+
+echo '== grapheme-only output =='
+# Grapheme-only output keeps the placeholder graphemes and linefeeds but drops
+# the automatic color and reset sequences.
+"$IMGNEKO" placeholder --id 0x12345678 --place 20x2 --grapheme-only
+# CHECK-NEXT: {{^}}== grapheme-only output =={{$}}
+# CHECK-NEXT: {{^}}[[ph(0, "0:19", 0x12345678)]]{{$}}
+# CHECK-NEXT: {{^}}[[ph(1, "0:19", 0x12345678)]]{{$}}
 
 echo '== image id high byte =='
 # Verify that the optional third placeholder diacritic is based only on the

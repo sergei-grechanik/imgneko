@@ -171,6 +171,9 @@ static bool validate_placement_id(const void *value, String *error_out) {
       OPT_CUSTOM(.parse = parse_diacritics_option,                             \
                  .cli = "-D --diacritics MODE",                                \
                  .descr = "Diacritic mode: minimal, default, or complete."))   \
+    X(S, grapheme_only, OptBool,                                               \
+      OPT_BOOL_FLAG(.cli = "--grapheme-only",                                  \
+                    .descr = "Emit grapheme-only output without SGR colors.")) \
     X(S, place, OptPlaceSize,                                                  \
       OPT_CUSTOM(.parse = parse_place_option, .cli = "-p --place CxR",         \
                  .descr = "Placeholder size as COLSxROWS terminal cells."))    \
@@ -259,6 +262,7 @@ static int run_placeholder_command(const PlaceholderCliOptions *options) {
     PlaceholderOptions placeholder_options = placeholder_options_default();
     if (options->diacritics.is_set)
         placeholder_options.mode = options->diacritics.value;
+    placeholder_options.grapheme_only = options->grapheme_only.value;
 
     PlaceholderError error =
         placeholder_validate(&placeholder, &placeholder_options.mode);
