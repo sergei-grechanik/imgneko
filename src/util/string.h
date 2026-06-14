@@ -349,6 +349,13 @@ ARRLIB_INLINE bool ends_with_cstr(char const *cstr, char const *suffix) {
     return strcmp(cstr + cstr_len - suffix_len, suffix) == 0;
 }
 
+// Return true when a raw byte span matches a null-terminated C string exactly.
+ARRLIB_INLINE bool str_data_equals_cstr(const char *data, size_t len,
+                                        const char *cstr) {
+    size_t cstr_len = strlen(cstr);
+    return len == cstr_len && memcmp(data, cstr, cstr_len) == 0;
+}
+
 // Trim trailing characters from a mutable C string while any suffix byte is
 // present in `trim_chars`.
 void str_trim_trailing_chars_cstr(char *text, const char *trim_chars);

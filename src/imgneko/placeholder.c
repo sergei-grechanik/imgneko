@@ -870,8 +870,6 @@ static PlaceholderError append_row_end(PlaceholderChunker *chunker, void *ctx) {
                            row_end->flags | PLACEHOLDER_POSITION_LINE_END);
 }
 
-// NOTE: ABOVE IS REVIEWED ===================================================
-
 PlaceholderError placeholder_write(const Placeholder *placeholder,
                                    const PlaceholderOptions *options,
                                    ImgnekoWriter writer) {

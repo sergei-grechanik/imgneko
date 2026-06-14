@@ -4,12 +4,12 @@
 
 #include <stdint.h>
 #include <stdio.h>
-#include <string.h>
 #include <unistd.h>
 
 #include "build_info.h"
 #include "imgneko/placeholder.h"
 #include "util/options.h"
+#include "util/string.h"
 
 OPT_DEFINE_WRAPPER_STRUCT(OptUint32, uint32_t);
 
@@ -110,22 +110,17 @@ static bool parse_diacritics_option(void *value, const char *text,
         return opt_parse_error(error_out,
                                "expected one of minimal, default, or complete");
 
-    // REVIEW: Create a helper for this kind of string comparison: char and len
-    // against cstring
-    if (text_len == sizeof("minimal") - 1 &&
-        memcmp(text, "minimal", sizeof("minimal") - 1) == 0) {
+    if (str_data_equals_cstr(text, text_len, "minimal")) {
         *(PlaceholderMode *)value = placeholder_mode_minimal();
         return true;
     }
 
-    if (text_len == sizeof("default") - 1 &&
-        memcmp(text, "default", sizeof("default") - 1) == 0) {
+    if (str_data_equals_cstr(text, text_len, "default")) {
         *(PlaceholderMode *)value = placeholder_mode_default();
         return true;
     }
 
-    if (text_len == sizeof("complete") - 1 &&
-        memcmp(text, "complete", sizeof("complete") - 1) == 0) {
+    if (str_data_equals_cstr(text, text_len, "complete")) {
         *(PlaceholderMode *)value = placeholder_mode_complete();
         return true;
     }

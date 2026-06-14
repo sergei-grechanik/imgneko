@@ -502,6 +502,17 @@ static int test_predicates(TestContext *ctx) {
     if (ends_with_cstr("abc", "abcdef"))
         return fail_message(name, "ends_with_cstr matched a longer suffix");
 
+    // Raw data spans can be slices of larger strings, so equality must use the
+    // explicit length and not read until the next NUL byte.
+    if (!str_data_equals_cstr("abcdef", 3, "abc"))
+        return fail_message(name, "str_data_equals_cstr rejected a slice");
+    if (!str_data_equals_cstr("", 0, ""))
+        return fail_message(name, "str_data_equals_cstr rejected empty data");
+    if (str_data_equals_cstr("abc", 2, "abc"))
+        return fail_message(name, "str_data_equals_cstr ignored length");
+    if (str_data_equals_cstr("abc", 3, "abd"))
+        return fail_message(name, "str_data_equals_cstr ignored contents");
+
     if (!str_char_is_ascii_lower('m'))
         return fail_message(name, "ascii lower rejected lowercase");
     if (str_char_is_ascii_lower('M'))
