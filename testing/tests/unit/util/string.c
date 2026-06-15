@@ -33,6 +33,24 @@ static int expect_string_eq(const char *subtest, const char *actual_data,
     return 0;
 }
 
+// Compare a string span against expected bytes. Spans are not null-terminated,
+// so this checks only the explicitly provided length.
+static int expect_span_eq(const char *subtest, StrSpan actual,
+                          const char *expected_data, size_t expected_len) {
+    if (actual.len != expected_len) {
+        fprintf(stderr, "%s: expected span length %zu, got %zu\n", subtest,
+                expected_len, actual.len);
+        return 1;
+    }
+
+    if (memcmp(actual.data, expected_data, actual.len) != 0) {
+        fprintf(stderr, "%s: span contents differ\n", subtest);
+        return 1;
+    }
+
+    return 0;
+}
+
 // Check the observable empty-string invariants for both allocated and special
 // empty states.
 static int expect_empty_string(const char *subtest, String string,
@@ -65,7 +83,7 @@ static int test_from_cstr_and_copy(TestContext *ctx) {
     int status = 0;
 
     materialized = str_from_data(middle, middle_len);
-    copied = copy_str(string);
+    copied = str_copy(string);
 
     string.cstr[1] = 'A';
     string.cstr[4] = 'O';
@@ -82,6 +100,94 @@ cleanup:
     str_free(materialized);
     str_free(string);
     return status;
+}
+
+// String spans are lightweight views, so they should preserve the source
+// pointer and length exactly without copying any data.
+static int test_str_span_view(TestContext *ctx) {
+    const char *name = ctx->test_name;
+    const char data[] = "abcdef";
+    StrSpan span = str_span(data + 1, 3);
+
+    if (span.data != data + 1)
+        return fail_message(name, "str_span changed the source pointer");
+    if (span.len != 3)
+        return fail_message(name, "str_span changed the length");
+
+    int status = expect_span_eq(name, span, STR("bcd"));
+    if (status != 0)
+        return status;
+
+    // Span-to-C-string equality should account for both bytes and length.
+    if (!str_span_equals_cstr(span, "bcd"))
+        return fail_message(name, "str_span_equals_cstr rejected a match");
+    if (str_span_equals_cstr(span, "bc") ||
+        str_span_equals_cstr(span, "bcde") || str_span_equals_cstr(span, "bce"))
+        return fail_message(name, "str_span_equals_cstr accepted a mismatch");
+
+    return 0;
+}
+
+// Trimming spans should remove only ASCII whitespace from the edges and should
+// not mutate or require a null-terminated source string.
+static int test_str_span_trim(TestContext *ctx) {
+    const char *name = ctx->test_name;
+    const char padded[] = " \t\r\nalpha \v";
+    const char all_space[] = " \t\n";
+    const char embedded_nul[] = {' ', 'a', '\0', 'b', ' '};
+    StrSpan trimmed = str_span_trim(str_span(padded, sizeof(padded) - 1));
+    StrSpan empty = str_span_trim(str_span(all_space, sizeof(all_space) - 1));
+    StrSpan with_nul =
+        str_span_trim(str_span(embedded_nul, sizeof(embedded_nul)));
+    int status = 0;
+
+    status = expect_span_eq(name, trimmed, STR("alpha"));
+    if (status != 0)
+        return status;
+
+    status = expect_span_eq(name, empty, STR(""));
+    if (status != 0)
+        return status;
+
+    return expect_span_eq(name, with_nul, "a\0b", 3);
+}
+
+// Span slicing helpers mirror the in-place String slice operations while
+// returning adjusted views instead of moving bytes.
+static int test_str_span_slice_ops(TestContext *ctx) {
+    const char *name = ctx->test_name;
+    StrSpan span = str_span("abcdef", 6);
+    int status = 0;
+
+    status = expect_span_eq(name, str_span_slice(span, 1, -1), STR("bcde"));
+    if (status != 0)
+        return status;
+
+    status = expect_span_eq(name, str_span_drop_front(span, 2), STR("cdef"));
+    if (status != 0)
+        return status;
+
+    status = expect_span_eq(name, str_span_drop_back(span, 2), STR("abcd"));
+    if (status != 0)
+        return status;
+
+    status = expect_span_eq(name, str_span_take_front(span, 3), STR("abc"));
+    if (status != 0)
+        return status;
+
+    status = expect_span_eq(name, str_span_take_back(span, 3), STR("def"));
+    if (status != 0)
+        return status;
+
+    status = expect_span_eq(name, str_span_slice(span, 2, 2), STR(""));
+    if (status != 0)
+        return status;
+
+    status = expect_span_eq(name, str_span_drop_front(span, 0), STR("abcdef"));
+    if (status != 0)
+        return status;
+
+    return expect_span_eq(name, str_span_take_back(span, 0), STR(""));
 }
 
 static int test_empty_and_reserve(TestContext *ctx) {
@@ -148,7 +254,7 @@ static int test_empty_states(TestContext *ctx) {
     const char *name = ctx->test_name;
     String special_empty = str_from_data("", 0);
     String empty_cstr = str_from_cstr("");
-    String copied_empty = copy_str((String)str_empty);
+    String copied_empty = str_copy(str_empty);
     String allocated_empty = str_from_cstr("abc");
     String reserved_empty = str_empty;
     String append_empty = str_empty;
@@ -487,20 +593,22 @@ cleanup:
 static int test_predicates(TestContext *ctx) {
     const char *name = ctx->test_name;
 
-    if (!starts_with_cstr("abcdef", "abc"))
-        return fail_message(name, "starts_with_cstr failed");
-    if (!starts_with_cstr("abcdef", ""))
-        return fail_message(name, "starts_with_cstr rejected empty prefix");
-    if (starts_with_cstr("abcdef", "bcd"))
-        return fail_message(name, "starts_with_cstr matched the middle");
-    if (!ends_with_cstr("abcdef", "def"))
-        return fail_message(name, "ends_with_cstr failed");
-    if (!ends_with_cstr("abcdef", ""))
-        return fail_message(name, "ends_with_cstr rejected empty suffix");
-    if (ends_with_cstr("abcdef", "cde"))
-        return fail_message(name, "ends_with_cstr matched the middle");
-    if (ends_with_cstr("abc", "abcdef"))
-        return fail_message(name, "ends_with_cstr matched a longer suffix");
+    if (!cstr_starts_with_cstr("abcdef", "abc"))
+        return fail_message(name, "cstr_starts_with_cstr failed");
+    if (!cstr_starts_with_cstr("abcdef", ""))
+        return fail_message(name,
+                            "cstr_starts_with_cstr rejected empty prefix");
+    if (cstr_starts_with_cstr("abcdef", "bcd"))
+        return fail_message(name, "cstr_starts_with_cstr matched the middle");
+    if (!cstr_ends_with_cstr("abcdef", "def"))
+        return fail_message(name, "cstr_ends_with_cstr failed");
+    if (!cstr_ends_with_cstr("abcdef", ""))
+        return fail_message(name, "cstr_ends_with_cstr rejected empty suffix");
+    if (cstr_ends_with_cstr("abcdef", "cde"))
+        return fail_message(name, "cstr_ends_with_cstr matched the middle");
+    if (cstr_ends_with_cstr("abc", "abcdef"))
+        return fail_message(name,
+                            "cstr_ends_with_cstr matched a longer suffix");
 
     // Raw data spans can be slices of larger strings, so equality must use the
     // explicit length and not read until the next NUL byte.
@@ -592,6 +700,73 @@ static int test_escape_bytes(TestContext *ctx) {
 cleanup:
     str_free(empty);
     str_free(escaped);
+    return status;
+}
+
+static int test_sanitize_for_diagnostic(TestContext *ctx) {
+    const char *name = ctx->test_name;
+    const char input[] = {'a',        '\'',       '\\',       '\n',
+                          '\r',       '\t',       (char)0x1b, (char)0x7f,
+                          (char)0xc2, (char)0xa9, 'z'};
+    String string = str_from_cstr("xy\nz");
+    char zero_size = 'x';
+    char empty[1] = {'x'};
+    char no_ellipsis[3] = {0};
+    char only_ellipsis[4] = {0};
+    int status = 0;
+
+    // Diagnostic sanitizing keeps printable bytes, quotes, backslashes, and
+    // non-ASCII UTF-8 bytes as-is while making ASCII control bytes visible.
+    str_span_sanitize_for_diagnostic(span_text, 64,
+                                     str_span(input, sizeof(input)));
+    status = expect_string_eq(name, span_text, strlen(span_text),
+                              STR("a'\\<LF><CR><TAB><ESC><7F>\xc2\xa9z"));
+    if (status != 0)
+        goto cleanup;
+
+    str_sanitize_for_diagnostic(string_text, 32, string);
+    status = expect_string_eq(name, string_text, strlen(string_text),
+                              STR("xy<LF>z"));
+    if (status != 0)
+        goto cleanup;
+
+    cstr_sanitize_for_diagnostic(cstr_text, 16, "plain");
+    status = expect_string_eq(name, cstr_text, strlen(cstr_text), STR("plain"));
+    if (status != 0)
+        goto cleanup;
+
+    cstr_sanitize_for_diagnostic(truncated, 10, "abcdefghijk");
+    status =
+        expect_string_eq(name, truncated, strlen(truncated), STR("abcdefg..."));
+    if (status != 0)
+        goto cleanup;
+
+    // Degenerate output buffers should remain bounded and deterministic.
+    str_sanitize_for_diagnostic_impl(&zero_size, 0, "abc", 3);
+    if (zero_size != 'x') {
+        status = fail_message(name, "zero-size sanitize wrote output");
+        goto cleanup;
+    }
+
+    str_sanitize_for_diagnostic_impl(empty, sizeof(empty), "abc", 3);
+    status = expect_string_eq(name, empty, strlen(empty), STR(""));
+    if (status != 0)
+        goto cleanup;
+
+    str_sanitize_for_diagnostic_impl(no_ellipsis, sizeof(no_ellipsis), "abc",
+                                     3);
+    status =
+        expect_string_eq(name, no_ellipsis, strlen(no_ellipsis), STR("ab"));
+    if (status != 0)
+        goto cleanup;
+
+    str_sanitize_for_diagnostic_impl(only_ellipsis, sizeof(only_ellipsis), "\t",
+                                     1);
+    status = expect_string_eq(name, only_ellipsis, strlen(only_ellipsis),
+                              STR("..."));
+
+cleanup:
+    str_free(string);
     return status;
 }
 
@@ -687,6 +862,9 @@ cleanup:
 int main(int argc, char **argv) {
     const Subtest subtests[] = {
         PREFIXED_TEST(test_from_cstr_and_copy),
+        PREFIXED_TEST(test_str_span_view),
+        PREFIXED_TEST(test_str_span_trim),
+        PREFIXED_TEST(test_str_span_slice_ops),
         PREFIXED_TEST(test_empty_and_reserve),
         PREFIXED_TEST(test_empty_states),
         PREFIXED_TEST(test_make_empty_string_array),
@@ -697,6 +875,7 @@ int main(int argc, char **argv) {
         PREFIXED_TEST(test_append_and_insert),
         PREFIXED_TEST(test_predicates),
         PREFIXED_TEST(test_escape_bytes),
+        PREFIXED_TEST(test_sanitize_for_diagnostic),
         PREFIXED_TEST(test_append_shell_quoted_word),
         PREFIXED_TEST(test_append_c_quoted_data),
         PREFIXED_TEST(test_trim_trailing_chars),

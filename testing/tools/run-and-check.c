@@ -703,12 +703,12 @@ static bool compile_pattern(const char *path, const CheckDirective *directive,
             break;
         case SEGMENT_VARIABLE_DEF: {
             if (directive->kind == DIRECTIVE_CHECK_NOT) {
+                str_sanitize_for_diagnostic(name_text, 80, segment->name);
                 fprintf(stderr,
                         "%s:%d: error: variable definitions are not allowed in "
                         "%s: [[%s]]\n",
                         path, directive->line_number,
-                        directive_kind_name(directive->kind),
-                        segment->name.cstr);
+                        directive_kind_name(directive->kind), name_text);
                 return false;
             }
 
@@ -765,8 +765,10 @@ static bool compile_pattern(const char *path, const CheckDirective *directive,
         fprintf(stderr, "%s:%d: error: invalid regex in %s: %s\n", path,
                 directive->line_number, directive_kind_name(directive->kind),
                 buffer);
-        fprintf(stderr, "%s:%d: note: expanded regex: %s\n", path,
-                directive->line_number, compiled->regex_text.cstr);
+        str_sanitize_for_diagnostic(regex_text, 255, compiled->regex_text);
+        fprintf(stderr, "%s:%d: note: expanded regex: ", path,
+                directive->line_number);
+        fprintf(stderr, "%s\n", regex_text);
         return false;
     }
 
@@ -865,7 +867,8 @@ static void read_output_lines(const char *path, OutputLineArray *lines) {
     StringArray file_lines = arr_empty;
 
     if (!file_read_lines(&file_lines, path, -1)) {
-        fprintf(stderr, "error: failed to read output file %s: %s\n", path,
+        cstr_sanitize_for_diagnostic(path_text, 255, path);
+        fprintf(stderr, "error: failed to read output file %s: %s\n", path_text,
                 strerror(errno));
         exit(1);
     }
@@ -873,7 +876,7 @@ static void read_output_lines(const char *path, OutputLineArray *lines) {
     for (size_t i = 0; i < file_lines.size; ++i) {
         str_trim_trailing_chars(&file_lines.data[i], "\r\n");
         arr_push(*lines, ((OutputLine){.text = file_lines.data[i]}));
-        file_lines.data[i] = (String)str_empty;
+        file_lines.data[i] = str_empty;
     }
 
     str_array_free(&file_lines);
@@ -1240,8 +1243,9 @@ static bool verify_negative_region(const char *path,
 
         fprintf(stderr, "%s:%d: error: %s matched forbidden output\n", path,
                 directive->line_number, directive_kind_name(directive->kind));
+        str_sanitize_for_diagnostic(pattern_text, 255, directive->raw_pattern);
         fprintf(stderr, "%s:%d: note: pattern: %s\n", path,
-                directive->line_number, directive->raw_pattern.cstr);
+                directive->line_number, pattern_text);
         print_output_line_note(path, directive->line_number,
                                match.line_index + 1,
                                &lines->data[match.line_index]);
@@ -1277,8 +1281,9 @@ static bool report_positive_match_failure(const char *path,
                                           const LineMatch *previous_positive) {
     fprintf(stderr, "%s:%d: error: %s did not match\n", path,
             directive->line_number, directive_kind_name(directive->kind));
+    str_sanitize_for_diagnostic(pattern_text, 255, directive->raw_pattern);
     fprintf(stderr, "%s:%d: note: pattern: %s\n", path, directive->line_number,
-            directive->raw_pattern.cstr);
+            pattern_text);
 
     if (directive->kind == DIRECTIVE_CHECK_SAME) {
         assert(previous_positive != NULL);
@@ -1535,8 +1540,9 @@ static int run_command_capture(const char *command, const char *output_dir,
             _exit(127);
         }
         if (chdir(output_dir) != 0) {
-            fprintf(stderr, "error: failed to chdir to %s: %s\n", output_dir,
-                    strerror(errno));
+            cstr_sanitize_for_diagnostic(output_dir_text, 255, output_dir);
+            fprintf(stderr, "error: failed to chdir to %s: %s\n",
+                    output_dir_text, strerror(errno));
             _exit(127);
         }
 
@@ -1563,9 +1569,13 @@ static int run_command_capture(const char *command, const char *output_dir,
 static void print_run_metadata(const char *path, const char *command,
                                const char *stdout_path,
                                const char *stderr_path) {
-    fprintf(stderr, "%s: note: RUN: %s\n", path, command);
-    fprintf(stderr, "%s: note: stdout file: %s\n", path, stdout_path);
-    fprintf(stderr, "%s: note: stderr file: %s\n", path, stderr_path);
+    cstr_sanitize_for_diagnostic(command_text, 255, command);
+    cstr_sanitize_for_diagnostic(stdout_path_text, 255, stdout_path);
+    cstr_sanitize_for_diagnostic(stderr_path_text, 255, stderr_path);
+
+    fprintf(stderr, "%s: note: RUN: %s\n", path, command_text);
+    fprintf(stderr, "%s: note: stdout file: %s\n", path, stdout_path_text);
+    fprintf(stderr, "%s: note: stderr file: %s\n", path, stderr_path_text);
 }
 
 // Print the shell exit-like status after the RUN command finishes.
@@ -1586,20 +1596,23 @@ static void print_file_tail(const char *path, const char *label,
     StringArray lines = arr_empty;
 
     if (!file_read_lines(&lines, file_path, (ptrdiff_t)max_lines)) {
+        cstr_sanitize_for_diagnostic(file_path_text, 255, file_path);
         fprintf(stderr, "%s: note: failed to open %s file %s: %s\n", path,
-                label, file_path, strerror(errno));
+                label, file_path_text, strerror(errno));
         return;
     }
 
     if (lines.size == 0) {
+        cstr_sanitize_for_diagnostic(file_path_text, 255, file_path);
         fprintf(stderr, "%s: note: %s file is empty: %s\n", path, label,
-                file_path);
+                file_path_text);
         str_array_free(&lines);
         return;
     }
 
+    cstr_sanitize_for_diagnostic(file_path_text, 255, file_path);
     fprintf(stderr, "%s: note: last %zu lines of %s (%s):\n", path, lines.size,
-            label, file_path);
+            label, file_path_text);
     for (size_t i = 0; i < lines.size; ++i) {
         str_trim_trailing_chars(&lines.data[i], "\r\n");
         print_escaped_line(stderr, lines.data[i].cstr, lines.data[i].len);

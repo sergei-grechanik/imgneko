@@ -82,7 +82,7 @@ set +e
 printf 'status=%d\n' "$?"
 set -e
 # CHECK-NEXT: {{^}}== short-only invalid value =={{$}}
-# CHECK-NEXT: {{^}}error: invalid value for -n: nope (expected a base-10 integer){{$}}
+# CHECK-NEXT: {{^}}error: invalid value for -n: 'nope' (expected a base-10 integer){{$}}
 # CHECK-NEXT: {{^}}status=2{{$}}
 
 echo '== short-only duplicate =='
@@ -100,7 +100,7 @@ set +e
 printf 'status=%d\n' "$?"
 set -e
 # CHECK-NEXT: {{^}}== multi-short invalid value =={{$}}
-# CHECK-NEXT: {{^}}error: invalid value for -m: nope (expected a base-10 integer){{$}}
+# CHECK-NEXT: {{^}}error: invalid value for -m: 'nope' (expected a base-10 integer){{$}}
 # CHECK-NEXT: {{^}}status=2{{$}}
 
 echo '== multi-short duplicate =='
@@ -118,7 +118,7 @@ set +e
 printf 'status=%d\n' "$?"
 set -e
 # CHECK-NEXT: {{^}}== silent parse diagnostic =={{$}}
-# CHECK-NEXT: {{^}}error: invalid value for --silent: nope{{$}}
+# CHECK-NEXT: {{^}}error: invalid value for --silent: 'nope'{{$}}
 # CHECK-NEXT: {{^}}status=2{{$}}
 
 echo '== negate-only silent diagnostic =='
@@ -127,7 +127,7 @@ set +e
 printf 'status=%d\n' "$?"
 set -e
 # CHECK-NEXT: {{^}}== negate-only silent diagnostic =={{$}}
-# CHECK-NEXT: {{^}}error: invalid value for --disable-feature: --disable-feature{{$}}
+# CHECK-NEXT: {{^}}error: invalid value for --disable-feature: '--disable-feature'{{$}}
 # CHECK-NEXT: {{^}}status=2{{$}}
 
 echo '== explicit apply parse =='
@@ -145,7 +145,7 @@ set +e
 printf 'status=%d\n' "$?"
 set -e
 # CHECK-NEXT: {{^}}== invalid apply count =={{$}}
-# CHECK-NEXT: {{^}}error: invalid value for COUNT: nope (expected a base-10 integer){{$}}
+# CHECK-NEXT: {{^}}error: invalid value for COUNT: 'nope' (expected a base-10 integer){{$}}
 # CHECK-NEXT: {{^}}status=2{{$}}
 
 echo '== extra apply positional =='
@@ -154,7 +154,7 @@ set +e
 printf 'status=%d\n' "$?"
 set -e
 # CHECK-NEXT: {{^}}== extra apply positional =={{$}}
-# CHECK-NEXT: {{^}}error: unexpected positional argument: extra{{$}}
+# CHECK-NEXT: {{^}}error: unexpected positional argument: 'extra'{{$}}
 # CHECK-NEXT: {{^}}status=2{{$}}
 
 echo '== labels command help =='
@@ -223,7 +223,7 @@ set +e
 printf 'status=%d\n' "$?"
 set -e
 # CHECK-NEXT: {{^}}== labels invalid positional =={{$}}
-# CHECK-NEXT: {{^}}error: invalid value for FILE2_COUNT: nope (expected a base-10 integer){{$}}
+# CHECK-NEXT: {{^}}error: invalid value for FILE2_COUNT: 'nope' (expected a base-10 integer){{$}}
 # CHECK-NEXT: {{^}}status=2{{$}}
 
 echo '== repeat command help =='
@@ -252,13 +252,13 @@ set +e
 printf 'status=%d\n' "$?"
 set -e
 # CHECK-NEXT: {{^}}== invalid repeat count =={{$}}
-# CHECK-NEXT: {{^}}error: invalid value for COPIES: nope (expected a base-10 integer){{$}}
+# CHECK-NEXT: {{^}}error: invalid value for COPIES: 'nope' (expected a base-10 integer){{$}}
 # CHECK-NEXT: {{^}}status=2{{$}}
 
 echo '== unknown option with later command help =='
 env COLUMNS=80 "$SAMPLE_CLI" --bogus apply --help 2>&1
 # CHECK-NEXT: {{^}}== unknown option with later command help =={{$}}
-# CHECK-NEXT: {{^}}error: unknown option: --bogus{{$}}
+# CHECK-NEXT: {{^}}error: unknown option: '--bogus'{{$}}
 # CHECK-NEXT: {{^}}Exercise no-default parsing with two positional arguments.{{$}}
 # CHECK-NEXT: {{^$}}
 # CHECK-NEXT: {{^}}Usage: sample-cli-no-default apply [options] [--] TARGET COUNT{{$}}
@@ -269,19 +269,19 @@ env COLUMNS=80 "$SAMPLE_CLI" --bogus -- --help 2>&1
 printf 'status=%d\n' "$?"
 set -e
 # CHECK: {{^}}== help after double dash ignored =={{$}}
-# CHECK-NEXT: {{^}}error: unknown option: --bogus{{$}}
+# CHECK-NEXT: {{^}}error: unknown option: '--bogus'{{$}}
 # CHECK-NEXT: {{^}}status=2{{$}}
 
 echo '== unknown command with help =='
 env COLUMNS=80 "$SAMPLE_CLI" --help missing 2>&1
 # CHECK-NEXT: {{^}}== unknown command with help =={{$}}
-# CHECK-NEXT: {{^}}error: unknown command: missing{{$}}
+# CHECK-NEXT: {{^}}error: unknown command: 'missing'{{$}}
 # CHECK: {{^}}Sample CLI with multiple commands and no default command.{{$}}
 
 echo '== early error with later help =='
 env COLUMNS=80 "$SAMPLE_CLI" -f 1 missing -c 1 --help 2>&1
 # CHECK: {{^}}== early error with later help =={{$}}
-# CHECK-NEXT: {{^}}error: unknown option: -f{{$}}
+# CHECK-NEXT: {{^}}error: unknown option: '-f'{{$}}
 # CHECK: {{^}}Sample CLI with multiple commands and no default command.{{$}}
 
 echo '== missing command =='

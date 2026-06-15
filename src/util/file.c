@@ -24,7 +24,7 @@ static void rotate_tail_lines(StringArray *lines, size_t head) {
         size_t index = (head + i) % lines->size;
 
         arr_push(reordered, lines->data[index]);
-        lines->data[index] = (String)str_empty;
+        lines->data[index] = str_empty;
     }
 
     str_array_free(lines);

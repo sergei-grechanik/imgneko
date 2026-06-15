@@ -31,9 +31,17 @@ typedef struct String {
     size_t capacity;
 } String;
 
+// Non-owning byte string view.
+typedef struct StrSpan {
+    const char *data;
+    size_t len;
+} StrSpan;
+
 // Initialize an owning string to the empty-string special case.
-#define str_empty                                                              \
-    { "", 0, 0 }
+#define str_empty ((String){"", 0, 0})
+
+// Initialize a non-owning string view to the empty state.
+#define str_span_empty ((StrSpan){NULL, 0})
 
 // ASCII-only character predicates used in parser code that must not depend on
 // locale-sensitive ctype behavior or signed-char promotion rules.
@@ -69,6 +77,49 @@ ARRLIB_INLINE bool str_char_is_ascii_alnum(char ch) {
 
 ARRLIB_INLINE bool str_char_is_ascii_space(char ch) {
     return ch == ' ' || ('\t' <= ch && ch <= '\r');
+}
+
+// Return a non-owning string view over raw bytes.
+ARRLIB_INLINE StrSpan str_span(const char *data, size_t len) {
+    return (StrSpan){
+        .data = data,
+        .len = len,
+    };
+}
+
+// Return `span` without leading or trailing ASCII whitespace.
+StrSpan str_span_trim(StrSpan span);
+
+// Return the half-open slice [start_index, end_index).
+// Negative indexes are interpreted as indexes from the end.
+ARRLIB_INLINE StrSpan str_span_slice(StrSpan span, ptrdiff_t start_index,
+                                     ptrdiff_t end_index) {
+    ArrSlice slice = arr__slice_bounds(span.len, start_index, end_index);
+    return str_span(span.data + slice.start, slice.end - slice.start);
+}
+
+// Return `span` without the first n bytes.
+ARRLIB_INLINE StrSpan str_span_drop_front(StrSpan span, size_t n) {
+    assert(n <= span.len);
+    return str_span(span.data + n, span.len - n);
+}
+
+// Return `span` without the last n bytes.
+ARRLIB_INLINE StrSpan str_span_drop_back(StrSpan span, size_t n) {
+    assert(n <= span.len);
+    return str_span(span.data, span.len - n);
+}
+
+// Return the first n bytes of `span`.
+ARRLIB_INLINE StrSpan str_span_take_front(StrSpan span, size_t n) {
+    assert(n <= span.len);
+    return str_span(span.data, n);
+}
+
+// Return the last n bytes of `span`.
+ARRLIB_INLINE StrSpan str_span_take_back(StrSpan span, size_t n) {
+    assert(n <= span.len);
+    return str_span(span.data + span.len - n, n);
 }
 
 // Get a pointer to the string's dynamically allocated null-terminated data, or
@@ -158,15 +209,9 @@ ARRLIB_INLINE String str_from_cstr(char const *cstr) {
     return str_from_data(cstr, strlen(cstr));
 }
 
-// Copy raw bytes into a new owning String while escaping non-printable bytes
-// for diagnostics. Printable ASCII bytes are copied as-is, backslash and
-// common control bytes use short C-style escapes, and other bytes use `\xHH`.
-// The caller frees the result with str_free.
-String str_from_escaped_bytes(char const *data, size_t len);
-
 // Copy an owning String into a new owning String. The caller frees the result
 // with str_free.
-ARRLIB_INLINE String copy_str(String str) {
+ARRLIB_INLINE String str_copy(String str) {
     return str_from_data(str.cstr, str.len);
 }
 
@@ -327,7 +372,7 @@ ARRLIB_INLINE String copy_str(String str) {
     } while (0)
 
 // Return true when cstr begins with prefix.
-ARRLIB_INLINE bool starts_with_cstr(char const *cstr, char const *prefix) {
+ARRLIB_INLINE bool cstr_starts_with_cstr(char const *cstr, char const *prefix) {
     while (*prefix != '\0') {
         if (*cstr != *prefix)
             return false;
@@ -339,7 +384,7 @@ ARRLIB_INLINE bool starts_with_cstr(char const *cstr, char const *prefix) {
 }
 
 // Return true when cstr ends with suffix.
-ARRLIB_INLINE bool ends_with_cstr(char const *cstr, char const *suffix) {
+ARRLIB_INLINE bool cstr_ends_with_cstr(char const *cstr, char const *suffix) {
     size_t cstr_len = strlen(cstr);
     size_t suffix_len = strlen(suffix);
 
@@ -354,6 +399,11 @@ ARRLIB_INLINE bool str_data_equals_cstr(const char *data, size_t len,
                                         const char *cstr) {
     size_t cstr_len = strlen(cstr);
     return len == cstr_len && memcmp(data, cstr, cstr_len) == 0;
+}
+
+// Return true when a span matches a null-terminated C string exactly.
+ARRLIB_INLINE bool str_span_equals_cstr(StrSpan span, const char *cstr) {
+    return str_data_equals_cstr(span.data, span.len, cstr);
 }
 
 // Trim trailing characters from a mutable C string while any suffix byte is
@@ -377,6 +427,54 @@ void str_append_c_quoted_data(String *out, const char *data, size_t len);
 ARRLIB_INLINE void str_append_c_quoted_cstr(String *out, const char *text) {
     str_append_c_quoted_data(out, text, strlen(text));
 }
+
+// Copy raw bytes into a new owning String while escaping non-printable bytes
+// for diagnostics. Printable ASCII bytes are copied as-is, backslash and
+// common control bytes use short C-style escapes, and other bytes use `\xHH`.
+// The caller frees the result with str_free.
+// Example:
+//
+//   abcde 'single' "double" \backslash
+//   newline ©
+//
+// becomes
+//
+//   abcde 'single' "double" \\backslash\nnewline \xc2\xa9
+//
+String str_from_escaped_bytes(char const *data, size_t len);
+
+// Write a sanitized diagnostic string into a caller-owned fixed-size buffer.
+// `out_size` includes the terminating null byte.
+//
+// LF, CR, TAB, and ESC are rendered as `<LF>`, `<CR>`, `<TAB>`, and `<ESC>`.
+// Other ASCII control bytes and DEL are rendered as `<XX>` with uppercase hex
+// digits. Printable ASCII bytes, quotes, backslashes, and non-ASCII bytes are
+// copied as-is. When the result does not fit, the visible payload is shortened
+// and `...` is inserted at the end. The caller is responsible for adding quotes
+// when the diagnostic message needs them.
+void str_sanitize_for_diagnostic_impl(char *out, size_t out_size,
+                                      const char *data, size_t len);
+
+// Define `name` as a local `char[max_len + 1]` containing a sanitized
+// diagnostic rendering of `span`.
+#define str_span_sanitize_for_diagnostic(name, max_len, span)                  \
+    StrSpan name##_diagnostic_span = (span);                                   \
+    char name[(max_len) + 1];                                                  \
+    str_sanitize_for_diagnostic_impl(name, sizeof(name),                       \
+                                     name##_diagnostic_span.data,              \
+                                     name##_diagnostic_span.len)
+
+// Define `name` as a local `char[max_len + 1]` containing a sanitized
+// diagnostic rendering of `str`.
+#define str_sanitize_for_diagnostic(name, max_len, str)                        \
+    char name[(max_len) + 1];                                                  \
+    str_sanitize_for_diagnostic_impl(name, sizeof(name), (str).cstr, (str).len)
+
+// Define `name` as a local `char[max_len + 1]` containing a sanitized
+// diagnostic rendering of `cstr`.
+#define cstr_sanitize_for_diagnostic(name, max_len, cstr)                      \
+    char name[(max_len) + 1];                                                  \
+    str_sanitize_for_diagnostic_impl(name, sizeof(name), cstr, strlen(cstr))
 
 DEFINE_ARRAY_TYPE(StringArray, String)
 

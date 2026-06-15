@@ -63,7 +63,7 @@ status=$?
 set -e
 printf 'status=%d\n' "$status"
 # CHECK-NEXT: {{^}}== unknown helper option =={{$}}
-# CHECK-NEXT: {{^}}error: unknown option: --bogus{{$}}
+# CHECK-NEXT: {{^}}error: unknown option: '--bogus'{{$}}
 # CHECK-NEXT: {{^}}status=2{{$}}
 
 echo '== missing delimiter =='
@@ -73,7 +73,7 @@ status=$?
 set -e
 printf 'status=%d\n' "$status"
 # CHECK-NEXT: {{^}}== missing delimiter =={{$}}
-# CHECK-NEXT: {{^}}error: positional argument requires the -- delimiter here: sh{{$}}
+# CHECK-NEXT: {{^}}error: positional argument requires the -- delimiter here: 'sh'{{$}}
 # CHECK-NEXT: {{^}}status=2{{$}}
 
 echo '== missing command =='

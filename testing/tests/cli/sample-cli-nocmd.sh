@@ -114,7 +114,7 @@ set +e
 printf 'status=%d\n' "$?"
 set -e
 # CHECK-NEXT: {{^}}== short cluster rejected =={{$}}
-# CHECK-NEXT: {{^}}error: unknown option: -vr5{{$}}
+# CHECK-NEXT: {{^}}error: unknown option: '-vr5'{{$}}
 # CHECK-NEXT: {{^}}status=2{{$}}
 
 echo '== defaults =='
@@ -153,7 +153,7 @@ set +e
 printf 'status=%d\n' "$?"
 set -e
 # CHECK-NEXT: {{^}}== extra positional =={{$}}
-# CHECK-NEXT: {{^}}error: unexpected positional argument: extra{{$}}
+# CHECK-NEXT: {{^}}error: unexpected positional argument: 'extra'{{$}}
 # CHECK-NEXT: {{^}}status=2{{$}}
 
 echo '== extra positional after double dash =='
@@ -162,7 +162,7 @@ set +e
 printf 'status=%d\n' "$?"
 set -e
 # CHECK-NEXT: {{^}}== extra positional after double dash =={{$}}
-# CHECK-NEXT: {{^}}error: unexpected positional argument: extra{{$}}
+# CHECK-NEXT: {{^}}error: unexpected positional argument: 'extra'{{$}}
 # CHECK-NEXT: {{^}}status=2{{$}}
 
 echo '== unknown option =='
@@ -171,7 +171,7 @@ set +e
 printf 'status=%d\n' "$?"
 set -e
 # CHECK-NEXT: {{^}}== unknown option =={{$}}
-# CHECK-NEXT: {{^}}error: unknown option: --bogus{{$}}
+# CHECK-NEXT: {{^}}error: unknown option: '--bogus'{{$}}
 # CHECK-NEXT: {{^}}status=2{{$}}
 
 echo '== invalid value =='
@@ -180,5 +180,5 @@ set +e
 printf 'status=%d\n' "$?"
 set -e
 # CHECK-NEXT: {{^}}== invalid value =={{$}}
-# CHECK-NEXT: {{^}}error: invalid value for --color: maybe (expected one of true, false, yes, no, on, off, 1, or 0){{$}}
+# CHECK-NEXT: {{^}}error: invalid value for --color: 'maybe' (expected one of true, false, yes, no, on, off, 1, or 0){{$}}
 # CHECK-NEXT: {{^}}status=2{{$}}

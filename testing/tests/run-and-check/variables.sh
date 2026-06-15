@@ -24,8 +24,10 @@ echo "b 999"
 echo "literal a:b 42"
 echo "hex literal 0x123"
 echo "hex uppercase 0X123"
+echo "color literal #ff0012"
 echo "color 1193046"
 echo "rgb 18;52;86"
+echo "single quote a:b"
 echo "string rgb 0;4;210"
 echo "underscore 77"
 echo "underscore again 77"
@@ -37,8 +39,10 @@ echo 'quote-colon x":y'
 # CHECK: literal [["a:b"]] [[42]]
 # CHECK-NEXT: hex literal [[0x123]]
 # CHECK-NEXT: hex uppercase [[0X123]]
+# CHECK-NEXT: color literal [[#ff0012]]
 # CHECK-NEXT: color [[rgb_num:[0-9]+]]
 # CHECK-NEXT: rgb [[rgb(rgb_num)]]
+# CHECK-NEXT: single quote [['a:b']]
 # CHECK-NEXT: string rgb [[rgb("1234")]]
 # CHECK-NEXT: underscore [[_expr:[0-9]+]]
 # CHECK-NEXT: underscore again [[_expr]]

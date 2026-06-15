@@ -294,30 +294,66 @@ PlaceholderFormat placeholder_format_bg_rgb(uint8_t r, uint8_t g, uint8_t b,
     return placeholder_format_static(out);
 }
 
-// Select and emit the checkerboard branch for the current placeholder cell.
-//
-// `ctx`
-//     `PlaceholderCheckerboardFormat` that owns the branch formats.
-//
-// Returns the selected branch callback result.
-static int checkerboard_format_func(void *ctx, const Placeholder *placeholder,
-                                    uint32_t col, uint32_t row, char *out,
-                                    size_t out_cap) {
-    PlaceholderCheckerboardFormat *checkerboard = ctx;
-    if (checkerboard == NULL)
+// Select and emit one branch from a pair of alternating format descriptors.
+static int alternating_format_emit(PlaceholderAlternatingFormat *alternating,
+                                   bool use_first,
+                                   const Placeholder *placeholder, uint32_t col,
+                                   uint32_t row, char *out, size_t out_cap) {
+    if (alternating == NULL)
         return 0;
 
     PlaceholderFormat *format =
-        ((col + row) & 1u) == 0 ? &checkerboard->first : &checkerboard->second;
+        use_first ? &alternating->first : &alternating->second;
     if (format->func == NULL)
         return 0;
 
     return format->func(format->ctx, placeholder, col, row, out, out_cap);
 }
 
+int placeholder_format_checkerboard_func(void *ctx,
+                                         const Placeholder *placeholder,
+                                         uint32_t col, uint32_t row, char *out,
+                                         size_t out_cap) {
+    return alternating_format_emit(ctx, ((col + row) & 1u) == 0, placeholder,
+                                   col, row, out, out_cap);
+}
+
 PlaceholderFormat
-placeholder_format_checkerboard(PlaceholderCheckerboardFormat *format) {
-    return placeholder_format_dynamic_cell(checkerboard_format_func, format);
+placeholder_format_checkerboard(PlaceholderAlternatingFormat *format) {
+    return placeholder_format_dynamic_cell(placeholder_format_checkerboard_func,
+                                           format);
+}
+
+int placeholder_format_horizontal_stripes_func(void *ctx,
+                                               const Placeholder *placeholder,
+                                               uint32_t col, uint32_t row,
+                                               char *out, size_t out_cap) {
+    return alternating_format_emit(ctx, (row & 1u) == 0, placeholder, col, row,
+                                   out, out_cap);
+}
+
+PlaceholderFormat
+placeholder_format_horizontal_stripes(PlaceholderAlternatingFormat *format) {
+    if (format != NULL && (format->first.per_cell || format->second.per_cell))
+        return placeholder_format_dynamic_cell(
+            placeholder_format_horizontal_stripes_func, format);
+
+    return placeholder_format_dynamic_row(
+        placeholder_format_horizontal_stripes_func, format);
+}
+
+int placeholder_format_vertical_stripes_func(void *ctx,
+                                             const Placeholder *placeholder,
+                                             uint32_t col, uint32_t row,
+                                             char *out, size_t out_cap) {
+    return alternating_format_emit(ctx, (col & 1u) == 0, placeholder, col, row,
+                                   out, out_cap);
+}
+
+PlaceholderFormat
+placeholder_format_vertical_stripes(PlaceholderAlternatingFormat *format) {
+    return placeholder_format_dynamic_cell(
+        placeholder_format_vertical_stripes_func, format);
 }
 
 // Positioner callback that emits a newline at row end.

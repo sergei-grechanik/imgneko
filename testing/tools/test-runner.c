@@ -460,7 +460,9 @@ static TestMarker test_marker_from_text_line(const char *line) {
     bool has_disabled = text_contains_word(line, "DISABLED");
 
     if (has_xfail && has_disabled) {
-        fprintf(stderr, "error: ambiguous test markers in line: %s\n", line);
+        cstr_sanitize_for_diagnostic(line_text, 255, line);
+        fprintf(stderr, "error: ambiguous test markers in line: %s\n",
+                line_text);
         exit(1);
     }
     if (has_xfail)
@@ -514,7 +516,9 @@ static TestMarker executable_test_marker(const char *path) {
             continue;
 
         if (marker != TEST_MARKER_NONE) {
-            fprintf(stderr, "error: multiple test markers found in %s\n", path);
+            cstr_sanitize_for_diagnostic(path_text, 255, path);
+            fprintf(stderr, "error: multiple test markers found in %s\n",
+                    path_text);
             free(line);
             fclose(stream);
             exit(1);
@@ -632,7 +636,7 @@ static void discover_test_files_rec(const char *tests_root_abs,
         }
 
         // Keep only supported test file types.
-        if (ends_with_cstr(rel_path.cstr, ".c")) {
+        if (cstr_ends_with_cstr(rel_path.cstr, ".c")) {
             kind = TEST_KIND_C;
         } else if (access(abs_path.cstr, X_OK) == 0) {
             kind = TEST_KIND_EXECUTABLE;
@@ -680,10 +684,12 @@ static void require_empty_output_dir(const char *output_dir) {
     str_append_shell_quoted_word(&rm_command, output_dir);
 
     if (!S_ISDIR(st.st_mode)) {
+        cstr_sanitize_for_diagnostic(output_dir_text, 255, output_dir);
+        str_sanitize_for_diagnostic(rm_command_text, 255, rm_command);
         fprintf(stderr,
                 "error: test output path exists and is not a directory: %s\n"
                 "       remove it first with %s\n",
-                output_dir, rm_command.cstr);
+                output_dir_text, rm_command_text);
         str_free(rm_command);
         exit(1);
     }
@@ -717,10 +723,12 @@ static void require_empty_output_dir(const char *output_dir) {
     require(closedir(dir) == 0, "failed to close output directory: %errno");
 
     if (has_entries) {
+        cstr_sanitize_for_diagnostic(output_dir_text, 255, output_dir);
+        str_sanitize_for_diagnostic(rm_command_text, 255, rm_command);
         fprintf(stderr,
                 "error: test output directory is not empty: %s\n"
                 "       remove it first with %s\n",
-                output_dir, rm_command.cstr);
+                output_dir_text, rm_command_text);
         str_free(rm_command);
         exit(1);
     }
@@ -744,7 +752,9 @@ static void validate_output_dir(const char *output_dir) {
 
     if (unsafe) {
         str_free(build_dir_abs);
-        fprintf(stderr, "error: unsafe output directory: %s\n", output_dir);
+        cstr_sanitize_for_diagnostic(output_dir_text, 255, output_dir);
+        fprintf(stderr, "error: unsafe output directory: %s\n",
+                output_dir_text);
         exit(1);
     }
 
@@ -1093,12 +1103,15 @@ static RunningTest start_test_process(const TestCase *test_case,
             _exit(127);
         }
         if (chdir(config->test_output_dir) != 0) {
+            cstr_sanitize_for_diagnostic(output_dir_text, 255,
+                                         config->test_output_dir);
             fprintf(stderr, "error: failed to chdir to %s: %s\n",
-                    config->test_output_dir, strerror(errno));
+                    output_dir_text, strerror(errno));
             _exit(127);
         }
         execvp(argv[0], argv);
-        fprintf(stderr, "error: failed to exec %s: %s\n", argv[0],
+        cstr_sanitize_for_diagnostic(argv0_text, 255, argv[0]);
+        fprintf(stderr, "error: failed to exec %s: %s\n", argv0_text,
                 strerror(errno));
         _exit(127);
     }
@@ -1474,7 +1487,8 @@ static int run_argv_capture_stdout_lines(char *const *argv,
         close(pipe_fds[0]);
         close(pipe_fds[1]);
         execvp(argv[0], argv);
-        fprintf(stderr, "error: failed to exec %s: %s\n", argv[0],
+        cstr_sanitize_for_diagnostic(argv0_text, 255, argv[0]);
+        fprintf(stderr, "error: failed to exec %s: %s\n", argv0_text,
                 strerror(errno));
         _exit(127);
     }
@@ -1516,13 +1530,15 @@ static void print_output_tail(const char *output_file_path, size_t max_lines) {
     StringArray lines = arr_empty;
 
     if (!file_read_lines(&lines, output_file_path, (ptrdiff_t)max_lines)) {
+        cstr_sanitize_for_diagnostic(output_path_text, 255, output_file_path);
         fprintf(stderr, "error: failed to read captured output %s: %s\n\n",
-                output_file_path, strerror(errno));
+                output_path_text, strerror(errno));
         return;
     }
 
     if (lines.size == 0) {
-        fprintf(stderr, "output is empty: %s\n", output_file_path);
+        cstr_sanitize_for_diagnostic(output_path_text, 255, output_file_path);
+        fprintf(stderr, "output is empty: %s\n", output_path_text);
         str_array_free(&lines);
         return;
     }
@@ -1531,9 +1547,10 @@ static void print_output_tail(const char *output_file_path, size_t max_lines) {
     fflush(stderr);
 
     BufferedWriter writer = buffered_writer_for_fd(STDERR_FILENO);
+    cstr_sanitize_for_diagnostic(output_path_text, 255, output_file_path);
     buffered_writer_printf(&writer,
                            "===== LAST %zu LINES OF TEST OUTPUT %s {{{ =====\n",
-                           max_lines, output_file_path);
+                           max_lines, output_path_text);
     for (size_t i = 0; i < lines.size; ++i) {
         str_trim_trailing_chars(&lines.data[i], "\r\n");
         String escaped =
@@ -1584,7 +1601,7 @@ static bool test_abs_path_matches_pattern(const TestCase *test_case,
     if (test_case->c_subtest.len == 0)
         return false;
 
-    String abs_id = copy_str(test_case->file_abs_path);
+    String abs_id = str_copy(test_case->file_abs_path);
     str_push(abs_id, '/');
     str_append_str(abs_id, test_case->c_subtest);
     bool matched = fnmatch(pattern, abs_id.cstr, 0) == 0;
@@ -1633,7 +1650,9 @@ static bool flatten_test_patterns(const StringArray *patterns,
             size_t len = bar != NULL ? (size_t)(bar - cursor) : strlen(cursor);
 
             if (len == 0) {
-                fprintf(stderr, "error: invalid test pattern: %s\n", pattern);
+                cstr_sanitize_for_diagnostic(pattern_text, 255, pattern);
+                fprintf(stderr, "error: invalid test pattern: '%s'\n",
+                        pattern_text);
                 return false;
             }
 
@@ -1674,10 +1693,12 @@ static void require_c_test_binary(const TestFile *file, const char *exe_path) {
     if (access(exe_path, X_OK) != 0) {
         String hint = c_test_build_hint();
 
+        str_sanitize_for_diagnostic(rel_path_text, 255, file->rel_path);
+        cstr_sanitize_for_diagnostic(exe_path_text, 255, exe_path);
         fprintf(stderr,
                 "error: missing built C test binary for %s at %s\n"
                 "       build C tests first with `%s` or `make -C %s test`\n",
-                file->rel_path.cstr, exe_path, hint.cstr, build_dir);
+                rel_path_text, exe_path_text, hint.cstr, build_dir);
         str_free(hint);
         exit(1);
     }
@@ -1697,8 +1718,9 @@ static void c_test_subtests(const TestFile *file, CSubtestArray *subtests,
 
     status = run_argv_capture_stdout_lines(argv, &stdout_lines);
     if (status != 0) {
+        str_sanitize_for_diagnostic(rel_path_text, 255, file->rel_path);
         fprintf(stderr, "error: %s --list failed with status %d\n",
-                file->rel_path.cstr, status);
+                rel_path_text, status);
         str_array_free(&stdout_lines);
         str_free(exe_path);
         exit(status);
@@ -1715,8 +1737,9 @@ static void c_test_subtests(const TestFile *file, CSubtestArray *subtests,
             // IMGNEKO_UNCOVERED_OK_START: This looks impossible with the
             // current implementation of strip_trailing_test_marker.
             if (line[0] == '\0') {
+                str_sanitize_for_diagnostic(rel_path_text, 255, file->rel_path);
                 fprintf(stderr, "error: invalid empty subtest name in %s\n",
-                        file->rel_path.cstr);
+                        rel_path_text);
                 str_array_free(&stdout_lines);
                 str_free(exe_path);
                 c_subtest_array_free(subtests);
@@ -1755,15 +1778,15 @@ static void discover_test_cases(const TestFileArray *files,
                 arr_push(*cases, ((TestCase){
                                      .kind = TEST_KIND_C,
                                      .marker = file->marker,
-                                     .id = copy_str(file->rel_path),
-                                     .file_id = copy_str(file->rel_path),
-                                     .file_abs_path = copy_str(file->abs_path),
-                                     .c_exe_path = copy_str(exe_path),
+                                     .id = str_copy(file->rel_path),
+                                     .file_id = str_copy(file->rel_path),
+                                     .file_abs_path = str_copy(file->abs_path),
+                                     .c_exe_path = str_copy(exe_path),
                                      .c_subtest = str_empty,
                                  }));
             } else {
                 for (j = 0; j < subtests.size; ++j) {
-                    String id = copy_str(file->rel_path);
+                    String id = str_copy(file->rel_path);
 
                     str_push(id, '/');
                     str_append_str(id, subtests.data[j].name);
@@ -1772,10 +1795,10 @@ static void discover_test_cases(const TestFileArray *files,
                                  .kind = TEST_KIND_C,
                                  .marker = subtests.data[j].marker,
                                  .id = id,
-                                 .file_id = copy_str(file->rel_path),
-                                 .file_abs_path = copy_str(file->abs_path),
-                                 .c_exe_path = copy_str(exe_path),
-                                 .c_subtest = copy_str(subtests.data[j].name),
+                                 .file_id = str_copy(file->rel_path),
+                                 .file_abs_path = str_copy(file->abs_path),
+                                 .c_exe_path = str_copy(exe_path),
+                                 .c_subtest = str_copy(subtests.data[j].name),
                              }));
                 }
             }
@@ -1788,9 +1811,9 @@ static void discover_test_cases(const TestFileArray *files,
         arr_push(*cases, ((TestCase){
                              .kind = file->kind,
                              .marker = file->marker,
-                             .id = copy_str(file->rel_path),
-                             .file_id = copy_str(file->rel_path),
-                             .file_abs_path = copy_str(file->abs_path),
+                             .id = str_copy(file->rel_path),
+                             .file_id = str_copy(file->rel_path),
+                             .file_abs_path = str_copy(file->abs_path),
                              .c_exe_path = str_empty,
                              .c_subtest = str_empty,
                          }));
@@ -1802,11 +1825,12 @@ static void discover_test_cases(const TestFileArray *files,
 // Print a discovered test id, appending its marker when present.
 static void print_listed_test(const TestCase *test_case) {
     const char *marker_name = test_marker_name(test_case->marker);
+    str_sanitize_for_diagnostic(test_id_text, 255, test_case->id);
 
-    if (marker_name == NULL)
-        puts(test_case->id.cstr);
-    else
-        printf("%s %s\n", test_case->id.cstr, marker_name);
+    printf("%s", test_id_text);
+    if (marker_name != NULL)
+        printf(" %s", marker_name);
+    fputc('\n', stdout);
 }
 
 // Print a named list of tests with a heading, skipping the list if empty.
@@ -1816,8 +1840,10 @@ static void print_named_test_list(const char *heading,
         return;
 
     printf("\n%s:\n", heading);
-    for (size_t i = 0; i < tests->size; ++i)
-        printf("  %s\n", tests->data[i].cstr);
+    for (size_t i = 0; i < tests->size; ++i) {
+        str_sanitize_for_diagnostic(test_id_text, 255, tests->data[i]);
+        printf("  %s\n", test_id_text);
+    }
 }
 
 // Print a non-zero summary counter.
@@ -1882,7 +1908,8 @@ static int maybe_flip_exit_code(const TestCase *test_case, int test_exit_code,
     }
 
     int flipped_exit_code = test_exit_code == 0 ? 1 : 0;
-    printf("DEBUG: flipped exit code for %s (%d -> %d)\n", test_case->id.cstr,
+    str_sanitize_for_diagnostic(test_id_text, 255, test_case->id);
+    printf("DEBUG: flipped exit code for %s (%d -> %d)\n", test_id_text,
            test_exit_code, flipped_exit_code);
     return flipped_exit_code;
 }
@@ -1993,28 +2020,30 @@ static void print_classified_test_result(const TestRunnerState *state,
                                          const ClassifiedTestResult *classified,
                                          const char *output_file_path,
                                          bool output_passthrough) {
+    str_sanitize_for_diagnostic(test_id_text, 255, test_case->id);
+
     // IMGNEKO_UNCOVERED_OK
     switch (classified->outcome) {
     case TEST_OUTCOME_PASS:
         print_test_result_prefix(state);
-        printf("PASS: %s\n", test_case->id.cstr);
+        printf("PASS: %s\n", test_id_text);
         break;
     case TEST_OUTCOME_XFAIL:
         print_test_result_prefix(state);
-        printf("XFAIL: %s\n", test_case->id.cstr);
+        printf("XFAIL: %s\n", test_id_text);
         break;
     case TEST_OUTCOME_DISABLED:
         print_test_result_prefix(state);
-        printf("DISABLED: %s\n", test_case->id.cstr);
+        printf("DISABLED: %s\n", test_id_text);
         break;
     case TEST_OUTCOME_XPASS:
         print_test_result_prefix(state);
-        printf("XPASS: %s\n", test_case->id.cstr);
+        printf("XPASS: %s\n", test_id_text);
         break;
     case TEST_OUTCOME_TIMEOUT:
         printf("\n");
         print_test_result_prefix(state);
-        printf("TIMEOUT: %s\n", test_case->id.cstr);
+        printf("TIMEOUT: %s\n", test_id_text);
         fflush(stdout);
         if (!output_passthrough)
             print_output_tail(output_file_path, 20);
@@ -2022,7 +2051,7 @@ static void print_classified_test_result(const TestRunnerState *state,
     case TEST_OUTCOME_FAIL:
         printf("\n");
         print_test_result_prefix(state);
-        printf("FAIL: %s\n", test_case->id.cstr);
+        printf("FAIL: %s\n", test_id_text);
         fflush(stdout);
         if (!output_passthrough)
             print_output_tail(output_file_path, 20);
@@ -2123,7 +2152,7 @@ static void prepare_env_vars(void) {
     const char *old_path = getenv("PATH");
     String build_dir_abs = absolute_build_dir();
     String bin_dir = path_join(build_dir_abs.cstr, "bin");
-    String new_path = copy_str(bin_dir);
+    String new_path = str_copy(bin_dir);
 
     if (old_path != NULL && old_path[0] != '\0') {
         str_push(new_path, ':');
@@ -2310,8 +2339,8 @@ static bool discover_tests_for_run(const CliOptions *options,
                                    TestRunnerState *state, int *exit_code_out) {
     discover_test_files(options->tests_dir.cstr, &state->files);
     if (state->files.size == 0) {
-        fprintf(stderr, "error: no tests found under %s\n",
-                options->tests_dir.cstr);
+        str_sanitize_for_diagnostic(tests_dir_text, 255, options->tests_dir);
+        fprintf(stderr, "error: no tests found under %s\n", tests_dir_text);
         *exit_code_out = 2;
         return false;
     }
@@ -2320,8 +2349,9 @@ static bool discover_tests_for_run(const CliOptions *options,
                         &state->cases);
     // IMGNEKO_UNCOVERED_OK_START
     if (state->cases.size == 0) {
+        str_sanitize_for_diagnostic(tests_dir_text, 255, options->tests_dir);
         fprintf(stderr, "error: no runnable tests found under %s\n",
-                options->tests_dir.cstr);
+                tests_dir_text);
         *exit_code_out = 2;
         return false;
     }
@@ -2362,8 +2392,9 @@ static bool validate_test_patterns_matched(const TestPatternArray *patterns) {
         const TestPattern *pattern = &patterns->data[i];
 
         if (!pattern->matched) {
-            fprintf(stderr, "error: no tests matched pattern: %s\n",
-                    pattern->text.cstr);
+            str_sanitize_for_diagnostic(pattern_text, 255, pattern->text);
+            fprintf(stderr, "error: no tests matched pattern: '%s'\n",
+                    pattern_text);
             ok = false;
         }
     }
@@ -2407,7 +2438,8 @@ static void start_selected_test(const CliOptions *options,
         return;
     }
 
-    printf("RUN: %s\n", test_case->id.cstr);
+    str_sanitize_for_diagnostic(test_id_text, 255, test_case->id);
+    printf("RUN: %s\n", test_id_text);
     fflush(stdout);
 
     test_output_dir = test_output_dir_path(test_case, options->output_dir.cstr);
@@ -2500,8 +2532,10 @@ static void finalize_run_result(const CliOptions *options,
 
     printf("Time: %.3f s\n",
            time_monotonic_seconds() - state->run_start_seconds);
-    printf("Output dir: %s\n", options->output_dir.cstr);
-    printf("Timing file: %s\n", state->timing_file_path.cstr);
+    str_sanitize_for_diagnostic(output_dir_text, 255, options->output_dir);
+    str_sanitize_for_diagnostic(timing_file_text, 255, state->timing_file_path);
+    printf("Output dir: %s\n", output_dir_text);
+    printf("Timing file: %s\n", timing_file_text);
     printf("Result: %s\n", state->shutdown_requested
                                ? "INTERRUPTED"
                                : (*exit_code_out == 0 ? "SUCCESS" : "FAILURE"));

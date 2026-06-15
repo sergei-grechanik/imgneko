@@ -1282,7 +1282,7 @@ void opt_copy_string_option(void *dst_value, const void *src_value) {
     String *dst = dst_value;
 
     str_free(*dst);
-    *dst = copy_str(*src);
+    *dst = str_copy(*src);
 }
 
 // Deep-copy a string-list value.
@@ -1292,7 +1292,7 @@ void opt_copy_string_list_option(void *dst_value, const void *src_value) {
 
     str_array_free(dst);
     for (size_t i = 0; i < src->size; ++i)
-        arr_push(*dst, copy_str(src->data[i]));
+        arr_push(*dst, str_copy(src->data[i]));
 }
 
 //------------------------------------------------------------------------------
@@ -1462,27 +1462,32 @@ static void opt_print_command_help(FILE *out, const OptProgramParser *parser,
 
 // Print an unknown-option diagnostic.
 static OptParseStatus opt_fail_unknown_option(const char *arg) {
-    fprintf(stderr, "error: unknown option: %s\n", arg);
+    cstr_sanitize_for_diagnostic(sanitized_arg, 255, arg);
+    fprintf(stderr, "error: unknown option: '%s'\n", sanitized_arg);
     return OPT_PARSE_STATUS_ERROR;
 }
 
 // Print an unknown-command diagnostic.
 static OptParseStatus opt_fail_unknown_command(const char *arg) {
-    fprintf(stderr, "error: unknown command: %s\n", arg);
+    cstr_sanitize_for_diagnostic(sanitized_arg, 255, arg);
+    fprintf(stderr, "error: unknown command: '%s'\n", sanitized_arg);
     return OPT_PARSE_STATUS_ERROR;
 }
 
 // Print an unexpected-positional diagnostic.
 static OptParseStatus opt_fail_unexpected_positional(const char *arg) {
-    fprintf(stderr, "error: unexpected positional argument: %s\n", arg);
+    cstr_sanitize_for_diagnostic(sanitized_arg, 255, arg);
+    fprintf(stderr, "error: unexpected positional argument: '%s'\n",
+            sanitized_arg);
     return OPT_PARSE_STATUS_ERROR;
 }
 
 // Print a diagnostic for a positional argument that is only legal after `--`.
 static OptParseStatus opt_fail_missing_double_dash(const char *arg) {
+    cstr_sanitize_for_diagnostic(sanitized_arg, 255, arg);
     fprintf(stderr,
-            "error: positional argument requires the -- delimiter here: %s\n",
-            arg);
+            "error: positional argument requires the -- delimiter here: '%s'\n",
+            sanitized_arg);
     return OPT_PARSE_STATUS_ERROR;
 }
 
@@ -1508,7 +1513,9 @@ static OptParseStatus opt_fail_duplicate_option(const OptFieldSpec *field) {
 static OptParseStatus opt_fail_invalid_value(const char *field_name,
                                              const char *value_text,
                                              const String *error_text) {
-    fprintf(stderr, "error: invalid value for %s: %s", field_name, value_text);
+    cstr_sanitize_for_diagnostic(sanitized_value, 255, value_text);
+    fprintf(stderr, "error: invalid value for %s: '%s'", field_name,
+            sanitized_value);
     if (error_text->len != 0)
         fprintf(stderr, " (%s)", error_text->cstr);
     fputc('\n', stderr);
@@ -1620,7 +1627,9 @@ static OptParseStatus opt_parse_long_option_text(const OptSchema *schema,
 
     if (!opt_field_takes_value(field)) {
         if (equals != NULL) {
-            fprintf(stderr, "error: option does not take a value: %s\n", arg);
+            cstr_sanitize_for_diagnostic(sanitized_arg, 255, arg);
+            fprintf(stderr, "error: option does not take a value: '%s'\n",
+                    sanitized_arg);
             return OPT_PARSE_STATUS_ERROR;
         }
         return opt_assign_cli_option(field, options, NULL, is_negated, arg);

@@ -7,6 +7,7 @@
 #include <unistd.h>
 
 #include "build_info.h"
+#include "cli/placeholder_bg.h"
 #include "imgneko/placeholder.h"
 #include "util/options.h"
 #include "util/string.h"
@@ -22,6 +23,7 @@ typedef struct PlaceSize {
 
 OPT_DEFINE_WRAPPER_STRUCT(OptPlaceSize, PlaceSize);
 OPT_DEFINE_WRAPPER_STRUCT(OptPlaceholderMode, PlaceholderMode);
+OPT_DEFINE_WRAPPER_STRUCT(OptPlaceholderBg, PlaceholderBg);
 
 // Parse an unsigned 32-bit decimal integer from an option value.
 static bool parse_uint32_option(void *value, const char *text, size_t text_len,
@@ -169,6 +171,11 @@ static bool validate_placement_id(const void *value, String *error_out) {
     X(S, grapheme_only, OptBool,                                               \
       OPT_BOOL_FLAG(.cli = "--grapheme-only",                                  \
                     .descr = "Emit grapheme-only output without SGR colors.")) \
+    X(S, bg, OptPlaceholderBg,                                                 \
+      OPT_CUSTOM(.parse = placeholder_bg_parse_option,                         \
+                 .clear = placeholder_bg_clear_option,                         \
+                 .copy = placeholder_bg_copy_option, .cli = "--bg BG",         \
+                 .descr = "Background color or pattern."))                     \
     X(S, place, OptPlaceSize,                                                  \
       OPT_CUSTOM(.parse = parse_place_option, .cli = "-p --place CxR",         \
                  .descr = "Placeholder size as COLSxROWS terminal cells."))    \
@@ -257,6 +264,9 @@ static int run_placeholder_command(const PlaceholderCliOptions *options) {
     PlaceholderOptions placeholder_options = placeholder_options_default();
     if (options->diacritics.is_set)
         placeholder_options.mode = options->diacritics.value;
+    if (options->bg.is_set)
+        placeholder_options.format =
+            placeholder_bg_to_format(&options->bg.value);
     placeholder_options.grapheme_only = options->grapheme_only.value;
 
     PlaceholderError error =

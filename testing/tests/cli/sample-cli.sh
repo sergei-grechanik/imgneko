@@ -268,7 +268,7 @@ set +e
 printf 'status=%d\n' "$?"
 set -e
 # CHECK: == invalid empty profile ==
-# CHECK: error: invalid value for --profile:  (profile name must not be empty)
+# CHECK: error: invalid value for --profile: '' (profile name must not be empty)
 # CHECK: status=2
 
 echo '== repeated bool aliases =='
@@ -352,7 +352,7 @@ set +e
 printf 'status=%d\n' "$?"
 set -e
 # CHECK: == invalid empty owned ==
-# CHECK: error: invalid value for --owned:  (text must not be empty)
+# CHECK: error: invalid value for --owned: '' (text must not be empty)
 # CHECK: status=2
 
 echo '== validated owned copy required =='
@@ -386,7 +386,7 @@ set +e
 printf 'status=%d\n' "$?"
 set -e
 # CHECK: == invalid window value ==
-# CHECK: error: invalid value for --window: nope (expected START:END with positive integers and START <= END)
+# CHECK: error: invalid value for --window: 'nope' (expected START:END with positive integers and START <= END)
 # CHECK: status=2
 
 echo '== invalid window separator =='
@@ -395,7 +395,7 @@ set +e
 printf 'status=%d\n' "$?"
 set -e
 # CHECK: == invalid window separator ==
-# CHECK: error: invalid value for --window: 1:2:3 (expected START:END with positive integers and START <= END)
+# CHECK: error: invalid value for --window: '1:2:3' (expected START:END with positive integers and START <= END)
 # CHECK: status=2
 
 echo '== invalid window start =='
@@ -404,7 +404,7 @@ set +e
 printf 'status=%d\n' "$?"
 set -e
 # CHECK: == invalid window start ==
-# CHECK: error: invalid value for --window: 0:2 (expected START:END with positive integers and START <= END)
+# CHECK: error: invalid value for --window: '0:2' (expected START:END with positive integers and START <= END)
 # CHECK: status=2
 
 echo '== invalid window start text =='
@@ -413,7 +413,7 @@ set +e
 printf 'status=%d\n' "$?"
 set -e
 # CHECK: == invalid window start text ==
-# CHECK: error: invalid value for --window: nope:2 (expected START:END with positive integers and START <= END)
+# CHECK: error: invalid value for --window: 'nope:2' (expected START:END with positive integers and START <= END)
 # CHECK: status=2
 
 echo '== invalid window order =='
@@ -422,7 +422,7 @@ set +e
 printf 'status=%d\n' "$?"
 set -e
 # CHECK: == invalid window order ==
-# CHECK: error: invalid value for --window: 3:2 (expected START:END with positive integers and START <= END)
+# CHECK: error: invalid value for --window: '3:2' (expected START:END with positive integers and START <= END)
 # CHECK: status=2
 
 echo '== invalid window end =='
@@ -431,7 +431,7 @@ set +e
 printf 'status=%d\n' "$?"
 set -e
 # CHECK: == invalid window end ==
-# CHECK: error: invalid value for --window: 1:nope (expected START:END with positive integers and START <= END)
+# CHECK: error: invalid value for --window: '1:nope' (expected START:END with positive integers and START <= END)
 # CHECK: status=2
 
 echo '== invalid window end zero =='
@@ -440,7 +440,7 @@ set +e
 printf 'status=%d\n' "$?"
 set -e
 # CHECK: == invalid window end zero ==
-# CHECK: error: invalid value for --window: 1:0 (expected START:END with positive integers and START <= END)
+# CHECK: error: invalid value for --window: '1:0' (expected START:END with positive integers and START <= END)
 # CHECK: status=2
 
 echo '== invalid grid separator =='
@@ -449,7 +449,7 @@ set +e
 printf 'status=%d\n' "$?"
 set -e
 # CHECK: == invalid grid separator ==
-# CHECK: error: invalid value for --grid: 10xx20 (expected exactly one x separator)
+# CHECK: error: invalid value for --grid: '10xx20' (expected exactly one x separator)
 # CHECK: status=2
 
 echo '== invalid grid format =='
@@ -458,7 +458,7 @@ set +e
 printf 'status=%d\n' "$?"
 set -e
 # CHECK: == invalid grid format ==
-# CHECK: error: invalid value for --grid: 10 (expected NxM with positive integers)
+# CHECK: error: invalid value for --grid: '10' (expected NxM with positive integers)
 # CHECK: status=2
 
 echo '== invalid grid width =='
@@ -467,7 +467,7 @@ set +e
 printf 'status=%d\n' "$?"
 set -e
 # CHECK: == invalid grid width ==
-# CHECK: error: invalid value for --grid: 0x20 (width must be a positive integer)
+# CHECK: error: invalid value for --grid: '0x20' (width must be a positive integer)
 # CHECK: status=2
 
 echo '== invalid grid width text =='
@@ -476,7 +476,7 @@ set +e
 printf 'status=%d\n' "$?"
 set -e
 # CHECK: == invalid grid width text ==
-# CHECK: error: invalid value for --grid: nox20 (width must be a positive integer)
+# CHECK: error: invalid value for --grid: 'nox20' (width must be a positive integer)
 # CHECK: status=2
 
 echo '== invalid grid dimension =='
@@ -485,7 +485,7 @@ set +e
 printf 'status=%d\n' "$?"
 set -e
 # CHECK: == invalid grid dimension ==
-# CHECK: error: invalid value for --grid: 10x0 (height must be a positive integer)
+# CHECK: error: invalid value for --grid: '10x0' (height must be a positive integer)
 # CHECK: status=2
 
 echo '== invalid grid height text =='
@@ -494,7 +494,7 @@ set +e
 printf 'status=%d\n' "$?"
 set -e
 # CHECK: == invalid grid height text ==
-# CHECK: error: invalid value for --grid: 10xno (height must be a positive integer)
+# CHECK: error: invalid value for --grid: '10xno' (height must be a positive integer)
 # CHECK: status=2
 
 # Each slice needs its own --slice, otherwise the argument will be interpreted
@@ -512,7 +512,7 @@ set +e
 printf 'status=%d\n' "$?"
 set -e
 # CHECK: == invalid slice ==
-# CHECK: error: invalid value for --slice: 0:2 (expected START:END with positive integers and START <= END)
+# CHECK: error: invalid value for --slice: '0:2' (expected START:END with positive integers and START <= END)
 # CHECK: status=2
 
 echo '== purge split shorts =='
@@ -544,7 +544,7 @@ set +e
 printf 'status=%d\n' "$?"
 set -e
 # CHECK: == short cluster rejected ==
-# CHECK: error: unknown option: -an
+# CHECK: error: unknown option: '-an'
 # CHECK: status=2
 
 echo '== version =='
@@ -574,7 +574,7 @@ set +e
 printf 'status=%d\n' "$?"
 set -e
 # CHECK: == invalid value ==
-# CHECK: error: invalid value for --quota: -1 (must be positive)
+# CHECK: error: invalid value for --quota: '-1' (must be positive)
 # CHECK: status=2
 
 echo '== invalid integer text =='
@@ -583,7 +583,17 @@ set +e
 printf 'status=%d\n' "$?"
 set -e
 # CHECK: == invalid integer text ==
-# CHECK: error: invalid value for --quota: nope (expected a base-10 integer)
+# CHECK: error: invalid value for --quota: 'nope' (expected a base-10 integer)
+# CHECK: status=2
+
+echo '== escaped invalid integer text =='
+bad_quota=$(printf 'no\npe')
+set +e
+"$SAMPLE_CLI" --quota "$bad_quota" 2>&1
+printf 'status=%d\n' "$?"
+set -e
+# CHECK: == escaped invalid integer text ==
+# CHECK: error: invalid value for --quota: 'no<LF>pe' (expected a base-10 integer)
 # CHECK: status=2
 
 echo '== inline value for flag rejected =='
@@ -592,7 +602,7 @@ set +e
 printf 'status=%d\n' "$?"
 set -e
 # CHECK: == inline value for flag rejected ==
-# CHECK: error: option does not take a value: --keep-workspace=false
+# CHECK: error: option does not take a value: '--keep-workspace=false'
 # CHECK: status=2
 
 echo '== missing value =='
@@ -619,7 +629,7 @@ set +e
 printf 'status=%d\n' "$?"
 set -e
 # CHECK: == renamed option rejected ==
-# CHECK: error: unknown option: --artifact-dir
+# CHECK: error: unknown option: '--artifact-dir'
 # CHECK: status=2
 
 echo '== duplicate scalar option =='

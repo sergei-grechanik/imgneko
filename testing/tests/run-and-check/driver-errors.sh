@@ -122,7 +122,7 @@ echo '== invalid empty var =='
 env IMGNEKO_TEST_OUTPUT_DIR="$OUTPUT_DIR" "$RUN_AND_CHECK" \
     "$TMP_DIR/invalid-empty-var.txt" 2>&1 || true
 # CHECK: == invalid empty var ==
-# CHECK: invalid-empty-var.txt:2: error: invalid expression {{\[\[\]\]}} in CHECK: expected an expression, got end of expression
+# CHECK: invalid-empty-var.txt:2: error: invalid expression '' in CHECK: expected an expression, got end of expression
 # CHECK: invalid-empty-var.txt: note: run-and-check result: FAIL
 
 write_case "$TMP_DIR/invalid-first-char.txt" <<'EOF'
@@ -133,7 +133,7 @@ echo '== invalid first char =='
 env IMGNEKO_TEST_OUTPUT_DIR="$OUTPUT_DIR" "$RUN_AND_CHECK" \
     "$TMP_DIR/invalid-first-char.txt" 2>&1 || true
 # CHECK: == invalid first char ==
-# CHECK: invalid-first-char.txt:2: error: invalid expression {{\[\[1bad\]\]}} in CHECK: unexpected text 'bad' after expression
+# CHECK: invalid-first-char.txt:2: error: invalid expression '1bad' in CHECK: unexpected text 'bad' after expression
 # CHECK: invalid-first-char.txt: note: run-and-check result: FAIL
 
 write_case "$TMP_DIR/invalid-later-char.txt" <<'EOF'
@@ -144,7 +144,7 @@ echo '== invalid later char =='
 env IMGNEKO_TEST_OUTPUT_DIR="$OUTPUT_DIR" "$RUN_AND_CHECK" \
     "$TMP_DIR/invalid-later-char.txt" 2>&1 || true
 # CHECK: == invalid later char ==
-# CHECK: invalid-later-char.txt:2: error: invalid expression {{\[\[bad-name\]\]}} in CHECK: unexpected text '-name' after expression
+# CHECK: invalid-later-char.txt:2: error: invalid expression 'bad-name' in CHECK: unexpected text '-name' after expression
 # CHECK: invalid-later-char.txt: note: run-and-check result: FAIL
 
 write_case "$TMP_DIR/invalid-empty-var-def.txt" <<'EOF'
@@ -191,7 +191,8 @@ echo '== invalid close paren var def =='
 env IMGNEKO_TEST_OUTPUT_DIR="$OUTPUT_DIR" "$RUN_AND_CHECK" \
     "$TMP_DIR/invalid-close-paren-var-def.txt" 2>&1 || true
 # CHECK: == invalid close paren var def ==
-# CHECK: invalid-close-paren-var-def.txt:2: error: undefined variable {{\[\[bad\]\]}} in CHECK
+# CHECK: invalid-close-paren-var-def.txt:2: error: invalid expression
+# CHECK-SAME: unexpected text '):[0-9]+' after expression
 # CHECK: invalid-close-paren-var-def.txt: note: run-and-check result: FAIL
 
 write_case "$TMP_DIR/unknown-expression-function.txt" <<'EOF'
@@ -217,6 +218,17 @@ env IMGNEKO_TEST_OUTPUT_DIR="$OUTPUT_DIR" "$RUN_AND_CHECK" \
 # CHECK: rgb-arity.txt:2: error: invalid expression
 # CHECK-SAME: rgb() expects 1 argument, got 0
 # CHECK: rgb-arity.txt: note: run-and-check result: FAIL
+
+write_case "$TMP_DIR/call-undefined-argument.txt" <<'EOF'
+@@ RUN: true
+@@ CHECK: [[rgb(missing)]]
+EOF
+echo '== call undefined argument =='
+env IMGNEKO_TEST_OUTPUT_DIR="$OUTPUT_DIR" "$RUN_AND_CHECK" \
+    "$TMP_DIR/call-undefined-argument.txt" 2>&1 || true
+# CHECK: == call undefined argument ==
+# CHECK: call-undefined-argument.txt:2: error: undefined variable {{\[\[missing\]\]}} in CHECK
+# CHECK: call-undefined-argument.txt: note: run-and-check result: FAIL
 
 write_case "$TMP_DIR/range-variable-argument.txt" <<'EOF'
 @@ RUN: printf '1:2\n'
@@ -664,6 +676,21 @@ env IMGNEKO_TEST_OUTPUT_DIR="$OUTPUT_DIR" "$RUN_AND_CHECK" \
 # CHECK: invalid-regex.txt:2: error: invalid regex in CHECK:
 # CHECK: invalid-regex.txt:2: note: expanded regex: (
 # CHECK: invalid-regex.txt: note: run-and-check result: FAIL
+
+# Diagnostics that echo CHECK patterns should escape control bytes from the
+# test file instead of writing those bytes directly to stderr.
+{
+    printf '# RUN: printf "plain\\n"\n'
+    printf '# CHECK: '
+    printf '\001'
+    printf '\n'
+} >"$TMP_DIR/control-pattern.txt"
+echo '== control pattern diagnostic =='
+env IMGNEKO_TEST_OUTPUT_DIR="$OUTPUT_DIR" "$RUN_AND_CHECK" \
+    "$TMP_DIR/control-pattern.txt" 2>&1 || true
+# CHECK: == control pattern diagnostic ==
+# CHECK: control-pattern.txt:2: note: pattern: <01>
+# CHECK: control-pattern.txt: note: run-and-check result: FAIL
 
 write_case "$TMP_DIR/trailing-regex-backslash.txt" <<'EOF'
 @@ RUN: echo "hello"

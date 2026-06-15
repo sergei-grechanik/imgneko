@@ -305,18 +305,47 @@ PlaceholderFormat placeholder_format_bg_256(uint8_t index, char *out,
 PlaceholderFormat placeholder_format_bg_rgb(uint8_t r, uint8_t g, uint8_t b,
                                             char *out, size_t out_cap);
 
-// Two formatting descriptors alternated by placeholder_format_checkerboard().
-typedef struct PlaceholderCheckerboardFormat {
+// Two formatting descriptors used by alternating formatting helpers.
+typedef struct PlaceholderAlternatingFormat {
     PlaceholderFormat first;
     PlaceholderFormat second;
-} PlaceholderCheckerboardFormat;
+} PlaceholderAlternatingFormat;
 
 // Return a cell-formatting descriptor that alternates two formatting
 // descriptors in a checkerboard pattern. `format->first` is used when
 // `col + row` is even, and `format->second` is used when it is odd. The
 // returned descriptor borrows `format` and both callback contexts from it.
 PlaceholderFormat
-placeholder_format_checkerboard(PlaceholderCheckerboardFormat *format);
+placeholder_format_checkerboard(PlaceholderAlternatingFormat *format);
+
+// Return a descriptor that alternates two formatting descriptors by row.
+// `format->first` is used for even rows, and `format->second` is used for odd
+// rows. The returned descriptor is row-formatting unless either nested
+// descriptor needs per-cell evaluation. It borrows `format` and both callback
+// contexts from it.
+PlaceholderFormat
+placeholder_format_horizontal_stripes(PlaceholderAlternatingFormat *format);
+
+// Return a cell-formatting descriptor that alternates two formatting
+// descriptors by column. `format->first` is used for even columns, and
+// `format->second` is used for odd columns. The returned descriptor borrows
+// `format` and both callback contexts from it.
+PlaceholderFormat
+placeholder_format_vertical_stripes(PlaceholderAlternatingFormat *format);
+
+// Placeholder format funcs. These are not intended for direct use.
+int placeholder_format_checkerboard_func(void *ctx,
+                                         const Placeholder *placeholder,
+                                         uint32_t col, uint32_t row, char *out,
+                                         size_t out_cap);
+int placeholder_format_horizontal_stripes_func(void *ctx,
+                                               const Placeholder *placeholder,
+                                               uint32_t col, uint32_t row,
+                                               char *out, size_t out_cap);
+int placeholder_format_vertical_stripes_func(void *ctx,
+                                             const Placeholder *placeholder,
+                                             uint32_t col, uint32_t row,
+                                             char *out, size_t out_cap);
 
 // Return a positioner that writes a newline after each placeholder row.
 PlaceholderPositioner placeholder_position_linefeeds(void);

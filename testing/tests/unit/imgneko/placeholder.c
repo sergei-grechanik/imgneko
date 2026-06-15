@@ -846,7 +846,7 @@ static int test_user_formatting(TestContext *ctx) {
     return expect_error(ctx, error, PLACEHOLDER_OK, "large static formatting");
 }
 
-// Check background SGR format factories and checkerboard composition.
+// Check background SGR format factories and alternating-format composition.
 static int test_background_format_helpers(TestContext *ctx) {
     Placeholder placeholder = base_placeholder();
     PlaceholderOptions options = placeholder_options_default();
@@ -871,11 +871,11 @@ static int test_background_format_helpers(TestContext *ctx) {
         return 1;
     }
 
-    PlaceholderCheckerboardFormat checkerboard = {
+    PlaceholderAlternatingFormat alternating = {
         .first = format256,
         .second = formatrgb,
     };
-    options.format = placeholder_format_checkerboard(&checkerboard);
+    options.format = placeholder_format_checkerboard(&alternating);
     PlaceholderError error = placeholder_write_to_buffer(
         &placeholder, &options, output, sizeof(output), &len);
     // clang-format off
@@ -895,6 +895,96 @@ static int test_background_format_helpers(TestContext *ctx) {
         return 1;
     // clang-format on
 
+    // Horizontal stripes alternate by row, so every cell on the same row gets
+    // the same additional background format.
+    PlaceholderFormat hstripe_format =
+        placeholder_format_horizontal_stripes(&alternating);
+    if (hstripe_format.per_cell) {
+        fprintf(stderr, "%s: simple horizontal stripes should format rows\n",
+                ctx->test_name);
+        return 1;
+    }
+    options.format = hstripe_format;
+    error = placeholder_write_to_buffer(&placeholder, &options, output,
+                                        sizeof(output), &len);
+    // clang-format off
+    if (expect_error(ctx, error, PLACEHOLDER_OK, "horizontal stripe formatting") ||
+        expect_output(ctx, output, len, "horizontal stripe formatting",
+            // Line 0
+            RESET, "\033[48;5;255m", "\033[38;2;2;3;4m",
+            "\033[58;2;5;6;7m",
+            PLACE, d(1), d(1), d(7),
+            PLACE, d(1), d(2), d(7),
+            RESET, "\n",
+            // Line 1
+            RESET, "\033[48;2;255;255;255m", "\033[38;2;2;3;4m",
+            "\033[58;2;5;6;7m",
+            PLACE, d(2), d(1), d(7),
+            PLACE, d(2), d(2), d(7),
+            RESET, "\n",
+            NULL))
+        return 1;
+    // clang-format on
+
+    // Horizontal stripes with a per-cell child must also run per cell,
+    // otherwise nested column-varying formats would be collapsed to the row
+    // start column.
+    PlaceholderAlternatingFormat hstripes_with_cell_child = {
+        .first = placeholder_format_vertical_stripes(&alternating),
+        .second = formatrgb,
+    };
+    hstripe_format =
+        placeholder_format_horizontal_stripes(&hstripes_with_cell_child);
+    if (!hstripe_format.per_cell) {
+        fprintf(stderr, "%s: nested horizontal stripes should format cells\n",
+                ctx->test_name);
+        return 1;
+    }
+
+    // The per-cell child may also be the second branch; both branches must be
+    // considered when deciding whether row-level formatting is sufficient.
+    PlaceholderAlternatingFormat hstripes_with_second_cell_child = {
+        .first = formatrgb,
+        .second = placeholder_format_vertical_stripes(&alternating),
+    };
+    hstripe_format =
+        placeholder_format_horizontal_stripes(&hstripes_with_second_cell_child);
+    if (!hstripe_format.per_cell) {
+        fprintf(stderr,
+                "%s: second nested horizontal stripe should format cells\n",
+                ctx->test_name);
+        return 1;
+    }
+
+    hstripe_format = placeholder_format_horizontal_stripes(NULL);
+    if (hstripe_format.per_cell) {
+        fprintf(stderr, "%s: null horizontal stripes should format rows\n",
+                ctx->test_name);
+        return 1;
+    }
+
+    // Vertical stripes alternate by column, producing the same color order on
+    // every row.
+    options.format = placeholder_format_vertical_stripes(&alternating);
+    error = placeholder_write_to_buffer(&placeholder, &options, output,
+                                        sizeof(output), &len);
+    // clang-format off
+    if (expect_error(ctx, error, PLACEHOLDER_OK, "vertical stripe formatting") ||
+        expect_output(ctx, output, len, "vertical stripe formatting",
+            // Line 0
+            RESET, "\033[38;2;2;3;4m", "\033[58;2;5;6;7m",
+            "\033[48;5;255m", PLACE, d(1), d(1), d(7),
+            "\033[48;2;255;255;255m", PLACE, d(1), d(2), d(7),
+            RESET, "\n",
+            // Line 1
+            RESET, "\033[38;2;2;3;4m", "\033[58;2;5;6;7m",
+            "\033[48;5;255m", PLACE, d(2), d(1), d(7),
+            "\033[48;2;255;255;255m", PLACE, d(2), d(2), d(7),
+            RESET, "\n",
+            NULL))
+        return 1;
+    // clang-format on
+
     // A NULL checkerboard context should behave like no additional formatting
     // instead of failing the whole placeholder render.
     options.format = placeholder_format_checkerboard(NULL);
@@ -904,7 +994,7 @@ static int test_background_format_helpers(TestContext *ctx) {
         expect_default_base_output(ctx, output, len, "null checkerboard"))
         return 1;
 
-    PlaceholderCheckerboardFormat checkerboard_with_none = {
+    PlaceholderAlternatingFormat checkerboard_with_none = {
         .first = placeholder_format_none(),
         .second = formatrgb,
     };
@@ -928,7 +1018,7 @@ static int test_background_format_helpers(TestContext *ctx) {
         return 1;
     // clang-format on
 
-    PlaceholderCheckerboardFormat checkerboard_with_static_null = {
+    PlaceholderAlternatingFormat checkerboard_with_static_null = {
         .first = placeholder_format_static(NULL),
         .second = formatrgb,
     };
@@ -2369,7 +2459,7 @@ static int test_chunk_size_boundaries(TestContext *ctx) {
 
     // Checkerboard formatting calls the nested static formatting callback
     // instead of using the direct static fast path above.
-    PlaceholderCheckerboardFormat static_cell_checkerboard = {
+    PlaceholderAlternatingFormat static_cell_checkerboard = {
         .first = placeholder_format_static(cell_format),
         .second = placeholder_format_none(),
     };

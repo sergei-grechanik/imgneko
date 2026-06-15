@@ -67,5 +67,5 @@ set +e
 printf 'status=%d\n' "$?"
 set -e
 # CHECK-NEXT: {{^}}== unknown option =={{$}}
-# CHECK-NEXT: {{^}}error: unknown option: --bogus{{$}}
+# CHECK-NEXT: {{^}}error: unknown option: '--bogus'{{$}}
 # CHECK-NEXT: {{^}}status=2{{$}}

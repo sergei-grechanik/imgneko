@@ -202,7 +202,7 @@ set +e
 printf 'status=%d\n' "$?"
 set -e
 # CHECK: == tests-dir path not used from outside cwd ==
-# CHECK: error: no tests matched pattern: ./custom.sh
+# CHECK: error: no tests matched pattern: './custom.sh'
 # CHECK: status=2
 
 # Verify that a directory wildcard pattern selects tests below that directory.
@@ -248,7 +248,7 @@ set +e
 printf 'status=%d\n' "$?"
 set -e
 # CHECK: == path selects no tests ==
-# CHECK: error: no tests matched pattern: {{.*not-a-test.txt}}
+# CHECK: error: no tests matched pattern: '{{.*not-a-test.txt}}'
 # CHECK: status=2
 
 # Verify that an existing C test with an unknown subtest reports no match.
@@ -261,7 +261,7 @@ set +e
 printf 'status=%d\n' "$?"
 set -e
 # CHECK: == missing c subtest ==
-# CHECK: error: no tests matched pattern: {{.*output.c/not_a_subtest}}
+# CHECK: error: no tests matched pattern: '{{.*output.c/not_a_subtest}}'
 # CHECK: status=2
 
 # Verify that a trailing slash after a C file path is normalized to the test
@@ -278,7 +278,7 @@ set +e
 printf 'status=%d\n' "$?"
 set -e
 # CHECK: == missing c subtest file ==
-# CHECK: error: no tests matched pattern: {{.*missing.c/subtest}}
+# CHECK: error: no tests matched pattern: '{{.*missing.c/subtest}}'
 # CHECK: status=2
 
 # Verify that `.c` must end a path component before the remaining path is
@@ -289,7 +289,7 @@ set +e
 printf 'status=%d\n' "$?"
 set -e
 # CHECK: == absolute c path non boundary ==
-# CHECK: error: no tests matched pattern: {{.*output.c-extra/subtest}}
+# CHECK: error: no tests matched pattern: '{{.*output.c-extra/subtest}}'
 # CHECK: status=2
 
 # Verify that a directory named like a C file is not interpreted as a C test.
@@ -302,7 +302,7 @@ set +e
 printf 'status=%d\n' "$?"
 set -e
 # CHECK: == c subtest prefix is directory ==
-# CHECK: error: no tests matched pattern: fake.c/subtest
+# CHECK: error: no tests matched pattern: 'fake.c/subtest'
 # CHECK: status=2
 
 # Verify that a short unmatched relative path reports no path match.
@@ -315,7 +315,7 @@ set +e
 printf 'status=%d\n' "$?"
 set -e
 # CHECK: == short missing path ==
-# CHECK: error: no tests matched pattern: x
+# CHECK: error: no tests matched pattern: 'x'
 # CHECK: status=2
 
 # Verify that a trailing slash on a missing non-C path reports no path match.
@@ -328,7 +328,7 @@ set +e
 printf 'status=%d\n' "$?"
 set -e
 # CHECK: == non c trailing slash path ==
-# CHECK: error: no tests matched pattern: abx/
+# CHECK: error: no tests matched pattern: 'abx/'
 # CHECK: status=2
 
 # Verify that a trailing slash on a missing C file path reports no path match.
@@ -341,7 +341,7 @@ set +e
 printf 'status=%d\n' "$?"
 set -e
 # CHECK: == missing c file trailing slash path ==
-# CHECK: error: no tests matched pattern: ab.c/
+# CHECK: error: no tests matched pattern: 'ab.c/'
 # CHECK: status=2
 
 # Verify that dotted non-C paths are not interpreted as virtual subtest paths.
@@ -354,7 +354,7 @@ set +e
 printf 'status=%d\n' "$?"
 set -e
 # CHECK: == non c dotted virtual path ==
-# CHECK: error: no tests matched pattern: missing.x/subtest
+# CHECK: error: no tests matched pattern: 'missing.x/subtest'
 # CHECK: status=2
 
 # Verify that unsupported filesystem nodes are treated as unmatched path
@@ -366,7 +366,7 @@ set +e
 printf 'status=%d\n' "$?"
 set -e
 # CHECK: == unsupported path type ==
-# CHECK: error: no tests matched pattern: {{.*fifo-test-path}}
+# CHECK: error: no tests matched pattern: '{{.*fifo-test-path}}'
 # CHECK: status=2
 
 # Verify that an absolute path outside the tests directory reports no match,
@@ -379,7 +379,7 @@ printf 'status=%d\n' "$?"
 set -e
 chmod 700 "$OUTSIDE_BLOCKED_TEST_PATH_DIR"
 # CHECK: == outside test path ==
-# CHECK: error: no tests matched pattern: {{.*outside-blocked-test-path-dir/child}}
+# CHECK: error: no tests matched pattern: '{{.*outside-blocked-test-path-dir/child}}'
 # CHECK: status=2
 
 # Verify that a cwd-relative path outside the tests directory reports no match
@@ -395,7 +395,7 @@ printf 'status=%d\n' "$?"
 set -e
 chmod 700 "$OUTSIDE_BLOCKED_TEST_PATH_DIR"
 # CHECK: == relative blocked outside test path ==
-# CHECK: error: no tests matched pattern: outside-blocked-test-path-dir/child
+# CHECK: error: no tests matched pattern: 'outside-blocked-test-path-dir/child'
 # CHECK: status=2
 
 # Verify that a cwd-relative path inside an unreadable test directory reaches
@@ -479,27 +479,27 @@ set -e
 echo '== jobs text =='
 "$RUNNER" --jobs nope 2>&1 || true
 # CHECK: == jobs text ==
-# CHECK: error: invalid value for --jobs: nope
+# CHECK: error: invalid value for --jobs: 'nope'
 
 echo '== jobs zero =='
 "$RUNNER" --jobs=0 2>&1 || true
 # CHECK: == jobs zero ==
-# CHECK: error: invalid value for --jobs: 0
+# CHECK: error: invalid value for --jobs: '0'
 
 echo '== jobs trailing junk =='
 "$RUNNER" -j2x 2>&1 || true
 # CHECK: == jobs trailing junk ==
-# CHECK: error: invalid value for --jobs: 2x
+# CHECK: error: invalid value for --jobs: '2x'
 
 echo '== jobs too large =='
 "$RUNNER" --jobs=2147483648 2>&1 || true
 # CHECK: == jobs too large ==
-# CHECK: error: invalid value for --jobs: 2147483648
+# CHECK: error: invalid value for --jobs: '2147483648'
 
 echo '== jobs huge =='
 "$RUNNER" --jobs=999999999999999999999999999999 2>&1 || true
 # CHECK: == jobs huge ==
-# CHECK: error: invalid value for --jobs: 999999999999999999999999999999
+# CHECK: error: invalid value for --jobs: '999999999999999999999999999999'
 
 echo '== removed filter option =='
 set +e
@@ -507,7 +507,7 @@ set +e
 printf 'status=%d\n' "$?"
 set -e
 # CHECK: == removed filter option ==
-# CHECK: error: unknown option: --filter
+# CHECK: error: unknown option: '--filter'
 # CHECK: status=2
 
 echo '== removed short filter option =='
@@ -516,7 +516,7 @@ set +e
 printf 'status=%d\n' "$?"
 set -e
 # CHECK: == removed short filter option ==
-# CHECK: error: unknown option: -f
+# CHECK: error: unknown option: '-f'
 # CHECK: status=2
 
 echo '== missing tests dir =='
@@ -537,22 +537,22 @@ echo '== missing timeout =='
 echo '== timeout text =='
 "$RUNNER" --timeout nope 2>&1 || true
 # CHECK: == timeout text ==
-# CHECK: error: invalid value for --timeout: nope
+# CHECK: error: invalid value for --timeout: 'nope'
 
 echo '== timeout trailing junk =='
 "$RUNNER" --timeout=1x 2>&1 || true
 # CHECK: == timeout trailing junk ==
-# CHECK: error: invalid value for --timeout: 1x
+# CHECK: error: invalid value for --timeout: '1x'
 
 echo '== timeout negative =='
 "$RUNNER" --timeout -1 2>&1 || true
 # CHECK: == timeout negative ==
-# CHECK: error: invalid value for --timeout: -1
+# CHECK: error: invalid value for --timeout: '-1'
 
 echo '== timeout huge =='
 "$RUNNER" --timeout 1e5000 2>&1 || true
 # CHECK: == timeout huge ==
-# CHECK: error: invalid value for --timeout: 1e5000
+# CHECK: error: invalid value for --timeout: '1e5000'
 
 echo '== missing debug flip =='
 "$RUNNER" --debug-flip-exit-probability 2>&1 || true
@@ -562,27 +562,27 @@ echo '== missing debug flip =='
 echo '== debug flip text =='
 "$RUNNER" --debug-flip-exit-probability nope 2>&1 || true
 # CHECK: == debug flip text ==
-# CHECK: error: invalid value for --debug-flip-exit-probability: nope
+# CHECK: error: invalid value for --debug-flip-exit-probability: 'nope'
 
 echo '== debug flip negative =='
 "$RUNNER" --debug-flip-exit-probability=-1 2>&1 || true
 # CHECK: == debug flip negative ==
-# CHECK: error: invalid value for --debug-flip-exit-probability: -1
+# CHECK: error: invalid value for --debug-flip-exit-probability: '-1'
 
 echo '== debug flip trailing junk =='
 "$RUNNER" --debug-flip-exit-probability=1x 2>&1 || true
 # CHECK: == debug flip trailing junk ==
-# CHECK: error: invalid value for --debug-flip-exit-probability: 1x
+# CHECK: error: invalid value for --debug-flip-exit-probability: '1x'
 
 echo '== debug flip too large =='
 "$RUNNER" --debug-flip-exit-probability=2 2>&1 || true
 # CHECK: == debug flip too large ==
-# CHECK: error: invalid value for --debug-flip-exit-probability: 2
+# CHECK: error: invalid value for --debug-flip-exit-probability: '2'
 
 echo '== debug flip huge =='
 "$RUNNER" --debug-flip-exit-probability 1e5000 2>&1 || true
 # CHECK: == debug flip huge ==
-# CHECK: error: invalid value for --debug-flip-exit-probability: 1e5000
+# CHECK: error: invalid value for --debug-flip-exit-probability: '1e5000'
 
 echo '== missing debug parent setpgid delay =='
 "$RUNNER" --debug-parent-setpgid-delay 2>&1 || true
@@ -592,22 +592,22 @@ echo '== missing debug parent setpgid delay =='
 echo '== debug parent setpgid delay text =='
 "$RUNNER" --debug-parent-setpgid-delay nope 2>&1 || true
 # CHECK: == debug parent setpgid delay text ==
-# CHECK: error: invalid value for --debug-parent-setpgid-delay: nope
+# CHECK: error: invalid value for --debug-parent-setpgid-delay: 'nope'
 
 echo '== debug parent setpgid delay negative =='
 "$RUNNER" --debug-parent-setpgid-delay=-1 2>&1 || true
 # CHECK: == debug parent setpgid delay negative ==
-# CHECK: error: invalid value for --debug-parent-setpgid-delay: -1
+# CHECK: error: invalid value for --debug-parent-setpgid-delay: '-1'
 
 echo '== debug parent setpgid delay trailing junk =='
 "$RUNNER" --debug-parent-setpgid-delay=1x 2>&1 || true
 # CHECK: == debug parent setpgid delay trailing junk ==
-# CHECK: error: invalid value for --debug-parent-setpgid-delay: 1x
+# CHECK: error: invalid value for --debug-parent-setpgid-delay: '1x'
 
 echo '== debug parent setpgid delay huge =='
 "$RUNNER" --debug-parent-setpgid-delay 1e5000 2>&1 || true
 # CHECK: == debug parent setpgid delay huge ==
-# CHECK: error: invalid value for --debug-parent-setpgid-delay: 1e5000
+# CHECK: error: invalid value for --debug-parent-setpgid-delay: '1e5000'
 
 echo '== debug parent output chunk delay equals =='
 "$RUNNER" --list --debug-parent-output-chunk-delay=0 \
@@ -623,12 +623,12 @@ echo '== missing debug parent output chunk delay =='
 echo '== debug parent output chunk delay text =='
 "$RUNNER" --debug-parent-output-chunk-delay nope 2>&1 || true
 # CHECK: == debug parent output chunk delay text ==
-# CHECK: error: invalid value for --debug-parent-output-chunk-delay: nope
+# CHECK: error: invalid value for --debug-parent-output-chunk-delay: 'nope'
 
 echo '== debug parent output chunk delay negative =='
 "$RUNNER" --debug-parent-output-chunk-delay=-1 2>&1 || true
 # CHECK: == debug parent output chunk delay negative ==
-# CHECK: error: invalid value for --debug-parent-output-chunk-delay: -1
+# CHECK: error: invalid value for --debug-parent-output-chunk-delay: '-1'
 
 echo '== unknown option =='
 set +e
@@ -636,7 +636,7 @@ set +e
 printf 'status=%d\n' "$?"
 set -e
 # CHECK: == unknown option ==
-# CHECK: error: unknown option: --definitely-unknown
+# CHECK: error: unknown option: '--definitely-unknown'
 # CHECK: status=2
 
 echo '== all with pattern =='
@@ -656,7 +656,19 @@ set +e
 printf 'status=%d\n' "$?"
 set -e
 # CHECK: == empty pattern parts ==
-# CHECK: error: invalid test pattern: ||runner/no-subtests.c|
+# CHECK: error: invalid test pattern: '||runner/no-subtests.c|'
+# CHECK: status=2
+
+# Pattern diagnostics should escape control bytes from command-line arguments
+# so a malformed pattern cannot split the error message across lines.
+echo '== escaped empty pattern parts =='
+BAD_ALT_PATTERN=$(printf 'bad\n|')
+set +e
+"$RUNNER" --list "$BAD_ALT_PATTERN" 2>&1
+printf 'status=%d\n' "$?"
+set -e
+# CHECK: == escaped empty pattern parts ==
+# CHECK: error: invalid test pattern: 'bad<LF>|'
 # CHECK: status=2
 
 # Verify that every alternation atom must match at least one test.
@@ -666,7 +678,17 @@ set +e
 printf 'status=%d\n' "$?"
 set -e
 # CHECK: == unmatched alternation part ==
-# CHECK: error: no tests matched pattern: does/not/exist
+# CHECK: error: no tests matched pattern: 'does/not/exist'
+# CHECK: status=2
+
+echo '== escaped no matches =='
+NEWLINE_PATTERN=$(printf 'does\nnot/exist')
+set +e
+"$RUNNER" --list "$NEWLINE_PATTERN" 2>&1
+printf 'status=%d\n' "$?"
+set -e
+# CHECK: == escaped no matches ==
+# CHECK: error: no tests matched pattern: 'does<LF>not/exist'
 # CHECK: status=2
 
 echo '== list no matches =='
@@ -675,7 +697,7 @@ set +e
 printf 'status=%d\n' "$?"
 set -e
 # CHECK: == list no matches ==
-# CHECK: error: no tests matched pattern: does/not/exist
+# CHECK: error: no tests matched pattern: 'does/not/exist'
 # CHECK: status=2
 
 echo '== run no matches =='
@@ -684,7 +706,7 @@ set +e
 printf 'status=%d\n' "$?"
 set -e
 # CHECK: == run no matches ==
-# CHECK: error: no tests matched pattern: does/not/exist
+# CHECK: error: no tests matched pattern: 'does/not/exist'
 # CHECK: status=2
 
 echo '== nonempty output dir =='

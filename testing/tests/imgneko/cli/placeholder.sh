@@ -24,6 +24,7 @@ echo '== placeholder help =='
 # CHECK-NEXT: {{^}}                            decimal or 0x-prefixed hex. (default: 0){{$}}
 # CHECK-NEXT: {{^}}  -D, --diacritics MODE     Diacritic mode: minimal, default, or complete.{{$}}
 # CHECK-NEXT: {{^}}  --grapheme-only           Emit grapheme-only output without SGR colors.{{$}}
+# CHECK-NEXT: {{^}}  --bg BG                   Background color or pattern.{{$}}
 # CHECK-NEXT: {{^}}  -p, --place CxR           Placeholder size as COLSxROWS terminal cells.{{$}}
 # CHECK-NEXT: {{^}}  -r, --rows ROWS           Placeholder height in terminal cells.{{$}}
 # CHECK-NEXT: {{^}}  -c, --cols COLS           Placeholder width in terminal cells.{{$}}
@@ -116,6 +117,68 @@ echo '== placement id bytes =='
 "$IMGNEKO" placeholder --id 7 --placement-id 8 --rows 1 --cols 1
 # CHECK-NEXT: {{^}}== placement id bytes =={{$}}
 # CHECK-NEXT: {{^\x1b\[0m\x1b\[38;5;7m\x1b\[58;2;}}[[rgb(8)]]m[[ph(0, 0)]]{{\x1b\[0m$}}
+
+echo '== background index =='
+# A decimal background value is interpreted as a 256-color palette index.
+# Leading and trailing whitespace around the expression is ignored.
+"$IMGNEKO" placeholder --id 7 --place 2x1 --bg ' 123 '
+# CHECK-NEXT: {{^}}== background index =={{$}}
+# CHECK-NEXT: {{^\x1b\[0m\x1b\[48;5;123m\x1b\[38;5;7m}}[[ph(0, "0:1")]]{{\x1b\[0m$}}
+
+echo '== background hex =='
+# Web-style #rrggbb colors become true-color background SGR sequences.
+"$IMGNEKO" placeholder --id 7 --place 1x1 --bg '#ff0012'
+# CHECK-NEXT: {{^}}== background hex =={{$}}
+# CHECK-NEXT: {{^\x1b\[0m\x1b\[48;2;255;0;18m\x1b\[38;5;7m}}[[ph(0, 0)]]{{\x1b\[0m$}}
+
+echo '== background rgb =='
+# rgb() accepts decimal 8-bit channel values with optional whitespace.
+"$IMGNEKO" placeholder --id 7 --place 1x1 --bg 'rgb(10, 20, 30)'
+# CHECK-NEXT: {{^}}== background rgb =={{$}}
+# CHECK-NEXT: {{^\x1b\[0m\x1b\[48;2;10;20;30m\x1b\[38;5;7m}}[[ph(0, 0)]]{{\x1b\[0m$}}
+
+echo '== background checkerboard =='
+# Checkerboard alternates the two colors by cell using (col + row) parity.
+"$IMGNEKO" placeholder --id 7 --place 2x2 \
+    --bg 'checkerboard(rgb(1, 2, 3), #000405)'
+# CHECK-NEXT: {{^}}== background checkerboard =={{$}}
+# CHECK-NEXT: {{^\x1b\[0m\x1b\[38;5;7m\x1b\[48;2;1;2;3m}}[[ph(0, 0)]]{{\x1b\[48;2;0;4;5m}}[[ph(0, 1)]]{{\x1b\[0m$}}
+# CHECK-NEXT: {{^\x1b\[0m\x1b\[38;5;7m\x1b\[48;2;0;4;5m}}[[ph(1, 0)]]{{\x1b\[48;2;1;2;3m}}[[ph(1, 1)]]{{\x1b\[0m$}}
+
+echo '== background horizontal stripes =='
+# hstripes alternates the two colors by row.
+"$IMGNEKO" placeholder --id 7 --place 2x2 --bg 'hstripes(#010203, 5 )'
+# CHECK-NEXT: {{^}}== background horizontal stripes =={{$}}
+# CHECK-NEXT: {{^\x1b\[0m\x1b\[48;2;1;2;3m\x1b\[38;5;7m}}[[ph(0, "0:1")]]{{\x1b\[0m$}}
+# CHECK-NEXT: {{^\x1b\[0m\x1b\[48;5;5m\x1b\[38;5;7m}}[[ph(1, "0:1")]]{{\x1b\[0m$}}
+
+echo '== background vertical stripes =='
+# vstripes alternates the two colors by column.
+"$IMGNEKO" placeholder --id 7 --place 2x1 --bg 'vstripes(#010203, 5)'
+# CHECK-NEXT: {{^}}== background vertical stripes =={{$}}
+# CHECK-NEXT: {{^\x1b\[0m\x1b\[38;5;7m\x1b\[48;2;1;2;3m}}[[ph(0, 0)]]{{\x1b\[48;5;5m}}[[ph(0, 1)]]{{\x1b\[0m$}}
+
+echo '== nested background patterns =='
+# Nested patterns are evaluated recursively; hstripes() switches rows while
+# each nested vstripes() still switches columns within the selected row.
+"$IMGNEKO" placeholder --id 7 --place 4x4 \
+    --bg 'hstripes(vstripes(1, 2), vstripes(3, 4))'
+# CHECK-NEXT: {{^}}== nested background patterns =={{$}}
+# CHECK-NEXT: {{^\x1b\[0m\x1b\[38;5;7m\x1b\[48;5;1m}}[[ph(0, 0)]]{{\x1b\[48;5;2m}}[[ph(0, 1)]]{{\x1b\[48;5;1m}}[[ph(0, 2)]]{{\x1b\[48;5;2m}}[[ph(0, 3)]]{{\x1b\[0m$}}
+# CHECK-NEXT: {{^\x1b\[0m\x1b\[38;5;7m\x1b\[48;5;3m}}[[ph(1, 0)]]{{\x1b\[48;5;4m}}[[ph(1, 1)]]{{\x1b\[48;5;3m}}[[ph(1, 2)]]{{\x1b\[48;5;4m}}[[ph(1, 3)]]{{\x1b\[0m$}}
+# CHECK-NEXT: {{^\x1b\[0m\x1b\[38;5;7m\x1b\[48;5;1m}}[[ph(2, 0)]]{{\x1b\[48;5;2m}}[[ph(2, 1)]]{{\x1b\[48;5;1m}}[[ph(2, 2)]]{{\x1b\[48;5;2m}}[[ph(2, 3)]]{{\x1b\[0m$}}
+# CHECK-NEXT: {{^\x1b\[0m\x1b\[38;5;7m\x1b\[48;5;3m}}[[ph(3, 0)]]{{\x1b\[48;5;4m}}[[ph(3, 1)]]{{\x1b\[48;5;3m}}[[ph(3, 2)]]{{\x1b\[48;5;4m}}[[ph(3, 3)]]{{\x1b\[0m$}}
+
+echo '== nested background with solid stripe =='
+# A row-level solid child still emits per cell when its sibling needs per-cell
+# evaluation.
+"$IMGNEKO" placeholder --id 7 --place 4x4 \
+    --bg 'hstripes(vstripes(1, 2), 5)'
+# CHECK-NEXT: {{^}}== nested background with solid stripe =={{$}}
+# CHECK-NEXT: {{^\x1b\[0m\x1b\[38;5;7m\x1b\[48;5;1m}}[[ph(0, 0)]]{{\x1b\[48;5;2m}}[[ph(0, 1)]]{{\x1b\[48;5;1m}}[[ph(0, 2)]]{{\x1b\[48;5;2m}}[[ph(0, 3)]]{{\x1b\[0m$}}
+# CHECK-NEXT: {{^\x1b\[0m\x1b\[38;5;7m\x1b\[48;5;5m}}[[ph(1, 0)]]{{\x1b\[48;5;5m}}[[ph(1, 1)]]{{\x1b\[48;5;5m}}[[ph(1, 2)]]{{\x1b\[48;5;5m}}[[ph(1, 3)]]{{\x1b\[0m$}}
+# CHECK-NEXT: {{^\x1b\[0m\x1b\[38;5;7m\x1b\[48;5;1m}}[[ph(2, 0)]]{{\x1b\[48;5;2m}}[[ph(2, 1)]]{{\x1b\[48;5;1m}}[[ph(2, 2)]]{{\x1b\[48;5;2m}}[[ph(2, 3)]]{{\x1b\[0m$}}
+# CHECK-NEXT: {{^\x1b\[0m\x1b\[38;5;7m\x1b\[48;5;5m}}[[ph(3, 0)]]{{\x1b\[48;5;5m}}[[ph(3, 1)]]{{\x1b\[48;5;5m}}[[ph(3, 2)]]{{\x1b\[48;5;5m}}[[ph(3, 3)]]{{\x1b\[0m$}}
 
 echo '== requested dimensions =='
 "$IMGNEKO" placeholder --id 1234 --rows 10 --cols 20
