@@ -120,9 +120,9 @@ ARRLIB_INLINE void *arr__insert_arr_impl(void *data, size_t *size,
 
     // Assert that the new range doesn't overlap with the existing array.
     if (base != NULL && other_data != NULL) {
-        assert((char const *)other_data + other_size * elem_size <= base ||
-               (char const *)other_data >= base + old_size * elem_size &&
-                   "inserting data from the same array is not supported");
+        assert(((char const *)other_data + other_size * elem_size <= base ||
+                (char const *)other_data >= base + old_size * elem_size) &&
+               "inserting data from the same array is not supported");
     }
 
     // Resize the array.
