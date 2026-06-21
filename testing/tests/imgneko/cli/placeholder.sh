@@ -137,6 +137,12 @@ echo '== background rgb =='
 # CHECK-NEXT: {{^}}== background rgb =={{$}}
 # CHECK-NEXT: {{^\x1b\[0m\x1b\[48;2;10;20;30m\x1b\[38;5;7m}}[[ph(0, 0)]]{{\x1b\[0m$}}
 
+echo '== background default =='
+# default resets the terminal background with CSI 49 m.
+"$IMGNEKO" placeholder --id 7 --place 1x1 --bg default
+# CHECK-NEXT: {{^}}== background default =={{$}}
+# CHECK-NEXT: {{^\x1b\[0m\x1b\[49m\x1b\[38;5;7m}}[[ph(0, 0)]]{{\x1b\[0m$}}
+
 echo '== background checkerboard =='
 # Checkerboard alternates the two colors by cell using (col + row) parity.
 "$IMGNEKO" placeholder --id 7 --place 2x2 \
@@ -187,6 +193,12 @@ echo '== background pattern aliases =='
 # CHECK-NEXT: {{^}}== background pattern aliases =={{$}}
 # CHECK-NEXT: {{^\x1b\[0m\x1b\[38;5;7m\x1b\[48;5;1m}}[[ph(0, 0)]]{{\x1b\[48;5;4m}}[[ph(0, 1)]]{{\x1b\[0m$}}
 # CHECK-NEXT: {{^\x1b\[0m\x1b\[38;5;7m\x1b\[48;5;3m}}[[ph(1, 0)]]{{\x1b\[48;5;2m}}[[ph(1, 1)]]{{\x1b\[0m$}}
+
+echo '== background default in pattern =='
+# default can be nested inside background patterns.
+"$IMGNEKO" placeholder --id 7 --place 2x1 --bg 'ch(default, 0)'
+# CHECK-NEXT: {{^}}== background default in pattern =={{$}}
+# CHECK-NEXT: {{^\x1b\[0m\x1b\[38;5;7m\x1b\[49m}}[[ph(0, 0)]]{{\x1b\[48;5;0m}}[[ph(0, 1)]]{{\x1b\[0m$}}
 
 echo '== requested dimensions =='
 "$IMGNEKO" placeholder --id 1234 --rows 10 --cols 20

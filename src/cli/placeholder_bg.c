@@ -17,14 +17,16 @@
 #include "util/options.h"
 
 #define PLACEHOLDER_BG_FORMATS                                                 \
-    "INDEX, #rrggbb, rgb(r, g, b), checkerboard(bg, bg), "                     \
+    "default, INDEX, #rrggbb, rgb(r, g, b), checkerboard(bg, bg), "            \
     "ch(bg, bg), hstripes(bg, bg), hs(bg, bg), vstripes(bg, bg), "             \
     "or vs(bg, bg)"
 
 // Color representation accepted by the placeholder background CLI parser.
 typedef enum PlaceholderBgColorKind {
+    // Default terminal background, emitted as `49`.
+    PLACEHOLDER_BG_COLOR_DEFAULT = 0,
     // 256-color palette index, emitted as `48;5;<index>`.
-    PLACEHOLDER_BG_COLOR_INDEX = 0,
+    PLACEHOLDER_BG_COLOR_INDEX,
     // 24-bit RGB color, emitted as `48;2;<r>;<g>;<b>`.
     PLACEHOLDER_BG_COLOR_RGB,
 } PlaceholderBgColorKind;
@@ -213,6 +215,10 @@ static bool bg_expr_parse_color(const Expr *expr, PlaceholderBgColor *out,
     case EXPR_CALL:
         return bg_expr_parse_rgb(expr, out, error_out);
     case EXPR_IDENTIFIER:
+        if (str_span_equals_cstr(expr->token, "default")) {
+            out->kind = PLACEHOLDER_BG_COLOR_DEFAULT;
+            return true;
+        }
         return bg_expr_unexpected_error(expr, "identifier", error_out);
     case EXPR_HEX_INTEGER:
         return bg_expr_unexpected_error(expr, "hexadecimal integer", error_out);
@@ -230,8 +236,10 @@ static bool bg_expr_parse_color(const Expr *expr, PlaceholderBgColor *out,
 
 // Convert a parsed color operand into an owned SGR sequence.
 static String bg_color_to_string(const PlaceholderBgColor *color) {
-    char data[PLACEHOLDER_FORMAT_BG_RGB_SIZE] = {0};
+    if (color->kind == PLACEHOLDER_BG_COLOR_DEFAULT)
+        return str_from_cstr("\033[49m");
 
+    char data[PLACEHOLDER_FORMAT_BG_RGB_SIZE] = {0};
     if (color->kind == PLACEHOLDER_BG_COLOR_INDEX) {
         placeholder_format_bg_256(color->index, data, sizeof(data));
     } else {

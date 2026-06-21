@@ -23,6 +23,7 @@ typedef struct PlaceholderBg {
 // Parse a placeholder background color or pattern as a `PlaceholderBg` value.
 //
 // Supported formats:
+// - `default`: reset to the terminal default background.
 // - `INDEX`: 256-color palette index, 0 through 255.
 // - `#rrggbb`: web-style RGB hex color.
 // - `rgb(r, g, b)`: decimal 8-bit RGB channels.
