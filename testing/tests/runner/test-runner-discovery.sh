@@ -20,11 +20,14 @@ RUNNER=$IMGNEKO_BUILD_DIR/bin/test-runner
 
 TMP_TEST_DIR=$IMGNEKO_TEST_OUTPUT_DIR/tmp-runner-discovery
 TMP_C_TEST_DIR=$IMGNEKO_TEST_OUTPUT_DIR/tmp-runner-c-tests
+MARKED_C_TEST_DIR=$IMGNEKO_TEST_OUTPUT_DIR/marked-c-tests
 AMBIGUOUS_TEST_DIR=$IMGNEKO_TEST_OUTPUT_DIR/ambiguous-runner-tests
 MULTIPLE_MARKERS_TEST_DIR=$IMGNEKO_TEST_OUTPUT_DIR/multiple-marker-tests
 FAKE_TEST_BIN_DIR=$IMGNEKO_TEST_OUTPUT_DIR/fake-test-bin
+MARKED_C_TEST_BIN_DIR=$IMGNEKO_TEST_OUTPUT_DIR/marked-c-test-bin
 FAKE_NO_SUBTESTS_BIN=$FAKE_TEST_BIN_DIR/runner/no-subtests.c.bin
 NO_SUBTESTS_OUTPUT_DIR=$IMGNEKO_TEST_OUTPUT_DIR/no-subtests-output
+MARKED_C_OUTPUT_DIR=$IMGNEKO_TEST_OUTPUT_DIR/marked-c-output
 SPACED_OUTPUT_DIR=$IMGNEKO_TEST_OUTPUT_DIR/spaced-output
 EMPTY_FAIL_OUTPUT_DIR=$IMGNEKO_TEST_OUTPUT_DIR/empty-fail-output
 MISSING_FAIL_OUTPUT_DIR=$IMGNEKO_TEST_OUTPUT_DIR/missing-fail-output
@@ -32,11 +35,47 @@ SIGNALED_OUTPUT_DIR=$IMGNEKO_TEST_OUTPUT_DIR/signaled-output
 
 [ -x "$RUNNER" ] || fail "missing test-runner binary: $RUNNER"
 mkdir -p "$TMP_TEST_DIR" "$TMP_C_TEST_DIR/runner" "$FAKE_TEST_BIN_DIR/runner"
+mkdir -p "$MARKED_C_TEST_DIR/runner" "$MARKED_C_TEST_BIN_DIR/runner"
 mkdir -p "$AMBIGUOUS_TEST_DIR" "$MULTIPLE_MARKERS_TEST_DIR"
 mkfifo "$TMP_TEST_DIR/ignored-fifo"
 echo 'ignored regular file' >"$TMP_TEST_DIR/ignored.txt"
 cp "$IMGNEKO_ROOT_DIR/testing/tests/runner/no-subtests.c" \
     "$TMP_C_TEST_DIR/runner/no-subtests.c"
+
+cat >"$MARKED_C_TEST_DIR/runner/disabled-subtests.c" <<'EOF'
+// DISABLED
+
+int main(void) { return 0; }
+EOF
+
+cat >"$MARKED_C_TEST_BIN_DIR/runner/disabled-subtests.c.bin" <<'EOF'
+#!/bin/sh
+if [ "$1" = "--list" ]; then
+    echo first
+    echo 'second_xfail XFAIL'
+    exit 0
+fi
+echo "disabled C subtest ran unexpectedly: $*" >&2
+exit 1
+EOF
+chmod +x "$MARKED_C_TEST_BIN_DIR/runner/disabled-subtests.c.bin"
+
+cat >"$MARKED_C_TEST_DIR/runner/xfail-subtests.c" <<'EOF'
+// XFAIL
+
+int main(void) { return 0; }
+EOF
+
+cat >"$MARKED_C_TEST_BIN_DIR/runner/xfail-subtests.c.bin" <<'EOF'
+#!/bin/sh
+if [ "$1" = "--list" ]; then
+    echo expected_xfail
+    exit 0
+fi
+echo "xfail C subtest ran unexpectedly: $*" >&2
+exit 1
+EOF
+chmod +x "$MARKED_C_TEST_BIN_DIR/runner/xfail-subtests.c.bin"
 
 cat >"$TMP_TEST_DIR/empty-output-fail.sh" <<'EOF'
 #!/bin/sh
@@ -92,6 +131,36 @@ echo '== run spaced subtests =='
 # CHECK: xfailed: 1
 # CHECK: disabled: 1
 # CHECK: Result: SUCCESS
+
+echo '== disabled c file marker =='
+# A DISABLED marker on a C source applies to every discovered subtest and
+# prevents the subtest binary from being run.
+"$RUNNER" --jobs=1 --list --tests-dir "$MARKED_C_TEST_DIR" \
+    --test-bin-dir "$MARKED_C_TEST_BIN_DIR" \
+    runner/disabled-subtests.c 2>&1
+# CHECK: == disabled c file marker ==
+# CHECK: runner/disabled-subtests.c/first DISABLED
+# CHECK: runner/disabled-subtests.c/second_xfail DISABLED
+
+"$RUNNER" --jobs=1 --tests-dir "$MARKED_C_TEST_DIR" \
+    --test-bin-dir "$MARKED_C_TEST_BIN_DIR" \
+    --output-dir "$MARKED_C_OUTPUT_DIR" \
+    runner/disabled-subtests.c 2>&1
+# CHECK: DISABLED: runner/disabled-subtests.c/first
+# CHECK: DISABLED: runner/disabled-subtests.c/second_xfail
+# CHECK: Summary:
+# CHECK: discovered: 2
+# CHECK: disabled: 2
+# CHECK: Result: SUCCESS
+
+echo '== xfail c file marker =='
+# Listing is enough to verify that discovery also propagates file-level XFAIL
+# markers to C subtests.
+"$RUNNER" --jobs=1 --list --tests-dir "$MARKED_C_TEST_DIR" \
+    --test-bin-dir "$MARKED_C_TEST_BIN_DIR" \
+    runner/xfail-subtests.c 2>&1
+# CHECK: == xfail c file marker ==
+# CHECK: runner/xfail-subtests.c/expected_xfail XFAIL
 
 echo '== empty output tail =='
 "$RUNNER" --jobs=1 --tests-dir "$TMP_TEST_DIR" --output-dir "$EMPTY_FAIL_OUTPUT_DIR" \

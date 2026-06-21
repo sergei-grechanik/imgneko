@@ -454,7 +454,7 @@ static bool text_contains_word(const char *text, const char *word) {
     return false;
 }
 
-// Scan a free-form text line for supported executable-test markers.
+// Scan a free-form text line for supported file-level test markers.
 static TestMarker test_marker_from_text_line(const char *line) {
     bool has_xfail = text_contains_word(line, "XFAIL");
     bool has_disabled = text_contains_word(line, "DISABLED");
@@ -469,6 +469,17 @@ static TestMarker test_marker_from_text_line(const char *line) {
         return TEST_MARKER_XFAIL;
     if (has_disabled)
         return TEST_MARKER_DISABLED;
+    return TEST_MARKER_NONE;
+}
+
+// Combine a source-file marker with a C subtest marker.
+static TestMarker combine_test_markers(TestMarker file_marker,
+                                       TestMarker subtest_marker) {
+    if (file_marker == TEST_MARKER_DISABLED ||
+        subtest_marker == TEST_MARKER_DISABLED)
+        return TEST_MARKER_DISABLED;
+    if (file_marker == TEST_MARKER_XFAIL || subtest_marker == TEST_MARKER_XFAIL)
+        return TEST_MARKER_XFAIL;
     return TEST_MARKER_NONE;
 }
 
@@ -497,8 +508,8 @@ static TestMarker strip_trailing_test_marker(char *line) {
     return TEST_MARKER_NONE;
 }
 
-// Read the first five lines of an executable test file and return its marker.
-static TestMarker executable_test_marker(const char *path) {
+// Read the first five lines of a test source file and return its marker.
+static TestMarker test_file_marker(const char *path) {
     FILE *stream = fopen(path, "r");
     char *line = NULL;
     size_t line_capacity = 0;
@@ -638,9 +649,10 @@ static void discover_test_files_rec(const char *tests_root_abs,
         // Keep only supported test file types.
         if (cstr_ends_with_cstr(rel_path.cstr, ".c")) {
             kind = TEST_KIND_C;
+            marker = test_file_marker(abs_path.cstr);
         } else if (access(abs_path.cstr, X_OK) == 0) {
             kind = TEST_KIND_EXECUTABLE;
-            marker = executable_test_marker(abs_path.cstr);
+            marker = test_file_marker(abs_path.cstr);
         } else {
             str_free(rel_path);
             str_free(abs_path);
@@ -1793,7 +1805,8 @@ static void discover_test_cases(const TestFileArray *files,
                     arr_push(*cases,
                              ((TestCase){
                                  .kind = TEST_KIND_C,
-                                 .marker = subtests.data[j].marker,
+                                 .marker = combine_test_markers(
+                                     file->marker, subtests.data[j].marker),
                                  .id = id,
                                  .file_id = str_copy(file->rel_path),
                                  .file_abs_path = str_copy(file->abs_path),
