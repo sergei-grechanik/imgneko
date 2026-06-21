@@ -45,6 +45,8 @@ typedef struct PlaceholderPlan {
     uint8_t other_cell_diacritics;
     // High image-ID byte emitted as an optional third diacritic.
     uint8_t image_id_high_byte;
+    // Byte length of `PlaceholderMode.unrepresentable_cell_symbol`.
+    size_t unrepresentable_cell_symbol_len;
 } PlaceholderPlan;
 
 // Buffered placeholder writer that preserves safe chunk boundaries.
@@ -124,8 +126,8 @@ const char *placeholder_error_string(PlaceholderError error) {
         return "invalid placeholder mode";
     case PLACEHOLDER_INCOMPLETE_FIRST_COLUMN:
         return "first column information does not carry enough information";
-    case PLACEHOLDER_UNREPRESENTABLE_ROW:
-        return "unrepresentable row";
+    case PLACEHOLDER_UNREPRESENTABLE_CELL:
+        return "unrepresentable cell";
     case PLACEHOLDER_UNREPRESENTABLE_COLUMN:
         return "unrepresentable column";
     case PLACEHOLDER_CHUNK_TOO_SMALL:
@@ -484,38 +486,6 @@ static bool level_to_count(PlaceholderDiacriticLevel level, bool idbyte_nonzero,
     return false;
 }
 
-// Build the validated diacritic plan for a placeholder and mode.
-//
-// `placeholder`
-//     Placeholder whose IDs and rectangle influence first-cell requirements.
-// `mode`
-//     Metadata encoding mode to resolve.
-// `out`
-//     Output plan populated on success.
-static PlaceholderError make_plan(const Placeholder *placeholder,
-                                  const PlaceholderMode *mode,
-                                  PlaceholderPlan *out) {
-    uint8_t idbyte = (uint8_t)(placeholder->image_id >> 24);
-    bool idbyte_nonzero = idbyte != 0;
-
-    if (!level_to_count(mode->first_col_level, idbyte_nonzero,
-                        &out->first_cell_diacritics) ||
-        !level_to_count(mode->other_cols_level, idbyte_nonzero,
-                        &out->other_cell_diacritics))
-        return PLACEHOLDER_INVALID_MODE;
-    if (mode->first_col_level == PLACEHOLDER_DIACRITIC_NONE)
-        return PLACEHOLDER_INCOMPLETE_FIRST_COLUMN;
-
-    out->image_id_high_byte = idbyte;
-
-    if (idbyte_nonzero && out->first_cell_diacritics < 3)
-        return PLACEHOLDER_INCOMPLETE_FIRST_COLUMN;
-    if (placeholder->rect.start_col != 0 && out->first_cell_diacritics < 2)
-        return PLACEHOLDER_INCOMPLETE_FIRST_COLUMN;
-
-    return PLACEHOLDER_OK;
-}
-
 // Validate placeholder arguments and optionally return the resolved plan.
 //
 // `placeholder`
@@ -524,9 +494,9 @@ static PlaceholderError make_plan(const Placeholder *placeholder,
 //     Metadata encoding mode to validate.
 // `out_plan`
 //     Optional output plan populated on success.
-static PlaceholderError validate_with_plan(const Placeholder *placeholder,
-                                           const PlaceholderMode *mode,
-                                           PlaceholderPlan *out_plan) {
+static PlaceholderError validate_and_make_plan(const Placeholder *placeholder,
+                                               const PlaceholderMode *mode,
+                                               PlaceholderPlan *out_plan) {
     PlaceholderPlan plan;
 
     if (placeholder == NULL || mode == NULL)
@@ -539,19 +509,35 @@ static PlaceholderError validate_with_plan(const Placeholder *placeholder,
         placeholder->rect.start_row >= placeholder->rect.end_row)
         return PLACEHOLDER_INVALID_RECTANGLE;
 
-    PlaceholderError error = make_plan(placeholder, mode, &plan);
-    if (error != PLACEHOLDER_OK)
-        return error;
+    uint8_t idbyte = (uint8_t)(placeholder->image_id >> 24);
+    bool idbyte_nonzero = idbyte != 0;
 
-    if (placeholder->rect.end_row - 1 >= ROWCOLUMN_DIACRITIC_MAX)
-        return PLACEHOLDER_UNREPRESENTABLE_ROW;
-    if (plan.first_cell_diacritics >= 2 &&
-        placeholder->rect.start_col >= ROWCOLUMN_DIACRITIC_MAX)
-        return PLACEHOLDER_UNREPRESENTABLE_COLUMN;
-    if (plan.other_cell_diacritics >= 2 &&
-        placeholder->rect.end_col - placeholder->rect.start_col > 1 &&
-        placeholder->rect.end_col - 1 >= ROWCOLUMN_DIACRITIC_MAX)
-        return PLACEHOLDER_UNREPRESENTABLE_COLUMN;
+    if (!level_to_count(mode->first_col_level, idbyte_nonzero,
+                        &plan.first_cell_diacritics) ||
+        !level_to_count(mode->other_cols_level, idbyte_nonzero,
+                        &plan.other_cell_diacritics))
+        return PLACEHOLDER_INVALID_MODE;
+    if (mode->first_col_level == PLACEHOLDER_DIACRITIC_NONE)
+        return PLACEHOLDER_INCOMPLETE_FIRST_COLUMN;
+
+    plan.image_id_high_byte = idbyte;
+
+    if (idbyte_nonzero && plan.first_cell_diacritics < 3)
+        return PLACEHOLDER_INCOMPLETE_FIRST_COLUMN;
+    if (placeholder->rect.start_col != 0 && plan.first_cell_diacritics < 2)
+        return PLACEHOLDER_INCOMPLETE_FIRST_COLUMN;
+
+    bool needs_unrepresentable_cell_symbol =
+        placeholder->rect.start_col >= ROWCOLUMN_DIACRITIC_MAX ||
+        placeholder->rect.end_row - 1 >= ROWCOLUMN_DIACRITIC_MAX;
+    if (needs_unrepresentable_cell_symbol) {
+        if (mode->unrepresentable_cell_symbol == NULL)
+            return PLACEHOLDER_UNREPRESENTABLE_CELL;
+        plan.unrepresentable_cell_symbol_len =
+            strlen(mode->unrepresentable_cell_symbol);
+    } else {
+        plan.unrepresentable_cell_symbol_len = 0;
+    }
 
     if (out_plan != NULL)
         *out_plan = plan;
@@ -561,7 +547,7 @@ static PlaceholderError validate_with_plan(const Placeholder *placeholder,
 
 PlaceholderError placeholder_validate(const Placeholder *placeholder,
                                       const PlaceholderMode *mode) {
-    return validate_with_plan(placeholder, mode, NULL);
+    return validate_and_make_plan(placeholder, mode, NULL);
 }
 
 // Return remaining chunk bytes. Room for an ANSI reset is reserved when styling
@@ -582,9 +568,8 @@ static size_t chunker_available(const PlaceholderChunker *chunker,
 // Append raw bytes to the chunker.
 static PlaceholderError chunker_put_bytes(PlaceholderChunker *chunker,
                                           const char *data, size_t len) {
-    // IMGNEKO_UNCOVERED_OK: Placeholder byte appends are nonempty.
     if (len == 0)
-        return PLACEHOLDER_OK; // IMGNEKO_UNCOVERED_OK
+        return PLACEHOLDER_OK;
     if (len > chunker_available(chunker, /*force_reserve_reset=*/false))
         return PLACEHOLDER_CHUNK_TOO_SMALL;
 
@@ -731,7 +716,7 @@ static PlaceholderError append_sgr_color(PlaceholderChunker *chunker,
     return PLACEHOLDER_OK;
 }
 
-// Append image and placement ID colors for the active placeholder.
+// Append image and placement ID colors for a representable placeholder cell.
 static PlaceholderError append_id_colors(PlaceholderChunker *chunker,
                                          const Placeholder *placeholder,
                                          const PlaceholderMode *mode) {
@@ -758,6 +743,48 @@ static PlaceholderError append_diacritic(PlaceholderChunker *chunker,
             "placeholder validation missed an unrepresentable diacritic");
 
     return chunker_put_bytes(chunker, diacritic, diacritic_len);
+}
+
+// Return true when a cell must be displayed as the configured replacement
+// symbol instead of a placeholder grapheme.
+static bool cell_is_unrepresentable(const AppendCellContext *cell) {
+    return cell->row >= ROWCOLUMN_DIACRITIC_MAX ||
+           cell->placeholder->rect.start_col >= ROWCOLUMN_DIACRITIC_MAX;
+}
+
+// Append the visible bytes for a single placeholder cell. Cells that cannot
+// carry a usable row anchor use the configured replacement symbol. Later
+// columns outside the diacritic range keep the row diacritic, when requested,
+// but drop the unrepresentable column and ID-byte diacritics.
+static PlaceholderError append_cell_symbol(PlaceholderChunker *chunker,
+                                           const AppendCellContext *cell,
+                                           uint8_t diacritic_count) {
+    uint32_t row_num = cell->row + 1;
+    uint32_t col_num = cell->col + 1;
+
+    if (cell_is_unrepresentable(cell)) {
+        const char *symbol = cell->options->mode.unrepresentable_cell_symbol;
+        require(symbol != NULL,
+                "placeholder validation missed a missing fallback symbol");
+
+        return chunker_put_bytes(chunker, symbol,
+                                 cell->plan->unrepresentable_cell_symbol_len);
+    }
+
+    TRY_APPEND(
+        chunker_put_bytes(chunker, PLACEHOLDER_UTF8, PLACEHOLDER_UTF8_LEN));
+
+    if (diacritic_count >= 1)
+        TRY_APPEND(append_diacritic(chunker, row_num));
+    if (col_num > ROWCOLUMN_DIACRITIC_MAX)
+        return PLACEHOLDER_OK;
+    if (diacritic_count >= 2)
+        TRY_APPEND(append_diacritic(chunker, col_num));
+    if (diacritic_count >= 3)
+        TRY_APPEND(append_diacritic(
+            chunker, (uint32_t)cell->plan->image_id_high_byte + 1));
+
+    return PLACEHOLDER_OK;
 }
 
 // Append user-provided formatting for a row or cell.
@@ -807,9 +834,12 @@ static PlaceholderError append_row_style(PlaceholderChunker *chunker,
             chunker, cell->placeholder, &cell->options->format,
             cell->placeholder->rect.start_col, cell->row));
 
-    if (!cell->options->grapheme_only)
+    // Note that replacement symbols are ordinary text, so they must not carry
+    // the automatic colors used as placeholder metadata.
+    if (!cell->options->grapheme_only && !cell_is_unrepresentable(cell)) {
         TRY_APPEND(
             append_id_colors(chunker, cell->placeholder, &cell->options->mode));
+    }
 
     return PLACEHOLDER_OK;
 }
@@ -831,18 +861,7 @@ static PlaceholderError append_cell(PlaceholderChunker *chunker, void *ctx) {
                                       &cell->options->format, cell->col,
                                       cell->row));
 
-    TRY_APPEND(
-        chunker_put_bytes(chunker, PLACEHOLDER_UTF8, PLACEHOLDER_UTF8_LEN));
-
-    if (diacritic_count >= 1)
-        TRY_APPEND(append_diacritic(chunker, cell->row + 1));
-    if (diacritic_count >= 2)
-        TRY_APPEND(append_diacritic(chunker, cell->col + 1));
-    if (diacritic_count >= 3)
-        TRY_APPEND(append_diacritic(
-            chunker, (uint32_t)cell->plan->image_id_high_byte + 1));
-
-    return PLACEHOLDER_OK;
+    return append_cell_symbol(chunker, cell, diacritic_count);
 }
 
 // Append positioning bytes for the current row boundary.
@@ -928,7 +947,7 @@ PlaceholderError placeholder_write(const Placeholder *placeholder,
         options = &default_options;
     }
 
-    error = validate_with_plan(placeholder, &options->mode, &plan);
+    error = validate_and_make_plan(placeholder, &options->mode, &plan);
     if (error != PLACEHOLDER_OK)
         return error;
 

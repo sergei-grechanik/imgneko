@@ -1314,6 +1314,107 @@ static int test_grapheme_only(TestContext *ctx) {
     return 0;
 }
 
+// Check coordinates beyond the row/column diacritic table. Cells that cannot
+// establish a usable row anchor use the configured replacement symbol, while
+// later columns keep only representable metadata.
+static int test_unrepresentable_coordinates(TestContext *ctx) {
+    Placeholder placeholder = {
+        .image_id = 7,
+        .placement_id = 0,
+        .rect = {.start_col = ROWCOLUMN_DIACRITIC_MAX - 1,
+                 .start_row = 0,
+                 .end_col = ROWCOLUMN_DIACRITIC_MAX + 1,
+                 .end_row = 1},
+    };
+    PlaceholderOptions options = placeholder_options_default();
+    char output[4096];
+    size_t len = 0;
+
+    PlaceholderError error = placeholder_write_to_buffer(
+        &placeholder, &options, output, sizeof(output), &len);
+    // clang-format off
+    if (expect_error(ctx, error, PLACEHOLDER_OK, "large trailing column") ||
+        expect_output(ctx, output, len, "large trailing column",
+            RESET, "\033[38;5;7m",
+            PLACE, d(1), d(ROWCOLUMN_DIACRITIC_MAX), PLACE, d(1),
+            RESET, "\n",
+            NULL))
+        return 1;
+    // clang-format on
+
+    placeholder.rect.start_col = ROWCOLUMN_DIACRITIC_MAX;
+    placeholder.rect.end_col = ROWCOLUMN_DIACRITIC_MAX + 2;
+    error = placeholder_write_to_buffer(&placeholder, &options, output,
+                                        sizeof(output), &len);
+    // clang-format off
+    if (expect_error(ctx, error, PLACEHOLDER_OK, "large first column") ||
+        expect_output(ctx, output, len, "large first column",
+            RESET, "□", "□", "\n",
+            NULL))
+        return 1;
+    // clang-format on
+
+    options.mode.unrepresentable_cell_symbol = NULL;
+    error = placeholder_write_to_buffer(&placeholder, &options, output,
+                                        sizeof(output), &len);
+    if (expect_error(ctx, error, PLACEHOLDER_UNREPRESENTABLE_CELL,
+                     "null large first column symbol"))
+        return 1;
+
+    placeholder.rect.start_col = 0;
+    placeholder.rect.end_col = 2;
+    placeholder.rect.start_row = ROWCOLUMN_DIACRITIC_MAX - 1;
+    placeholder.rect.end_row = ROWCOLUMN_DIACRITIC_MAX + 1;
+    options.mode.unrepresentable_cell_symbol = "□";
+    error = placeholder_write_to_buffer(&placeholder, &options, output,
+                                        sizeof(output), &len);
+    // clang-format off
+    if (expect_error(ctx, error, PLACEHOLDER_OK, "default large row symbol") ||
+        expect_output(ctx, output, len, "default large row symbol",
+            RESET, "\033[38;5;7m",
+            PLACE, d(ROWCOLUMN_DIACRITIC_MAX), d(1),
+            PLACE, d(ROWCOLUMN_DIACRITIC_MAX), d(2),
+            RESET, "\n",
+            RESET, "□", "□", "\n",
+            NULL))
+        return 1;
+    // clang-format on
+
+    placeholder.rect.start_row = ROWCOLUMN_DIACRITIC_MAX;
+    placeholder.rect.end_row = ROWCOLUMN_DIACRITIC_MAX + 1;
+    options.mode.unrepresentable_cell_symbol = "x";
+    error = placeholder_write_to_buffer(&placeholder, &options, output,
+                                        sizeof(output), &len);
+    if (expect_error(ctx, error, PLACEHOLDER_OK, "custom large row symbol") ||
+        expect_output(ctx, output, len, "custom large row symbol", RESET, "xx",
+                      "\n", NULL))
+        return 1;
+
+    placeholder.placement_id = 0x010203;
+    error = placeholder_write_to_buffer(&placeholder, &options, output,
+                                        sizeof(output), &len);
+    if (expect_error(ctx, error, PLACEHOLDER_OK,
+                     "large row symbol with placement ID") ||
+        expect_output(ctx, output, len, "large row symbol with placement ID",
+                      RESET, "xx", "\n", NULL))
+        return 1;
+    placeholder.placement_id = 0;
+
+    options.mode.unrepresentable_cell_symbol = "";
+    error = placeholder_write_to_buffer(&placeholder, &options, output,
+                                        sizeof(output), &len);
+    if (expect_error(ctx, error, PLACEHOLDER_OK, "empty large row symbol") ||
+        expect_output(ctx, output, len, "empty large row symbol", RESET, "\n",
+                      NULL))
+        return 1;
+
+    options.mode.unrepresentable_cell_symbol = NULL;
+    error = placeholder_write_to_buffer(&placeholder, &options, output,
+                                        sizeof(output), &len);
+    return expect_error(ctx, error, PLACEHOLDER_UNREPRESENTABLE_CELL,
+                        "null large row symbol");
+}
+
 // Check validation errors for every public invalid-input category.
 static int test_validation_errors(TestContext *ctx) {
     Placeholder placeholder = base_placeholder();
@@ -1420,22 +1521,28 @@ static int test_validation_errors(TestContext *ctx) {
     placeholder.rect.start_row = ROWCOLUMN_DIACRITIC_MAX;
     placeholder.rect.end_row = ROWCOLUMN_DIACRITIC_MAX + 1;
     if (expect_error(ctx, placeholder_validate(&placeholder, &mode),
-                     PLACEHOLDER_UNREPRESENTABLE_ROW, "large row"))
+                     PLACEHOLDER_OK, "large row"))
+        return 1;
+
+    mode.unrepresentable_cell_symbol = NULL;
+    if (expect_error(ctx, placeholder_validate(&placeholder, &mode),
+                     PLACEHOLDER_UNREPRESENTABLE_CELL,
+                     "large row null cell symbol"))
         return 1;
 
     placeholder = base_placeholder();
+    mode = placeholder_mode_default();
     placeholder.rect.start_col = ROWCOLUMN_DIACRITIC_MAX;
     placeholder.rect.end_col = ROWCOLUMN_DIACRITIC_MAX + 1;
     if (expect_error(ctx, placeholder_validate(&placeholder, &mode),
-                     PLACEHOLDER_UNREPRESENTABLE_COLUMN, "large first column"))
+                     PLACEHOLDER_OK, "large first column"))
         return 1;
 
     placeholder = base_placeholder();
     placeholder.rect.start_col = 0;
     placeholder.rect.end_col = ROWCOLUMN_DIACRITIC_MAX + 1;
     return expect_error(ctx, placeholder_validate(&placeholder, &mode),
-                        PLACEHOLDER_UNREPRESENTABLE_COLUMN,
-                        "large other column");
+                        PLACEHOLDER_OK, "large other column");
 }
 
 // Check exact output and writer-call boundaries for every chunk size up to the
@@ -3036,7 +3143,7 @@ static int test_error_strings(TestContext *ctx) {
         PLACEHOLDER_INVALID_RECTANGLE,
         PLACEHOLDER_INVALID_MODE,
         PLACEHOLDER_INCOMPLETE_FIRST_COLUMN,
-        PLACEHOLDER_UNREPRESENTABLE_ROW,
+        PLACEHOLDER_UNREPRESENTABLE_CELL,
         PLACEHOLDER_UNREPRESENTABLE_COLUMN,
         PLACEHOLDER_CHUNK_TOO_SMALL,
         PLACEHOLDER_FORMAT_FAILED,
@@ -3067,6 +3174,7 @@ int main(int argc, char **argv) {
         PREFIXED_TEST(test_positioners),
         PREFIXED_TEST(test_positioner_edge_cases),
         PREFIXED_TEST(test_grapheme_only),
+        PREFIXED_TEST(test_unrepresentable_coordinates),
         PREFIXED_TEST(test_validation_errors),
         PREFIXED_TEST(test_chunk_size_steps_exact),
         PREFIXED_TEST(test_row_format_chunk_size_steps_exact),

@@ -50,7 +50,7 @@ typedef enum PlaceholderError {
     PLACEHOLDER_INVALID_RECTANGLE,
     PLACEHOLDER_INVALID_MODE,
     PLACEHOLDER_INCOMPLETE_FIRST_COLUMN,
-    PLACEHOLDER_UNREPRESENTABLE_ROW,
+    PLACEHOLDER_UNREPRESENTABLE_CELL,
     PLACEHOLDER_UNREPRESENTABLE_COLUMN,
     PLACEHOLDER_CHUNK_TOO_SMALL,
     PLACEHOLDER_FORMAT_FAILED,
@@ -96,6 +96,11 @@ typedef struct PlaceholderMode {
     PlaceholderDiacriticLevel first_col_level;
     // Diacritics emitted for columns after the first column of each row.
     PlaceholderDiacriticLevel other_cols_level;
+    // Replacement bytes emitted for cells that cannot be represented safely.
+    // This covers unrepresentable rows and rows whose first rendered column
+    // cannot carry the required row metadata. NULL makes writes fail with
+    // PLACEHOLDER_UNREPRESENTABLE_CELL. The default is "□".
+    const char *unrepresentable_cell_symbol;
 } PlaceholderMode;
 
 // Zero-based terminal-cell rectangle. `end_col` and `end_row` are exclusive.
@@ -226,6 +231,7 @@ static inline PlaceholderMode placeholder_mode_default(void) {
         .skip_zero_placement_id = true,
         .first_col_level = PLACEHOLDER_DIACRITIC_ROW_COL_IDBYTE_IF_NONZERO,
         .other_cols_level = PLACEHOLDER_DIACRITIC_ROW_COL_IDBYTE_IF_NONZERO,
+        .unrepresentable_cell_symbol = "□",
     };
 }
 
@@ -376,7 +382,7 @@ static inline PlaceholderOptions placeholder_options_default(void) {
     };
 }
 
-// Validate placeholder geometry, IDs, mode, and representable coordinates.
+// Validate placeholder geometry, IDs, and mode.
 PlaceholderError placeholder_validate(const Placeholder *placeholder,
                                       const PlaceholderMode *mode);
 

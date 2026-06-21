@@ -38,12 +38,6 @@ check_exit_code 2 "$IMGNEKO" placeholder --id 1 --placement-id 0x1000000 \
 # CHECK-NEXT: {{^}}== invalid placement id =={{$}}
 # CHECK-NEXT: {{^}}error: invalid value for --placement-id: '0x1000000' (expected a value up to 16777215){{$}}
 
-echo '== invalid rectangle =='
-# Cover placeholder validation failures that occur after CLI option parsing.
-check_exit_code 2 "$IMGNEKO" placeholder --id 1 --rows 298 --cols 1
-# CHECK-NEXT: {{^}}== invalid rectangle =={{$}}
-# CHECK-NEXT: {{^}}error: invalid placeholder: unrepresentable row{{$}}
-
 echo '== invalid numeric options =='
 # Cover the custom unsigned-integer parser errors exposed by the placeholder
 # command.

@@ -271,6 +271,8 @@ static int run_placeholder_command(const PlaceholderCliOptions *options) {
 
     PlaceholderError error =
         placeholder_validate(&placeholder, &placeholder_options.mode);
+    // IMGNEKO_UNCOVERED_OK[5 lines]: CLI parsing and built-in modes produce
+    // valid placeholders before this defensive validation check.
     if (error != PLACEHOLDER_OK) {
         fprintf(stderr, "error: invalid placeholder: %s\n",
                 placeholder_error_string(error));

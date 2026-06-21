@@ -96,6 +96,29 @@ echo '== grapheme-only output =='
 # CHECK-NEXT: {{^}}[[ph(0, "0:19", 0x12345678)]]{{$}}
 # CHECK-NEXT: {{^}}[[ph(1, "0:19", 0x12345678)]]{{$}}
 
+echo '== out of range columns =='
+# Columns beyond the diacritic table stay visible and keep the row diacritic,
+# but drop the unrepresentable column metadata.
+"$IMGNEKO" placeholder --id 7 --place 299x1 --grapheme-only
+# CHECK-NEXT: {{^}}== out of range columns =={{$}}
+# CHECK-NEXT: {{^}}[[ph(0, "0:296")]][[ph(0)]][[ph(0)]]{{$}}
+
+echo '== out of range rows =='
+# Rows beyond the diacritic table use the default replacement symbol. Only the
+# final three rows are checked so the test stays readable.
+"$IMGNEKO" placeholder --id 7 --place 2x299 --grapheme-only | tail -n 3
+# CHECK-NEXT: {{^}}== out of range rows =={{$}}
+# CHECK-NEXT: {{^}}[[ph(296, "0:1")]]{{$}}
+# CHECK-NEXT: {{^}}□□{{$}}
+# CHECK-NEXT: {{^}}□□{{$}}
+
+echo '== out of range rows default color =='
+# Replacement symbols are ordinary text, so non-grapheme output must not apply
+# the image-ID foreground color or placement-ID underline color to them.
+"$IMGNEKO" placeholder --id 7 --placement-id 8 --place 2x299 | tail -n 1
+# CHECK-NEXT: {{^}}== out of range rows default color =={{$}}
+# CHECK-NEXT: {{^\x1b\[0m□□$}}
+
 echo '== image id high byte =='
 # Verify that the optional third placeholder diacritic is based only on the
 # high image ID byte while the SGR color still uses the low 24 bits.
