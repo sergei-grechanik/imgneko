@@ -25,6 +25,7 @@ echo '== placeholder help =='
 # CHECK-NEXT: {{^}}  -D, --diacritics MODE     Diacritic mode: minimal, default, or complete.{{$}}
 # CHECK-NEXT: {{^}}  --grapheme-only           Emit grapheme-only output without SGR colors.{{$}}
 # CHECK-NEXT: {{^}}  --bg BG                   Background color or pattern.{{$}}
+# CHECK-NEXT: {{^}}  --bg-raw STR              Raw background formatting escape sequence.{{$}}
 # CHECK-NEXT: {{^}}  -p, --place CxR           Placeholder size as COLSxROWS terminal cells.{{$}}
 # CHECK-NEXT: {{^}}  -r, --rows ROWS           Placeholder height in terminal cells.{{$}}
 # CHECK-NEXT: {{^}}  -c, --cols COLS           Placeholder width in terminal cells.{{$}}
@@ -165,6 +166,21 @@ echo '== background default =='
 "$IMGNEKO" placeholder --id 7 --place 1x1 --bg default
 # CHECK-NEXT: {{^}}== background default =={{$}}
 # CHECK-NEXT: {{^\x1b\[0m\x1b\[49m\x1b\[38;5;7m}}[[ph(0, 0)]]{{\x1b\[0m$}}
+
+echo '== background string literal =='
+# String literal backgrounds are decoded by the expression parser and emitted
+# as formatting bytes.
+"$IMGNEKO" placeholder --id 7 --place 1x1 --bg '"\x1b[48;5;42m"'
+# CHECK-NEXT: {{^}}== background string literal =={{$}}
+# CHECK-NEXT: {{^\x1b\[0m\x1b\[48;5;42m\x1b\[38;5;7m}}[[ph(0, 0)]]{{\x1b\[0m$}}
+
+echo '== background raw string =='
+# --bg-raw bypasses expression parsing, so an already-materialized escape
+# sequence is emitted as-is.
+raw_bg=$(printf '\033[48;5;43m')
+"$IMGNEKO" placeholder --id 7 --place 1x1 --bg-raw "$raw_bg"
+# CHECK-NEXT: {{^}}== background raw string =={{$}}
+# CHECK-NEXT: {{^\x1b\[0m\x1b\[48;5;43m\x1b\[38;5;7m}}[[ph(0, 0)]]{{\x1b\[0m$}}
 
 echo '== background checkerboard =='
 # Checkerboard alternates the two colors by cell using (col + row) parity.

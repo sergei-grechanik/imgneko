@@ -17,9 +17,9 @@
 #include "util/options.h"
 
 #define PLACEHOLDER_BG_FORMATS                                                 \
-    "default, INDEX, #rrggbb, rgb(r, g, b), checkerboard(bg, bg), "            \
-    "ch(bg, bg), hstripes(bg, bg), hs(bg, bg), vstripes(bg, bg), "             \
-    "or vs(bg, bg)"
+    "STRING, default, INDEX, #rrggbb, rgb(r, g, b), "                          \
+    "checkerboard(bg, bg), ch(bg, bg), hstripes(bg, bg), hs(bg, bg), "         \
+    "vstripes(bg, bg), or vs(bg, bg)"
 
 // Color representation accepted by the placeholder background CLI parser.
 typedef enum PlaceholderBgColorKind {
@@ -222,8 +222,11 @@ static bool bg_expr_parse_color(const Expr *expr, PlaceholderBgColor *out,
         return bg_expr_unexpected_error(expr, "identifier", error_out);
     case EXPR_HEX_INTEGER:
         return bg_expr_unexpected_error(expr, "hexadecimal integer", error_out);
+    // IMGNEKO_UNCOVERED_OK_START: String nodes become formatting strings before
+    // the color parser is called.
     case EXPR_STRING:
         return bg_expr_unexpected_error(expr, "string literal", error_out);
+        // IMGNEKO_UNCOVERED_OK_END
     // IMGNEKO_UNCOVERED_OK_START: expr_parse() returns only valid nodes on
     // success, and background parsing only evaluates successful parses.
     case EXPR_INVALID:
@@ -309,17 +312,21 @@ static int placeholder_bg_string_format_func(void *ctx,
     return (int)data->len;
 }
 
+// Create a static string format. The returned descriptor owns `data` and must
+// be released with placeholder_bg_format_deinit().
+static PlaceholderFormat placeholder_bg_format_new_string(String data) {
+    return (PlaceholderFormat){
+        .func = placeholder_bg_string_format_func,
+        .ctx = placeholder_bg_string_alloc(data),
+        .per_cell = false,
+    };
+}
+
 // Create a color format from a parsed color. The returned descriptor owns its
 // context and must be released with placeholder_bg_format_deinit().
 static PlaceholderFormat
 placeholder_bg_format_new_color(const PlaceholderBgColor *color) {
-    String *data = placeholder_bg_string_alloc(bg_color_to_string(color));
-
-    return (PlaceholderFormat){
-        .func = placeholder_bg_string_format_func,
-        .ctx = data,
-        .per_cell = false,
-    };
+    return placeholder_bg_format_new_string(bg_color_to_string(color));
 }
 
 // Return true when `func` uses a PlaceholderAlternatingFormat context.
@@ -432,9 +439,15 @@ cleanup:
     return ok;
 }
 
-// Parse either a recursive pattern or a solid color.
+// Parse either a raw formatting string, a recursive pattern, or a solid color.
 static bool bg_expr_parse_node(const Expr *expr, PlaceholderFormat *out,
                                String *error_out) {
+    if (expr->kind == EXPR_STRING) {
+        *out =
+            placeholder_bg_format_new_string(expr_string_literal_value(expr));
+        return true;
+    }
+
     if (expr->kind == EXPR_CALL) {
         static const PlaceholderBgFunction functions[] = {
             {.name = "checkerboard", .format = placeholder_format_checkerboard},
@@ -503,6 +516,19 @@ bool placeholder_bg_parse_option(void *value, const char *text, size_t text_len,
     if (!parse_bg(str_span(text, text_len), bg, error_out))
         return false;
 
+    return true;
+}
+
+bool placeholder_bg_parse_option_raw(void *value, const char *text,
+                                     size_t text_len, String *error_out) {
+    PlaceholderBg *bg = value;
+
+    if (text == NULL)
+        return opt_parse_error(error_out, "value is required");
+
+    placeholder_bg_clear_option(bg);
+    bg->root = placeholder_bg_format_alloc();
+    *bg->root = placeholder_bg_format_new_string(str_from_data(text, text_len));
     return true;
 }
 

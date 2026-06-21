@@ -28,6 +28,24 @@ static int parse_bg_or_fail(const char *subtest, const char *text,
     return 1;
 }
 
+// Render a parsed background format and compare its exact emitted bytes.
+static int expect_format_bytes(const char *subtest, PlaceholderFormat format,
+                               const char *expected) {
+    Placeholder placeholder = {0};
+    char out[64];
+    size_t expected_len = strlen(expected);
+
+    if (format.func == NULL)
+        return fail_message(subtest, "background has no formatter");
+
+    int len = format.func(format.ctx, &placeholder, /*col=*/0, /*row=*/0, out,
+                          sizeof(out));
+    if (len != (int)expected_len || memcmp(out, expected, expected_len) != 0)
+        return fail_message(subtest, "background emitted wrong bytes");
+
+    return 0;
+}
+
 // Verify that direct parser calls can omit the optional diagnostic sink.
 static int test_parse_without_error_sink(TestContext *ctx) {
     PlaceholderBg bg = {0};
@@ -36,6 +54,8 @@ static int test_parse_without_error_sink(TestContext *ctx) {
         return fail_message(ctx->test_name, "empty background parsed");
     if (placeholder_bg_parse_option(&bg, "!", 1, NULL))
         return fail_message(ctx->test_name, "malformed background parsed");
+    if (placeholder_bg_parse_option_raw(&bg, NULL, 0, NULL))
+        return fail_message(ctx->test_name, "missing raw background parsed");
 
     placeholder_bg_clear_option(&bg);
     return 0;
@@ -104,12 +124,43 @@ cleanup:
     return status;
 }
 
+// String-literal backgrounds are expression strings, while raw strings keep the
+// exact bytes passed by the CLI option parser.
+static int test_string_backgrounds(TestContext *ctx) {
+    const char *subtest = ctx->test_name;
+    PlaceholderBg bg = {0};
+    int status = 0;
+
+    status = parse_bg_or_fail(subtest, "\"\\x1b[48;5;42m\"", &bg);
+    if (status != 0)
+        goto cleanup;
+
+    PlaceholderFormat format = placeholder_bg_to_format(&bg);
+    status = expect_format_bytes(subtest, format, "\033[48;5;42m");
+    if (status != 0)
+        goto cleanup;
+
+    const char *raw = "\\x1b[48;5;42m";
+    if (!placeholder_bg_parse_option_raw(&bg, raw, strlen(raw), NULL)) {
+        status = fail_message(subtest, "raw background did not parse");
+        goto cleanup;
+    }
+
+    format = placeholder_bg_to_format(&bg);
+    status = expect_format_bytes(subtest, format, raw);
+
+cleanup:
+    placeholder_bg_clear_option(&bg);
+    return status;
+}
+
 // Register and run every placeholder background subtest.
 int main(int argc, char **argv) {
     const Subtest subtests[] = {
         PREFIXED_TEST(test_parse_without_error_sink),
         PREFIXED_TEST(test_empty_background_format),
         PREFIXED_TEST(test_copy_recursive_background),
+        PREFIXED_TEST(test_string_backgrounds),
     };
 
     return run_subtests(argc, argv, subtests, ARRAY_SIZE(subtests));

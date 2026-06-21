@@ -176,6 +176,11 @@ static bool validate_placement_id(const void *value, String *error_out) {
                  .clear = placeholder_bg_clear_option,                         \
                  .copy = placeholder_bg_copy_option, .cli = "--bg BG",         \
                  .descr = "Background color or pattern."))                     \
+    X(S, bg_raw, OptPlaceholderBg,                                             \
+      OPT_CUSTOM(.parse = placeholder_bg_parse_option_raw,                     \
+                 .clear = placeholder_bg_clear_option,                         \
+                 .copy = placeholder_bg_copy_option, .cli = "--bg-raw STR",    \
+                 .descr = "Raw background formatting escape sequence."))       \
     X(S, place, OptPlaceSize,                                                  \
       OPT_CUSTOM(.parse = parse_place_option, .cli = "-p --place CxR",         \
                  .descr = "Placeholder size as COLSxROWS terminal cells."))    \
@@ -239,6 +244,11 @@ static int run_placeholder_command(const PlaceholderCliOptions *options) {
         return 2;
     }
 
+    if (options->bg.is_set && options->bg_raw.is_set) {
+        fprintf(stderr, "error: --bg cannot be used with --bg-raw\n");
+        return 2;
+    }
+
     uint32_t cols = 0;
     uint32_t rows = 0;
     if (options->place.is_set) {
@@ -264,9 +274,13 @@ static int run_placeholder_command(const PlaceholderCliOptions *options) {
     PlaceholderOptions placeholder_options = placeholder_options_default();
     if (options->diacritics.is_set)
         placeholder_options.mode = options->diacritics.value;
-    if (options->bg.is_set)
+    if (options->bg.is_set) {
         placeholder_options.format =
             placeholder_bg_to_format(&options->bg.value);
+    } else if (options->bg_raw.is_set) {
+        placeholder_options.format =
+            placeholder_bg_to_format(&options->bg_raw.value);
+    }
     placeholder_options.grapheme_only = options->grapheme_only.value;
 
     PlaceholderError error =
