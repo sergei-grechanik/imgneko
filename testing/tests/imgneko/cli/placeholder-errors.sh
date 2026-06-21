@@ -244,22 +244,30 @@ check_exit_code 2 "$IMGNEKO" placeholder --id 1 --place 4294967296x1
 # CHECK-NEXT: {{^}}error: invalid value for --place: '4294967296x1' (expected CxR with positive base-10 unsigned integers){{$}}
 
 echo '== broken stdout =='
-# Close the only FIFO reader before the child writes so imgneko reports a write
-# failure instead of silently succeeding.
 broken_stdout_fifo=$IMGNEKO_TEST_OUTPUT_DIR/imgneko-broken-stdout-fifo
+broken_stdout_ready=$IMGNEKO_TEST_OUTPUT_DIR/imgneko-broken-stdout-ready
+broken_stdout_status=$IMGNEKO_TEST_OUTPUT_DIR/imgneko-broken-stdout-status
 mkfifo "$broken_stdout_fifo"
 set +e
 (
     trap '' PIPE
-    "$IMGNEKO" placeholder --id 1 --rows 1 --cols 1 \
-        >"$broken_stdout_fifo"
-    printf 'status=%d\n' "$?"
+    (
+        # Open the FIFO before waiting so the parent can close the only reader
+        # before imgneko writes to stdout.
+        while [ ! -f "$broken_stdout_ready" ]; do :; done
+        "$IMGNEKO" placeholder --id 1 --rows 1 --cols 1
+        printf '%d\n' "$?" >"$broken_stdout_status"
+    ) >"$broken_stdout_fifo"
 ) &
 broken_stdout_pid=$!
+# Unblock the writer's FIFO open, close the reader, and only then let imgneko
+# write the placeholder. This avoids racing a small successful FIFO write.
 exec 9<"$broken_stdout_fifo"
 exec 9<&-
+: >"$broken_stdout_ready"
 wait "$broken_stdout_pid"
 set -e
+printf 'status=%d\n' "$(cat "$broken_stdout_status")"
 # CHECK-NEXT: {{^}}== broken stdout =={{$}}
 # CHECK-NEXT: {{^}}error: failed to write placeholder: write failed{{$}}
 # CHECK-NEXT: {{^}}status=1{{$}}
