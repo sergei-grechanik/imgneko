@@ -26,9 +26,10 @@ typedef struct PlaceholderBg {
 // - `INDEX`: 256-color palette index, 0 through 255.
 // - `#rrggbb`: web-style RGB hex color.
 // - `rgb(r, g, b)`: decimal 8-bit RGB channels.
-// - `checkerboard(bg, bg)`: two backgrounds alternated by cell parity.
-// - `hstripes(bg, bg)`: two backgrounds alternated by row.
-// - `vstripes(bg, bg)`: two backgrounds alternated by column.
+// - `checkerboard(bg, bg)` or `ch(bg, bg)`: two backgrounds alternated by
+//   cell parity.
+// - `hstripes(bg, bg)` or `hs(bg, bg)`: two backgrounds alternated by row.
+// - `vstripes(bg, bg)` or `vs(bg, bg)`: two backgrounds alternated by column.
 //
 // Pattern arguments can be nested, for example:
 // `vstripes(hstripes(#010203, 4), rgb(5, 6, 7))`.

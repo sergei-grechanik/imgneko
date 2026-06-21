@@ -18,7 +18,8 @@
 
 #define PLACEHOLDER_BG_FORMATS                                                 \
     "INDEX, #rrggbb, rgb(r, g, b), checkerboard(bg, bg), "                     \
-    "hstripes(bg, bg), or vstripes(bg, bg)"
+    "ch(bg, bg), hstripes(bg, bg), hs(bg, bg), vstripes(bg, bg), "             \
+    "or vs(bg, bg)"
 
 // Color representation accepted by the placeholder background CLI parser.
 typedef enum PlaceholderBgColorKind {
@@ -429,9 +430,12 @@ static bool bg_expr_parse_node(const Expr *expr, PlaceholderFormat *out,
     if (expr->kind == EXPR_CALL) {
         static const PlaceholderBgFunction functions[] = {
             {.name = "checkerboard", .format = placeholder_format_checkerboard},
+            {.name = "ch", .format = placeholder_format_checkerboard},
             {.name = "hstripes",
              .format = placeholder_format_horizontal_stripes},
+            {.name = "hs", .format = placeholder_format_horizontal_stripes},
             {.name = "vstripes", .format = placeholder_format_vertical_stripes},
+            {.name = "vs", .format = placeholder_format_vertical_stripes},
         };
 
         for (size_t i = 0; i < ARRAY_SIZE(functions); ++i) {

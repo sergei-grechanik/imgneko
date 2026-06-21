@@ -180,6 +180,14 @@ echo '== nested background with solid stripe =='
 # CHECK-NEXT: {{^\x1b\[0m\x1b\[38;5;7m\x1b\[48;5;1m}}[[ph(2, 0)]]{{\x1b\[48;5;2m}}[[ph(2, 1)]]{{\x1b\[48;5;1m}}[[ph(2, 2)]]{{\x1b\[48;5;2m}}[[ph(2, 3)]]{{\x1b\[0m$}}
 # CHECK-NEXT: {{^\x1b\[0m\x1b\[38;5;7m\x1b\[48;5;5m}}[[ph(3, 0)]]{{\x1b\[48;5;5m}}[[ph(3, 1)]]{{\x1b\[48;5;5m}}[[ph(3, 2)]]{{\x1b\[48;5;5m}}[[ph(3, 3)]]{{\x1b\[0m$}}
 
+echo '== background pattern aliases =='
+# ch(), hs(), and vs() should behave like checkerboard(), hstripes(), and
+# vstripes(), including when they are nested.
+"$IMGNEKO" placeholder --id 7 --place 2x2 --bg 'ch(hs(1, 2), vs(3, 4))'
+# CHECK-NEXT: {{^}}== background pattern aliases =={{$}}
+# CHECK-NEXT: {{^\x1b\[0m\x1b\[38;5;7m\x1b\[48;5;1m}}[[ph(0, 0)]]{{\x1b\[48;5;4m}}[[ph(0, 1)]]{{\x1b\[0m$}}
+# CHECK-NEXT: {{^\x1b\[0m\x1b\[38;5;7m\x1b\[48;5;3m}}[[ph(1, 0)]]{{\x1b\[48;5;2m}}[[ph(1, 1)]]{{\x1b\[0m$}}
+
 echo '== requested dimensions =='
 "$IMGNEKO" placeholder --id 1234 --rows 10 --cols 20
 # CHECK-NEXT: {{^}}== requested dimensions =={{$}}

@@ -98,7 +98,7 @@ check_exit_code 2 "$IMGNEKO" placeholder --id 1 --rows 1 --cols 1 \
 echo '== invalid background options =='
 check_exit_code 2 "$IMGNEKO" placeholder --id 1 --rows 1 --cols 1 --bg ""
 # CHECK-NEXT: {{^}}== invalid background options =={{$}}
-# CHECK-NEXT: {{^}}error: invalid value for --bg: '' (expected INDEX, #rrggbb, rgb(r, g, b), checkerboard(bg, bg), hstripes(bg, bg), or vstripes(bg, bg)){{$}}
+# CHECK-NEXT: {{^}}error: invalid value for --bg: '' (expected INDEX, #rrggbb, rgb(r, g, b), checkerboard(bg, bg), ch(bg, bg), hstripes(bg, bg), hs(bg, bg), vstripes(bg, bg), or vs(bg, bg)){{$}}
 
 check_exit_code 2 "$IMGNEKO" placeholder --id 1 --rows 1 --cols 1 --bg 256
 # CHECK-NEXT: {{^}}error: invalid value for --bg: '256' (background color index must be a decimal integer from 0 to 255){{$}}
@@ -115,15 +115,15 @@ check_exit_code 2 "$IMGNEKO" placeholder --id 1 --rows 1 --cols 1 --bg '!'
 
 check_exit_code 2 "$IMGNEKO" placeholder --id 1 --rows 1 --cols 1 \
     --bg abcdefg
-# CHECK-NEXT: {{^}}error: invalid value for --bg: 'abcdefg' (unexpected identifier 'abcdefg'; expected INDEX, #rrggbb, rgb(r, g, b), checkerboard(bg, bg), hstripes(bg, bg), or vstripes(bg, bg)){{$}}
+# CHECK-NEXT: {{^}}error: invalid value for --bg: 'abcdefg' (unexpected identifier 'abcdefg'; expected INDEX, #rrggbb, rgb(r, g, b), checkerboard(bg, bg), ch(bg, bg), hstripes(bg, bg), hs(bg, bg), vstripes(bg, bg), or vs(bg, bg)){{$}}
 
 check_exit_code 2 "$IMGNEKO" placeholder --id 1 --rows 1 --cols 1 \
     --bg 0x1
-# CHECK-NEXT: {{^}}error: invalid value for --bg: '0x1' (unexpected hexadecimal integer '0x1'; expected INDEX, #rrggbb, rgb(r, g, b), checkerboard(bg, bg), hstripes(bg, bg), or vstripes(bg, bg)){{$}}
+# CHECK-NEXT: {{^}}error: invalid value for --bg: '0x1' (unexpected hexadecimal integer '0x1'; expected INDEX, #rrggbb, rgb(r, g, b), checkerboard(bg, bg), ch(bg, bg), hstripes(bg, bg), hs(bg, bg), vstripes(bg, bg), or vs(bg, bg)){{$}}
 
 check_exit_code 2 "$IMGNEKO" placeholder --id 1 --rows 1 --cols 1 \
     --bg '"x"'
-# CHECK-NEXT: {{^}}error: invalid value for --bg: '"x"' (unexpected string literal '"x"'; expected INDEX, #rrggbb, rgb(r, g, b), checkerboard(bg, bg), hstripes(bg, bg), or vstripes(bg, bg)){{$}}
+# CHECK-NEXT: {{^}}error: invalid value for --bg: '"x"' (unexpected string literal '"x"'; expected INDEX, #rrggbb, rgb(r, g, b), checkerboard(bg, bg), ch(bg, bg), hstripes(bg, bg), hs(bg, bg), vstripes(bg, bg), or vs(bg, bg)){{$}}
 
 check_exit_code 2 "$IMGNEKO" placeholder --id 1 --rows 1 --cols 1 \
     --bg '#12345'
@@ -139,7 +139,7 @@ check_exit_code 2 "$IMGNEKO" placeholder --id 1 --rows 1 --cols 1 \
 
 check_exit_code 2 "$IMGNEKO" placeholder --id 1 --rows 1 --cols 1 \
     --bg 'rgbx(1,2,3)'
-# CHECK-NEXT: {{^}}error: invalid value for --bg: 'rgbx(1,2,3)' (expected INDEX, #rrggbb, rgb(r, g, b), checkerboard(bg, bg), hstripes(bg, bg), or vstripes(bg, bg)){{$}}
+# CHECK-NEXT: {{^}}error: invalid value for --bg: 'rgbx(1,2,3)' (expected INDEX, #rrggbb, rgb(r, g, b), checkerboard(bg, bg), ch(bg, bg), hstripes(bg, bg), hs(bg, bg), vstripes(bg, bg), or vs(bg, bg)){{$}}
 
 check_exit_code 2 "$IMGNEKO" placeholder --id 1 --rows 1 --cols 1 \
     --bg 'rgb(1,2,3x'
@@ -215,11 +215,11 @@ check_exit_code 2 "$IMGNEKO" placeholder --id 1 --rows 1 --cols 1 \
 
 check_exit_code 2 "$IMGNEKO" placeholder --id 1 --rows 1 --cols 1 \
     --bg 'checkerboard(x,1)'
-# CHECK-NEXT: {{^}}error: invalid value for --bg: 'checkerboard(x,1)' (unexpected identifier 'x'; expected INDEX, #rrggbb, rgb(r, g, b), checkerboard(bg, bg), hstripes(bg, bg), or vstripes(bg, bg)){{$}}
+# CHECK-NEXT: {{^}}error: invalid value for --bg: 'checkerboard(x,1)' (unexpected identifier 'x'; expected INDEX, #rrggbb, rgb(r, g, b), checkerboard(bg, bg), ch(bg, bg), hstripes(bg, bg), hs(bg, bg), vstripes(bg, bg), or vs(bg, bg)){{$}}
 
 check_exit_code 2 "$IMGNEKO" placeholder --id 1 --rows 1 --cols 1 \
     --bg 'checkerboard(1,x)'
-# CHECK-NEXT: {{^}}error: invalid value for --bg: 'checkerboard(1,x)' (unexpected identifier 'x'; expected INDEX, #rrggbb, rgb(r, g, b), checkerboard(bg, bg), hstripes(bg, bg), or vstripes(bg, bg)){{$}}
+# CHECK-NEXT: {{^}}error: invalid value for --bg: 'checkerboard(1,x)' (unexpected identifier 'x'; expected INDEX, #rrggbb, rgb(r, g, b), checkerboard(bg, bg), ch(bg, bg), hstripes(bg, bg), hs(bg, bg), vstripes(bg, bg), or vs(bg, bg)){{$}}
 
 check_exit_code 2 "$IMGNEKO" placeholder --id 1 --rows 1 --cols 1 \
     --bg 'checkerboard(256,1)'
