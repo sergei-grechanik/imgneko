@@ -3,6 +3,7 @@
 $(BUILD_DIR)/obj/src/cli/placeholder_bg.o: \
 	$(ROOT_DIR)/src/cli/placeholder_bg.c \
 	$(ROOT_DIR)/src/cli/placeholder_bg.h \
+	$(ROOT_DIR)/src/cli/placeholder_bg_file.h \
 	$(ROOT_DIR)/src/imgneko/placeholder.h \
 	$(ROOT_DIR)/src/imgneko/writer.h \
 	$(ROOT_DIR)/src/util/array.h \
@@ -10,6 +11,14 @@ $(BUILD_DIR)/obj/src/cli/placeholder_bg.o: \
 	$(ROOT_DIR)/src/util/error.h \
 	$(ROOT_DIR)/src/util/expr.h \
 	$(ROOT_DIR)/src/util/options.h \
+	$(ROOT_DIR)/src/util/string.h
+$(BUILD_DIR)/obj/src/cli/placeholder_bg_file.o: \
+	$(ROOT_DIR)/src/cli/placeholder_bg_file.c \
+	$(ROOT_DIR)/src/cli/placeholder_bg_file.h \
+	$(ROOT_DIR)/src/imgneko/placeholder.h \
+	$(ROOT_DIR)/src/imgneko/writer.h \
+	$(ROOT_DIR)/src/util/array.h \
+	$(ROOT_DIR)/src/util/file.h \
 	$(ROOT_DIR)/src/util/string.h
 $(BUILD_DIR)/obj/src/imgneko/placeholder.o: \
 	$(ROOT_DIR)/src/imgneko/placeholder.c \
@@ -96,10 +105,12 @@ $(BUILD_DIR)/obj/test-bin/runner/spaced-subtests.c.bin: \
 	$(ROOT_DIR)/testing/tests/runner/spaced-subtests.c
 $(BUILD_DIR)/obj/test-bin/unit/cli/placeholder_bg.c.bin: \
 	$(ROOT_DIR)/src/cli/placeholder_bg.h \
+	$(ROOT_DIR)/src/cli/placeholder_bg_file.h \
 	$(ROOT_DIR)/src/imgneko/placeholder.h \
 	$(ROOT_DIR)/src/imgneko/writer.h \
 	$(ROOT_DIR)/src/util/array.h \
 	$(ROOT_DIR)/src/util/common.h \
+	$(ROOT_DIR)/src/util/path.h \
 	$(ROOT_DIR)/src/util/string.h \
 	$(ROOT_DIR)/testing/support/test_main.h \
 	$(ROOT_DIR)/testing/tests/unit/cli/placeholder_bg.c

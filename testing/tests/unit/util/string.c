@@ -190,6 +190,21 @@ static int test_str_span_slice_ops(TestContext *ctx) {
     return expect_span_eq(name, str_span_take_back(span, 0), STR(""));
 }
 
+// Formatted string creation should return an owned string with the exact
+// printf result.
+static int test_printf(TestContext *ctx) {
+    const char *name = ctx->test_name;
+    String string = str_empty;
+    int status = 0;
+
+    string = str_printf("%s:%03d:%s", "value", 7, "abcdefghijklmnopqrstuvwxyz");
+    status = expect_string_eq(name, string.cstr, string.len,
+                              STR("value:007:abcdefghijklmnopqrstuvwxyz"));
+
+    str_free(string);
+    return status;
+}
+
 static int test_empty_and_reserve(TestContext *ctx) {
     const char *name = ctx->test_name;
     String string = str_empty;
@@ -865,6 +880,7 @@ int main(int argc, char **argv) {
         PREFIXED_TEST(test_str_span_view),
         PREFIXED_TEST(test_str_span_trim),
         PREFIXED_TEST(test_str_span_slice_ops),
+        PREFIXED_TEST(test_printf),
         PREFIXED_TEST(test_empty_and_reserve),
         PREFIXED_TEST(test_empty_states),
         PREFIXED_TEST(test_make_empty_string_array),

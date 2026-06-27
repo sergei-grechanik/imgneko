@@ -4,6 +4,7 @@
 #define UTIL_STRING_H
 
 #include <assert.h>
+#include <stdarg.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <string.h>
@@ -480,5 +481,13 @@ DEFINE_ARRAY_TYPE(StringArray, String)
 
 // Free a StringArray and each owned string it contains.
 void str_array_free(StringArray *strings);
+
+// Return a new printf-formatted string. The caller frees the result with
+// str_free.
+String str_vprintf(const char *format, va_list args);
+
+// Return a new printf-formatted string. The caller frees the result with
+// str_free.
+String str_printf(const char *format, ...);
 
 #endif

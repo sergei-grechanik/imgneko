@@ -26,6 +26,7 @@ typedef struct PlaceholderBg {
 // - `default`: reset to the terminal default background.
 // - INDEX: 256-color palette index, 0 through 255.
 // - STRING_LITERAL: a string containing the formatting escape sequence.
+// - `file(STRING_LITERAL)`: load a cell formatting pattern from a file path.
 // - `#rrggbb`: web-style RGB hex color.
 // - `rgb(r, g, b)`: decimal 8-bit RGB channels.
 // - `checkerboard(bg, bg)` or `ch(bg, bg)`: two backgrounds alternated by
@@ -42,6 +43,11 @@ bool placeholder_bg_parse_option(void *value, const char *text, size_t text_len,
 // parsing or escape interpretation.
 bool placeholder_bg_parse_option_raw(void *value, const char *text,
                                      size_t text_len, String *error_out);
+
+// Parse a raw file path as a background formatting file without expression
+// parsing or escape interpretation.
+bool placeholder_bg_parse_option_file(void *value, const char *text,
+                                      size_t text_len, String *error_out);
 
 // Deep-copy PlaceholderBg.
 void placeholder_bg_copy_option(void *dst_value, const void *src_value);

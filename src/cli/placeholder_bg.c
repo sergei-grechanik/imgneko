@@ -10,6 +10,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "cli/placeholder_bg_file.h"
 #include "util/array.h"
 #include "util/common.h"
 #include "util/error.h"
@@ -17,7 +18,7 @@
 #include "util/options.h"
 
 #define PLACEHOLDER_BG_FORMATS                                                 \
-    "STRING, default, INDEX, #rrggbb, rgb(r, g, b), "                          \
+    "STRING, file(STRING), default, INDEX, #rrggbb, rgb(r, g, b), "            \
     "checkerboard(bg, bg), ch(bg, bg), hstripes(bg, bg), hs(bg, bg), "         \
     "vstripes(bg, bg), or vs(bg, bg)"
 
@@ -40,30 +41,28 @@ typedef struct PlaceholderBgColor {
     uint8_t b;
 } PlaceholderBgColor;
 
-typedef PlaceholderFormat (*PlaceholderBgFormatConstructor)(
+typedef PlaceholderFormat (*PlaceholderBgAltFormatConstructor)(
     PlaceholderAlternatingFormat *format);
 
 // Descriptor for two-color background functions sharing the same grammar.
-typedef struct PlaceholderBgFunction {
+typedef struct PlaceholderBgAltFunction {
     const char *name;
-    PlaceholderBgFormatConstructor format;
-} PlaceholderBgFunction;
+    PlaceholderBgAltFormatConstructor format;
+} PlaceholderBgAltFunction;
 
 // Store a formatted parser error in `error_out` and return false.
 static bool placeholder_bg_parse_errorf(String *error_out, const char *format,
                                         ...) {
-    char message[256];
-    va_list args;
-
     if (error_out == NULL)
         return false;
 
+    va_list args;
     va_start(args, format);
-    vsnprintf(message, sizeof(message), format, args);
+    String message = str_vprintf(format, args);
     va_end(args);
 
     str_free(*error_out);
-    *error_out = str_from_cstr(message);
+    *error_out = message;
     return false;
 }
 
@@ -347,6 +346,8 @@ static void placeholder_bg_format_deinit(PlaceholderFormat *format) {
         String *data = format->ctx;
         str_free(*data);
         free(data);
+    } else if (format->func == placeholder_bg_file_format_func) {
+        placeholder_bg_file_destroy(format->ctx);
     } else {
         require(placeholder_bg_is_alternating_func(format->func),
                 "background format has an unexpected function");
@@ -382,6 +383,11 @@ static PlaceholderFormat placeholder_bg_format_copy(PlaceholderFormat src) {
         return copy;
     }
 
+    if (src.func == placeholder_bg_file_format_func) {
+        copy.ctx = placeholder_bg_file_copy(src.ctx);
+        return copy;
+    }
+
     require(placeholder_bg_is_alternating_func(src.func),
             "background format has an unexpected function");
 
@@ -400,11 +406,36 @@ static PlaceholderFormat placeholder_bg_format_copy(PlaceholderFormat src) {
 static bool bg_expr_parse_node(const Expr *expr, PlaceholderFormat *out,
                                String *error_out);
 
-// Parse a two-operand pattern function.
-static bool bg_expr_parse_pattern_function(const Expr *expr,
-                                           const PlaceholderBgFunction *fn,
-                                           PlaceholderFormat *out,
-                                           String *error_out) {
+// Parse a `file("path")` call into a file-backed background format.
+static bool bg_expr_parse_file_function(const Expr *expr,
+                                        PlaceholderFormat *out,
+                                        String *error_out) {
+    if (expr->args.size != 1) {
+        return placeholder_bg_parse_errorf(
+            error_out, "file() expects 1 argument, got %zu", expr->args.size);
+    }
+
+    const Expr *path_expr = expr->args.data[0];
+    if (path_expr->kind != EXPR_STRING) {
+        return placeholder_bg_parse_errorf(
+            error_out, "file() argument must be a string literal");
+    }
+
+    String path = expr_string_literal_value(path_expr);
+    PlaceholderBgFile *file = placeholder_bg_file_load(path.cstr, error_out);
+    str_free(path);
+    if (file == NULL)
+        return false;
+
+    *out = placeholder_bg_file_format(file);
+    return true;
+}
+
+// Parse a two-operand alternating pattern function.
+static bool
+bg_expr_parse_alt_pattern_function(const Expr *expr,
+                                   const PlaceholderBgAltFunction *fn,
+                                   PlaceholderFormat *out, String *error_out) {
     PlaceholderFormat first = placeholder_format_none();
     PlaceholderFormat second = placeholder_format_none();
     PlaceholderAlternatingFormat *alternating = NULL;
@@ -449,7 +480,10 @@ static bool bg_expr_parse_node(const Expr *expr, PlaceholderFormat *out,
     }
 
     if (expr->kind == EXPR_CALL) {
-        static const PlaceholderBgFunction functions[] = {
+        if (expr_is_call(expr, "file"))
+            return bg_expr_parse_file_function(expr, out, error_out);
+
+        static const PlaceholderBgAltFunction alt_functions[] = {
             {.name = "checkerboard", .format = placeholder_format_checkerboard},
             {.name = "ch", .format = placeholder_format_checkerboard},
             {.name = "hstripes",
@@ -459,10 +493,11 @@ static bool bg_expr_parse_node(const Expr *expr, PlaceholderFormat *out,
             {.name = "vs", .format = placeholder_format_vertical_stripes},
         };
 
-        for (size_t i = 0; i < ARRAY_SIZE(functions); ++i) {
-            const PlaceholderBgFunction *fn = &functions[i];
+        for (size_t i = 0; i < ARRAY_SIZE(alt_functions); ++i) {
+            const PlaceholderBgAltFunction *fn = &alt_functions[i];
             if (expr_is_call(expr, fn->name))
-                return bg_expr_parse_pattern_function(expr, fn, out, error_out);
+                return bg_expr_parse_alt_pattern_function(expr, fn, out,
+                                                          error_out);
         }
     }
 
@@ -529,6 +564,25 @@ bool placeholder_bg_parse_option_raw(void *value, const char *text,
     placeholder_bg_clear_option(bg);
     bg->root = placeholder_bg_format_alloc();
     *bg->root = placeholder_bg_format_new_string(str_from_data(text, text_len));
+    return true;
+}
+
+bool placeholder_bg_parse_option_file(void *value, const char *text,
+                                      size_t text_len, String *error_out) {
+    PlaceholderBg *bg = value;
+
+    if (text == NULL)
+        return opt_parse_error(error_out, "value is required");
+
+    String path = str_from_data(text, text_len);
+    PlaceholderBgFile *file = placeholder_bg_file_load(path.cstr, error_out);
+    str_free(path);
+    if (file == NULL)
+        return false;
+
+    placeholder_bg_clear_option(bg);
+    bg->root = placeholder_bg_format_alloc();
+    *bg->root = placeholder_bg_file_format(file);
     return true;
 }
 

@@ -26,6 +26,7 @@ echo '== placeholder help =='
 # CHECK-NEXT: {{^}}  --grapheme-only           Emit grapheme-only output without SGR colors.{{$}}
 # CHECK-NEXT: {{^}}  --bg BG                   Background color or pattern.{{$}}
 # CHECK-NEXT: {{^}}  --bg-raw STR              Raw background formatting escape sequence.{{$}}
+# CHECK-NEXT: {{^}}  --bg-file PATH            Raw background formatting file path.{{$}}
 # CHECK-NEXT: {{^}}  -p, --place CxR           Placeholder size as COLSxROWS terminal cells.{{$}}
 # CHECK-NEXT: {{^}}  -r, --rows ROWS           Placeholder height in terminal cells.{{$}}
 # CHECK-NEXT: {{^}}  -c, --cols COLS           Placeholder width in terminal cells.{{$}}
@@ -181,6 +182,35 @@ raw_bg=$(printf '\033[48;5;43m')
 "$IMGNEKO" placeholder --id 7 --place 1x1 --bg-raw "$raw_bg"
 # CHECK-NEXT: {{^}}== background raw string =={{$}}
 # CHECK-NEXT: {{^\x1b\[0m\x1b\[48;5;43m\x1b\[38;5;7m}}[[ph(0, 0)]]{{\x1b\[0m$}}
+
+echo '== background file expression =='
+# File-backed backgrounds repeat rows modulo the file height, let empty cells
+# inherit the sequence to their left, and leak the final sequence to the right.
+bg_file=$IMGNEKO_TEST_OUTPUT_DIR/bg-pattern
+printf '\033[48;5;11m  \033[48;5;12m\n\033[48;5;13m \033[48;5;14m\n' >"$bg_file"
+"$IMGNEKO" placeholder --id 7 --place 4x3 --bg "file(\"$bg_file\")"
+# CHECK-NEXT: {{^}}== background file expression =={{$}}
+# CHECK-NEXT: {{^\x1b\[0m\x1b\[38;5;7m\x1b\[48;5;11m}}[[ph(0, 0)]]{{\x1b\[48;5;11m}}[[ph(0, 1)]]{{\x1b\[48;5;12m}}[[ph(0, 2)]]{{\x1b\[48;5;12m}}[[ph(0, 3)]]{{\x1b\[0m$}}
+# CHECK-NEXT: {{^\x1b\[0m\x1b\[38;5;7m\x1b\[48;5;13m}}[[ph(1, 0)]]{{\x1b\[48;5;14m}}[[ph(1, 1)]]{{\x1b\[48;5;14m}}[[ph(1, 2)]]{{\x1b\[48;5;14m}}[[ph(1, 3)]]{{\x1b\[0m$}}
+# CHECK-NEXT: {{^\x1b\[0m\x1b\[38;5;7m\x1b\[48;5;11m}}[[ph(2, 0)]]{{\x1b\[48;5;11m}}[[ph(2, 1)]]{{\x1b\[48;5;12m}}[[ph(2, 2)]]{{\x1b\[48;5;12m}}[[ph(2, 3)]]{{\x1b\[0m$}}
+
+echo '== background file raw option =='
+# --bg-file uses the given path directly instead of parsing it as an expression
+# string literal.
+"$IMGNEKO" placeholder --id 7 --place 1x1 --bg-file "$bg_file"
+# CHECK-NEXT: {{^}}== background file raw option =={{$}}
+# CHECK-NEXT: {{^\x1b\[0m\x1b\[38;5;7m\x1b\[48;5;11m}}[[ph(0, 0)]]{{\x1b\[0m$}}
+
+echo '== background file row format =='
+# A file with one sequence per line is emitted as row formatting, so the row
+# background appears before the automatic image-ID foreground color.
+row_bg_file=$IMGNEKO_TEST_OUTPUT_DIR/bg-row-pattern
+printf '\033[48;5;21m\n\033[48;5;22m\n' >"$row_bg_file"
+"$IMGNEKO" placeholder --id 7 --place 2x3 --bg-file "$row_bg_file"
+# CHECK-NEXT: {{^}}== background file row format =={{$}}
+# CHECK-NEXT: {{^\x1b\[0m\x1b\[48;5;21m\x1b\[38;5;7m}}[[ph(0, "0:1")]]{{\x1b\[0m$}}
+# CHECK-NEXT: {{^\x1b\[0m\x1b\[48;5;22m\x1b\[38;5;7m}}[[ph(1, "0:1")]]{{\x1b\[0m$}}
+# CHECK-NEXT: {{^\x1b\[0m\x1b\[48;5;21m\x1b\[38;5;7m}}[[ph(2, "0:1")]]{{\x1b\[0m$}}
 
 echo '== background checkerboard =='
 # Checkerboard alternates the two colors by cell using (col + row) parity.

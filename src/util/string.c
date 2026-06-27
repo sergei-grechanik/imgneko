@@ -2,6 +2,8 @@
 
 #include "util/string.h"
 
+#include <stdio.h>
+
 StrSpan str_span_trim(StrSpan span) {
     while (span.len != 0 && str_char_is_ascii_space(span.data[0])) {
         ++span.data;
@@ -262,4 +264,34 @@ void str_array_free(StringArray *strings) {
     for (size_t i = 0; i < strings->size; ++i)
         str_free(strings->data[i]);
     arr_free(*strings);
+}
+
+String str_vprintf(const char *format, va_list args) {
+    va_list args_copy;
+
+    va_copy(args_copy, args);
+    int len = vsnprintf(NULL, 0, format, args_copy);
+    va_end(args_copy);
+
+    // IMGNEKO_UNCOVERED_OK_START: Current callers use valid format strings, and
+    // libc formatting failures are not meaningful to force in tests.
+    if (len < 0)
+        return str_empty;
+    // IMGNEKO_UNCOVERED_OK_END
+
+    String result = str_empty;
+    str_reserve(result, (size_t)len + 1);
+    int written = vsnprintf(result.cstr, result.capacity, format, args);
+    assert(written == len);
+    result.len = (size_t)len;
+    return result;
+}
+
+String str_printf(const char *format, ...) {
+    va_list args;
+
+    va_start(args, format);
+    String result = str_vprintf(format, args);
+    va_end(args);
+    return result;
 }

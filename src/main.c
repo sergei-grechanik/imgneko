@@ -181,6 +181,11 @@ static bool validate_placement_id(const void *value, String *error_out) {
                  .clear = placeholder_bg_clear_option,                         \
                  .copy = placeholder_bg_copy_option, .cli = "--bg-raw STR",    \
                  .descr = "Raw background formatting escape sequence."))       \
+    X(S, bg_file, OptPlaceholderBg,                                            \
+      OPT_CUSTOM(.parse = placeholder_bg_parse_option_file,                    \
+                 .clear = placeholder_bg_clear_option,                         \
+                 .copy = placeholder_bg_copy_option, .cli = "--bg-file PATH",  \
+                 .descr = "Raw background formatting file path."))             \
     X(S, place, OptPlaceSize,                                                  \
       OPT_CUSTOM(.parse = parse_place_option, .cli = "-p --place CxR",         \
                  .descr = "Placeholder size as COLSxROWS terminal cells."))    \
@@ -244,8 +249,13 @@ static int run_placeholder_command(const PlaceholderCliOptions *options) {
         return 2;
     }
 
-    if (options->bg.is_set && options->bg_raw.is_set) {
-        fprintf(stderr, "error: --bg cannot be used with --bg-raw\n");
+    int background_options_set = (options->bg.is_set ? 1 : 0) +
+                                 (options->bg_raw.is_set ? 1 : 0) +
+                                 (options->bg_file.is_set ? 1 : 0);
+    if (background_options_set > 1) {
+        fprintf(
+            stderr,
+            "error: --bg, --bg-raw, and --bg-file are mutually exclusive\n");
         return 2;
     }
 
@@ -280,6 +290,9 @@ static int run_placeholder_command(const PlaceholderCliOptions *options) {
     } else if (options->bg_raw.is_set) {
         placeholder_options.format =
             placeholder_bg_to_format(&options->bg_raw.value);
+    } else if (options->bg_file.is_set) {
+        placeholder_options.format =
+            placeholder_bg_to_format(&options->bg_file.value);
     }
     placeholder_options.grapheme_only = options->grapheme_only.value;
 
