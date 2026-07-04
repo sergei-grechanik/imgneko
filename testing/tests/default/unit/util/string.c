@@ -37,18 +37,18 @@ static int expect_string_eq(const char *subtest, const char *actual_data,
 // so this checks only the explicitly provided length.
 static int expect_span_eq(const char *subtest, StrSpan actual,
                           const char *expected_data, size_t expected_len) {
-    if (actual.len != expected_len) {
+    StrSpan expected = str_span(expected_data, expected_len);
+    if (str_span_equal(actual, expected))
+        return 0;
+
+    if (actual.len != expected.len) {
         fprintf(stderr, "%s: expected span length %zu, got %zu\n", subtest,
-                expected_len, actual.len);
+                expected.len, actual.len);
         return 1;
     }
 
-    if (memcmp(actual.data, expected_data, actual.len) != 0) {
-        fprintf(stderr, "%s: span contents differ\n", subtest);
-        return 1;
-    }
-
-    return 0;
+    fprintf(stderr, "%s: span contents differ\n", subtest);
+    return 1;
 }
 
 // Check the observable empty-string invariants for both allocated and special
@@ -107,6 +107,8 @@ cleanup:
 static int test_str_span_view(TestContext *ctx) {
     const char *name = ctx->test_name;
     const char data[] = "abcdef";
+    const char binary[] = {'a', '\0', 'b'};
+    const char binary_copy[] = {'a', '\0', 'b'};
     StrSpan span = str_span(data + 1, 3);
 
     if (span.data != data + 1)
@@ -114,9 +116,22 @@ static int test_str_span_view(TestContext *ctx) {
     if (span.len != 3)
         return fail_message(name, "str_span changed the length");
 
+    StrSpan cstr_span = str_span_from_cstr(data);
+    if (cstr_span.data != data || cstr_span.len != sizeof(data) - 1)
+        return fail_message(name, "str_span_from_cstr returned a wrong view");
+
     int status = expect_span_eq(name, span, STR("bcd"));
     if (status != 0)
         return status;
+
+    // Span equality compares all bytes, including embedded NUL bytes, and
+    // treats every zero-length span as equal without dereferencing its data.
+    if (!str_span_equal(str_span(binary, sizeof(binary)),
+                        str_span(binary_copy, sizeof(binary_copy))) ||
+        str_span_equal(str_span(binary, sizeof(binary)), str_span("a", 1)) ||
+        str_span_equal(str_span(binary, sizeof(binary)), str_span("a\0c", 3)) ||
+        !str_span_equal(str_span_empty, str_span(data, 0)))
+        return fail_message(name, "str_span_equal returned a wrong result");
 
     // Span-to-C-string equality should account for both bytes and length.
     if (!str_span_equals_cstr(span, "bcd"))

@@ -88,6 +88,11 @@ ARRLIB_INLINE StrSpan str_span(const char *data, size_t len) {
     };
 }
 
+// Return a non-owning string view over a null-terminated C string.
+ARRLIB_INLINE StrSpan str_span_from_cstr(const char *cstr) {
+    return str_span(cstr, strlen(cstr));
+}
+
 // Return `span` without leading or trailing ASCII whitespace.
 StrSpan str_span_trim(StrSpan span);
 
@@ -400,6 +405,12 @@ ARRLIB_INLINE bool str_data_equals_cstr(const char *data, size_t len,
                                         const char *cstr) {
     size_t cstr_len = strlen(cstr);
     return len == cstr_len && memcmp(data, cstr, cstr_len) == 0;
+}
+
+// Return true when two spans have identical lengths and byte contents.
+ARRLIB_INLINE bool str_span_equal(StrSpan lhs, StrSpan rhs) {
+    return lhs.len == rhs.len &&
+           (lhs.len == 0 || memcmp(lhs.data, rhs.data, lhs.len) == 0);
 }
 
 // Return true when a span matches a null-terminated C string exactly.

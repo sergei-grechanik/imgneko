@@ -25,6 +25,11 @@ $(BUILD_DIR)/obj/src/imgneko/base64.o: \
 	$(ROOT_DIR)/src/imgneko/base64.h \
 	$(ROOT_DIR)/src/imgneko/reader.h \
 	$(ROOT_DIR)/src/util/common.h
+$(BUILD_DIR)/obj/src/imgneko/graphics_command.o: \
+	$(ROOT_DIR)/src/imgneko/graphics_command.c \
+	$(ROOT_DIR)/src/imgneko/graphics_command.h \
+	$(ROOT_DIR)/src/imgneko/reader.h \
+	$(ROOT_DIR)/src/imgneko/writer.h
 $(BUILD_DIR)/obj/src/imgneko/placeholder.o: \
 	$(ROOT_DIR)/src/imgneko/placeholder.c \
 	$(ROOT_DIR)/src/imgneko/placeholder.h \
@@ -136,6 +141,38 @@ $(BUILD_DIR)/obj/test-bin/unit/imgneko/base64.c.bin: \
 	$(ROOT_DIR)/testing/support/test_main.h \
 	$(ROOT_DIR)/testing/support/test_reader.h \
 	$(ROOT_DIR)/testing/tests/default/unit/imgneko/base64.c
+$(BUILD_DIR)/obj/test-bin/unit/imgneko/graphics_command.c.bin: \
+	$(ROOT_DIR)/src/imgneko/graphics_command.h \
+	$(ROOT_DIR)/src/imgneko/reader.h \
+	$(ROOT_DIR)/src/imgneko/writer.h \
+	$(ROOT_DIR)/src/util/array.h \
+	$(ROOT_DIR)/src/util/common.h \
+	$(ROOT_DIR)/src/util/string.h \
+	$(ROOT_DIR)/testing/support/test_graphics_command.h \
+	$(ROOT_DIR)/testing/support/test_main.h \
+	$(ROOT_DIR)/testing/support/test_reader.h \
+	$(ROOT_DIR)/testing/tests/default/unit/imgneko/graphics_command.c
+$(BUILD_DIR)/obj/test-bin/unit/imgneko/graphics_command_parse.c.bin: \
+	$(ROOT_DIR)/src/imgneko/graphics_command.h \
+	$(ROOT_DIR)/src/imgneko/reader.h \
+	$(ROOT_DIR)/src/imgneko/writer.h \
+	$(ROOT_DIR)/src/util/array.h \
+	$(ROOT_DIR)/src/util/common.h \
+	$(ROOT_DIR)/src/util/string.h \
+	$(ROOT_DIR)/testing/support/test_main.h \
+	$(ROOT_DIR)/testing/support/test_reader.h \
+	$(ROOT_DIR)/testing/tests/default/unit/imgneko/graphics_command_parse.c
+$(BUILD_DIR)/obj/test-bin/unit/imgneko/graphics_command_serialize.c.bin: \
+	$(ROOT_DIR)/src/imgneko/graphics_command.h \
+	$(ROOT_DIR)/src/imgneko/reader.h \
+	$(ROOT_DIR)/src/imgneko/writer.h \
+	$(ROOT_DIR)/src/util/array.h \
+	$(ROOT_DIR)/src/util/common.h \
+	$(ROOT_DIR)/src/util/string.h \
+	$(ROOT_DIR)/testing/support/test_graphics_command.h \
+	$(ROOT_DIR)/testing/support/test_main.h \
+	$(ROOT_DIR)/testing/support/test_reader.h \
+	$(ROOT_DIR)/testing/tests/default/unit/imgneko/graphics_command_serialize.c
 $(BUILD_DIR)/obj/test-bin/unit/imgneko/placeholder.c.bin: \
 	$(ROOT_DIR)/src/imgneko/placeholder.h \
 	$(ROOT_DIR)/src/imgneko/rowcolumn_diacritics.h \
@@ -219,6 +256,12 @@ $(BUILD_DIR)/obj/test-bin/unit/util/time.c.bin: \
 	$(ROOT_DIR)/src/util/time.h \
 	$(ROOT_DIR)/testing/support/test_main.h \
 	$(ROOT_DIR)/testing/tests/default/unit/util/time.c
+$(BUILD_DIR)/obj/testing/support/test_graphics_command.o: \
+	$(ROOT_DIR)/src/util/array.h \
+	$(ROOT_DIR)/src/util/string.h \
+	$(ROOT_DIR)/testing/support/test_graphics_command.c \
+	$(ROOT_DIR)/testing/support/test_graphics_command.h \
+	$(ROOT_DIR)/testing/support/test_main.h
 $(BUILD_DIR)/obj/testing/support/test_main.o: \
 	$(ROOT_DIR)/testing/support/test_main.c \
 	$(ROOT_DIR)/testing/support/test_main.h

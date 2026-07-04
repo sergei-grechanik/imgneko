@@ -121,6 +121,9 @@ containing the `REVIEW:` marker in the files you are working on.
 IMPORTANT: You don't have access to github, never try to get "review comments"
 via gh.
 
+IMPORTANT: NEVER remove REVIEW comments without addressing them. If it is in the
+way and you can't address it, move it a little bit, but don't delete it.
+
 ## Don't assume the code changes for no reason
 
 Sometimes the user will modify or delete code that you have written. Usually
