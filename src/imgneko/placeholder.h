@@ -194,10 +194,36 @@ typedef struct PlaceholderPositioner {
     void *ctx;
 } PlaceholderPositioner;
 
+// Final cursor position after placeholder output is complete.
+typedef enum PlaceholderFinalCursor {
+    // Leave the cursor after the placeholder's bottom row.
+    PLACEHOLDER_FINAL_CURSOR_BOTTOM_RIGHT = 0,
+    // Move to the placeholder's bottom-left corner.
+    PLACEHOLDER_FINAL_CURSOR_BOTTOM_LEFT = 1,
+    // Move right below the placeholder's bottom-left corner.
+    PLACEHOLDER_FINAL_CURSOR_BELOW_LEFT = 2,
+    // Move to the start of the next line.
+    PLACEHOLDER_FINAL_CURSOR_NEXT_LINE = 3,
+    // Move to the placeholder's top-left corner.
+    PLACEHOLDER_FINAL_CURSOR_TOP_LEFT = 4,
+    // Move after the placeholder's top row.
+    PLACEHOLDER_FINAL_CURSOR_TOP_RIGHT = 5,
+} PlaceholderFinalCursor;
+
+// Shared configuration for standard non-absolute positioners.
+typedef struct PlaceholderPositionConfig {
+    // Optional NUL-terminated bytes emitted at the start of the first line.
+    const char *first_line_start_prefix;
+    // Final cursor position. Zero-initialization selects bottom-right.
+    PlaceholderFinalCursor final_cursor;
+} PlaceholderPositionConfig;
+
 // Context for absolute positioning. Coordinates are zero-based terminal cells.
 typedef struct PlaceholderAbsPos {
     uint32_t origin_col;
     uint32_t origin_row;
+    // Final cursor position. Zero-initialization selects bottom-right.
+    PlaceholderFinalCursor final_cursor;
 } PlaceholderAbsPos;
 
 // Top-level placeholder print options.
@@ -353,8 +379,12 @@ int placeholder_format_vertical_stripes_func(void *ctx,
                                              uint32_t col, uint32_t row,
                                              char *out, size_t out_cap);
 
-// Return a positioner that writes a newline after each placeholder row.
-PlaceholderPositioner placeholder_position_linefeeds(void);
+// Return a positioner that writes newlines between placeholder rows and uses
+// the configured final cursor position after the last row.
+// `config` is optional. If provided, the caller must keep it alive while
+// placeholders are written.
+PlaceholderPositioner
+placeholder_position_linefeeds(PlaceholderPositionConfig *config);
 
 // Return a positioner that moves to `(pos->origin_col, pos->origin_row + row)`
 // before each placeholder row. Coordinates in `pos` are zero-based terminal
@@ -363,20 +393,25 @@ PlaceholderPositioner placeholder_position_absolute(PlaceholderAbsPos *pos);
 
 // Return a positioner for writing an image below the current cursor. It uses
 // save-cursor and restore-cursor sequences around each non-final row, followed
-// by an index sequence to move to the next terminal line.
-PlaceholderPositioner placeholder_position_at_cursor_with_save(void);
+// by an index sequence to move to the next terminal line. `config` is optional.
+// If provided, the caller must keep it alive while placeholders are written.
+PlaceholderPositioner
+placeholder_position_at_cursor_with_save(PlaceholderPositionConfig *config);
 
 // Return a positioner for writing an image below the current cursor without
 // save/restore sequences. After each non-final row, it moves left by the
-// placeholder width and then indexes to the next terminal line.
-PlaceholderPositioner placeholder_position_at_cursor_with_moves(void);
+// placeholder width and then indexes to the next terminal line. `config` is
+// optional. If provided, the caller must keep it alive while placeholders are
+// written.
+PlaceholderPositioner
+placeholder_position_at_cursor_with_moves(PlaceholderPositionConfig *config);
 
 // Return default print options.
 static inline PlaceholderOptions placeholder_options_default(void) {
     return (PlaceholderOptions){
         .mode = placeholder_mode_default(),
         .format = {0},
-        .positioner = placeholder_position_linefeeds(),
+        .positioner = placeholder_position_linefeeds(NULL),
         .grapheme_only = false,
         .chunk_size = 0,
     };

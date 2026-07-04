@@ -557,7 +557,8 @@ static const char *d(uint32_t num) {
     return rowcolumn_num_to_diacritic_utf8(num, NULL);
 }
 
-// Require the exact default rendering of base_placeholder().
+// Require the exact default rendering of base_placeholder(). The default final
+// cursor position is bottom-right, so the final row has no trailing newline.
 static int expect_default_base_output(TestContext *ctx, const char *output,
                                       size_t len, const char *what) {
     // clang-format off
@@ -569,14 +570,14 @@ static int expect_default_base_output(TestContext *ctx, const char *output,
         // Line 1
         RESET, "\033[38;2;2;3;4m", "\033[58;2;5;6;7m",
         PLACE, d(2), d(1), d(7), PLACE, d(2), d(2), d(7),
-        RESET, "\n",
+        RESET,
         NULL);
     // clang-format on
 }
 
 // Check basic rendering with the default mode. This verifies the placeholder
 // base character, ID color encoding, placement color encoding, row/column
-// diacritics, newlines, and reset suffixes.
+// diacritics, inter-row newlines, and reset suffixes.
 static int test_default_rendering(TestContext *ctx) {
     Placeholder placeholder = base_placeholder();
     char output[2048];
@@ -611,7 +612,7 @@ static int test_modes_and_color_options(TestContext *ctx) {
             // Line 1
             RESET, "\033[38;5;7m", "\033[58;5;8m",
             PLACE, d(2), d(1), PLACE, d(2), d(2),
-            RESET, "\n",
+            RESET,
             NULL))
         return 1;
     // clang-format on
@@ -630,7 +631,7 @@ static int test_modes_and_color_options(TestContext *ctx) {
             // Line 1
             RESET, "\033[38;5;7m",
             PLACE, d(2), d(1), PLACE,
-            RESET, "\n",
+            RESET,
             NULL))
         return 1;
     // clang-format on
@@ -648,7 +649,7 @@ static int test_modes_and_color_options(TestContext *ctx) {
             // Line 1
             RESET, "\033[38;5;7m", "\033[58;2;0;0;0m",
             PLACE, d(2), d(1), PLACE,
-            RESET, "\n",
+            RESET,
             NULL))
         return 1;
     // clang-format on
@@ -667,7 +668,7 @@ static int test_modes_and_color_options(TestContext *ctx) {
             // Line 1
             RESET, "\033[38;5;7m", "\033[58;2;1;2;3m",
             PLACE, d(2), d(1), PLACE,
-            RESET, "\n",
+            RESET,
             NULL))
         return 1;
     // clang-format on
@@ -687,7 +688,7 @@ static int test_modes_and_color_options(TestContext *ctx) {
             // Line 1
             RESET, "\033[38;2;0;0;7m", "\033[58;5;0m",
             PLACE, d(2), d(1), PLACE,
-            RESET, "\n",
+            RESET,
             NULL))
         return 1;
     // clang-format on
@@ -705,7 +706,7 @@ static int test_modes_and_color_options(TestContext *ctx) {
             // Line 1
             RESET, "\033[38;5;7m",
             PLACE, d(2), d(1), d(1), PLACE, d(2), d(2), d(1),
-            RESET, "\n",
+            RESET,
             NULL))
         return 1;
     // clang-format on
@@ -733,7 +734,7 @@ static int test_user_formatting(TestContext *ctx) {
             // Line 1
             RESET, "\033[48;5;9m", "\033[38;2;2;3;4m", "\033[58;2;5;6;7m",
             PLACE, d(2), d(1), d(7), PLACE, d(2), d(2), d(7),
-            RESET, "\n",
+            RESET,
             NULL))
         return 1;
     // clang-format on
@@ -782,7 +783,7 @@ static int test_user_formatting(TestContext *ctx) {
             RESET, "\033[38;2;2;3;4m", "\033[58;2;5;6;7m",
             "\033[48;5;1m", PLACE, d(2), d(1), d(7),
             "\033[48;5;2m", PLACE, d(2), d(2), d(7),
-            RESET, "\n",
+            RESET,
             NULL))
         return 1;
     // clang-format on
@@ -800,7 +801,7 @@ static int test_user_formatting(TestContext *ctx) {
             // Line 1
             RESET, "\033[48;5;1m", "\033[38;2;2;3;4m", "\033[58;2;5;6;7m",
             PLACE, d(2), d(1), d(7), PLACE, d(2), d(2), d(7),
-            RESET, "\n",
+            RESET,
             NULL))
         return 1;
     // clang-format on
@@ -890,7 +891,7 @@ static int test_background_format_helpers(TestContext *ctx) {
             RESET, "\033[38;2;2;3;4m", "\033[58;2;5;6;7m",
             "\033[48;2;255;255;255m", PLACE, d(2), d(1), d(7),
             "\033[48;5;255m", PLACE, d(2), d(2), d(7),
-            RESET, "\n",
+            RESET,
             NULL))
         return 1;
     // clang-format on
@@ -921,7 +922,7 @@ static int test_background_format_helpers(TestContext *ctx) {
             "\033[58;2;5;6;7m",
             PLACE, d(2), d(1), d(7),
             PLACE, d(2), d(2), d(7),
-            RESET, "\n",
+            RESET,
             NULL))
         return 1;
     // clang-format on
@@ -980,7 +981,7 @@ static int test_background_format_helpers(TestContext *ctx) {
             RESET, "\033[38;2;2;3;4m", "\033[58;2;5;6;7m",
             "\033[48;5;255m", PLACE, d(2), d(1), d(7),
             "\033[48;2;255;255;255m", PLACE, d(2), d(2), d(7),
-            RESET, "\n",
+            RESET,
             NULL))
         return 1;
     // clang-format on
@@ -1013,7 +1014,7 @@ static int test_background_format_helpers(TestContext *ctx) {
             RESET, "\033[38;2;2;3;4m", "\033[58;2;5;6;7m",
             "\033[48;2;255;255;255m", PLACE, d(2), d(1), d(7),
             PLACE, d(2), d(2), d(7),
-            RESET, "\n",
+            RESET,
             NULL))
         return 1;
     // clang-format on
@@ -1038,7 +1039,7 @@ static int test_background_format_helpers(TestContext *ctx) {
             RESET, "\033[38;2;2;3;4m", "\033[58;2;5;6;7m",
             "\033[48;2;255;255;255m", PLACE, d(2), d(1), d(7),
             PLACE, d(2), d(2), d(7),
-            RESET, "\n",
+            RESET,
             NULL))
         return 1;
     // clang-format on
@@ -1095,9 +1096,38 @@ static int test_positioners(TestContext *ctx) {
         return 1;
     // clang-format on
 
+    // Absolute positioners keep their row-start behavior and use absolute
+    // cursor movement for the configured final cursor position.
+    placeholder = base_placeholder();
+    placeholder.rect.end_row = 3;
+    abs_pos.final_cursor = PLACEHOLDER_FINAL_CURSOR_TOP_RIGHT;
+    options.positioner = placeholder_position_absolute(&abs_pos);
+    error = placeholder_write_to_buffer(&placeholder, &options, output,
+                                        sizeof(output), &len);
+    // clang-format off
+    if (expect_error(ctx, error, PLACEHOLDER_OK,
+                     "absolute positioning final cursor") ||
+        expect_output(ctx, output, len, "absolute positioning final cursor",
+            // Line 0
+            RESET, "\033[8;5H", "\033[38;2;2;3;4m", "\033[58;2;5;6;7m",
+            PLACE, d(1), d(1), d(7), PLACE, d(1), d(2), d(7),
+            RESET,
+            // Middle line
+            RESET, "\033[9;5H", "\033[38;2;2;3;4m", "\033[58;2;5;6;7m",
+            PLACE, d(2), d(1), d(7), PLACE, d(2), d(2), d(7),
+            RESET,
+            // Last line
+            RESET, "\033[10;5H", "\033[38;2;2;3;4m", "\033[58;2;5;6;7m",
+            PLACE, d(3), d(1), d(7), PLACE, d(3), d(2), d(7),
+            RESET, "\033[8;7H",
+            NULL))
+        return 1;
+    // clang-format on
+    abs_pos.final_cursor = PLACEHOLDER_FINAL_CURSOR_BOTTOM_RIGHT;
+
     placeholder = base_placeholder();
     placeholder.rect.end_row = 1;
-    options.positioner = placeholder_position_at_cursor_with_save();
+    options.positioner = placeholder_position_at_cursor_with_save(NULL);
     error = placeholder_write_to_buffer(&placeholder, &options, output,
                                         sizeof(output), &len);
     // clang-format off
@@ -1112,7 +1142,7 @@ static int test_positioners(TestContext *ctx) {
 
     placeholder = base_placeholder();
     placeholder.rect.end_row = 3;
-    options.positioner = placeholder_position_at_cursor_with_save();
+    options.positioner = placeholder_position_at_cursor_with_save(NULL);
     error = placeholder_write_to_buffer(&placeholder, &options, output,
                                         sizeof(output), &len);
     // clang-format off
@@ -1137,7 +1167,7 @@ static int test_positioners(TestContext *ctx) {
 
     placeholder = base_placeholder();
     placeholder.rect.end_row = 1;
-    options.positioner = placeholder_position_at_cursor_with_moves();
+    options.positioner = placeholder_position_at_cursor_with_moves(NULL);
     error = placeholder_write_to_buffer(&placeholder, &options, output,
                                         sizeof(output), &len);
     // clang-format off
@@ -1153,7 +1183,7 @@ static int test_positioners(TestContext *ctx) {
 
     placeholder = base_placeholder();
     placeholder.rect.end_row = 3;
-    options.positioner = placeholder_position_at_cursor_with_moves();
+    options.positioner = placeholder_position_at_cursor_with_moves(NULL);
     error = placeholder_write_to_buffer(&placeholder, &options, output,
                                         sizeof(output), &len);
     // clang-format off
@@ -1172,6 +1202,34 @@ static int test_positioners(TestContext *ctx) {
             RESET, "\033[38;2;2;3;4m", "\033[58;2;5;6;7m",
             PLACE, d(3), d(1), d(7), PLACE, d(3), d(2), d(7),
             RESET,
+            NULL))
+        return 1;
+    // clang-format on
+
+    // Configured standard positioners emit the first-line prefix once and use
+    // the configured final cursor only after the last row.
+    PlaceholderPositionConfig position_config = {
+        .first_line_start_prefix = "\033[4G",
+        .final_cursor = PLACEHOLDER_FINAL_CURSOR_NEXT_LINE,
+    };
+    placeholder = base_placeholder();
+    placeholder.rect.end_row = 2;
+    options.positioner =
+        placeholder_position_at_cursor_with_moves(&position_config);
+    error = placeholder_write_to_buffer(&placeholder, &options, output,
+                                        sizeof(output), &len);
+    // clang-format off
+    if (expect_error(ctx, error, PLACEHOLDER_OK,
+                     "configured cursor positioning no save") ||
+        expect_output(ctx, output, len, "configured cursor positioning no save",
+            // Line 0
+            RESET, "\033[4G", "\033[38;2;2;3;4m", "\033[58;2;5;6;7m",
+            PLACE, d(1), d(1), d(7), PLACE, d(1), d(2), d(7),
+            RESET, "\033[2D\033D",
+            // Last line
+            RESET, "\033[38;2;2;3;4m", "\033[58;2;5;6;7m",
+            PLACE, d(2), d(1), d(7), PLACE, d(2), d(2), d(7),
+            RESET, "\n\r",
             NULL))
         return 1;
     // clang-format on
@@ -1226,20 +1284,19 @@ static int test_positioner_edge_cases(TestContext *ctx) {
     PlaceholderAbsPos abs_pos = {.origin_col = 4, .origin_row = 7};
     char output[4096];
 
-    PlaceholderPositioner linefeeds = placeholder_position_linefeeds();
+    PlaceholderPositioner linefeeds = placeholder_position_linefeeds(NULL);
     if (linefeeds.func(NULL, &placeholder, 0, 0, output, sizeof(output)) != 0 ||
+        linefeeds.func(NULL, &placeholder, 0, PLACEHOLDER_POSITION_LINE_END,
+                       NULL, 1) >= 0 ||
+        linefeeds.func(NULL, &placeholder, 0, PLACEHOLDER_POSITION_LINE_END,
+                       NULL, 0) != 1 ||
+        linefeeds.func(NULL, NULL, 0,
+                       PLACEHOLDER_POSITION_LINE_END |
+                           PLACEHOLDER_POSITION_LAST_LINE,
+                       output, sizeof(output)) >= 0 ||
         linefeeds.func(NULL, &placeholder, 0, PLACEHOLDER_POSITION_LINE_END,
                        output, 0) != 1) {
         fprintf(stderr, "%s: bad linefeed positioner edge behavior\n",
-                ctx->test_name);
-        return 1;
-    }
-
-    PlaceholderPositioner null_abs = placeholder_position_absolute(NULL);
-    if (null_abs.func(NULL, &placeholder, 0, 0, output, sizeof(output)) != 0 ||
-        null_abs.func(NULL, &placeholder, 0, PLACEHOLDER_POSITION_LINE_START,
-                      output, sizeof(output)) >= 0) {
-        fprintf(stderr, "%s: bad absolute positioner edge behavior\n",
                 ctx->test_name);
         return 1;
     }
@@ -1248,13 +1305,26 @@ static int test_positioner_edge_cases(TestContext *ctx) {
     if (abs.func(abs.ctx, &placeholder, 0, PLACEHOLDER_POSITION_LINE_START,
                  NULL, 1) >= 0 ||
         abs.func(abs.ctx, &placeholder, 0, PLACEHOLDER_POSITION_LINE_START,
-                 NULL, 0) <= 0) {
+                 NULL, 0) <= 0 ||
+        abs.func(abs.ctx, &placeholder, 0, 0, output, sizeof(output)) != 0 ||
+        abs.func(abs.ctx, NULL, 0,
+                 PLACEHOLDER_POSITION_LINE_END | PLACEHOLDER_POSITION_LAST_LINE,
+                 output, sizeof(output)) >= 0) {
         fprintf(stderr, "%s: bad absolute positioner null output behavior\n",
                 ctx->test_name);
         return 1;
     }
+    abs_pos.final_cursor = (PlaceholderFinalCursor)-1;
+    if (abs.func(abs.ctx, &placeholder, 0,
+                 PLACEHOLDER_POSITION_LINE_END | PLACEHOLDER_POSITION_LAST_LINE,
+                 output, sizeof(output)) >= 0) {
+        fprintf(stderr, "%s: bad absolute positioner final cursor behavior\n",
+                ctx->test_name);
+        return 1;
+    }
+    abs_pos.final_cursor = PLACEHOLDER_FINAL_CURSOR_BOTTOM_RIGHT;
 
-    options.positioner = placeholder_position_at_cursor_with_save();
+    options.positioner = placeholder_position_at_cursor_with_save(NULL);
     if (options.positioner.func(NULL, &placeholder, 0,
                                 PLACEHOLDER_POSITION_LINE_START, output,
                                 2) != 3 ||
@@ -1267,9 +1337,35 @@ static int test_positioner_edge_cases(TestContext *ctx) {
                 ctx->test_name);
         return 1;
     }
+    if (options.positioner.func(NULL, NULL, 0,
+                                PLACEHOLDER_POSITION_LINE_END |
+                                    PLACEHOLDER_POSITION_LAST_LINE,
+                                output, sizeof(output)) >= 0) {
+        fprintf(stderr, "%s: bad cursor positioner null placeholder behavior\n",
+                ctx->test_name);
+        return 1;
+    }
+
+    PlaceholderPositionConfig invalid_final_cursor = {
+        .final_cursor = (PlaceholderFinalCursor)-1,
+    };
+    options.positioner =
+        placeholder_position_at_cursor_with_save(&invalid_final_cursor);
+    if (options.positioner.func(options.positioner.ctx, &placeholder, 0,
+                                PLACEHOLDER_POSITION_LINE_START |
+                                    PLACEHOLDER_POSITION_LAST_LINE,
+                                output, sizeof(output)) != 0 ||
+        options.positioner.func(options.positioner.ctx, &placeholder, 0,
+                                PLACEHOLDER_POSITION_LINE_END |
+                                    PLACEHOLDER_POSITION_LAST_LINE,
+                                output, sizeof(output)) >= 0) {
+        fprintf(stderr, "%s: bad cursor positioner invalid final cursor\n",
+                ctx->test_name);
+        return 1;
+    }
 
     placeholder.rect.end_col = 333;
-    options.positioner = placeholder_position_at_cursor_with_moves();
+    options.positioner = placeholder_position_at_cursor_with_moves(NULL);
     if (options.positioner.func(NULL, &placeholder, 0,
                                 PLACEHOLDER_POSITION_LINE_START, output,
                                 sizeof(output)) != 0 ||
@@ -1284,12 +1380,22 @@ static int test_positioner_edge_cases(TestContext *ctx) {
                 ctx->test_name);
         return 1;
     }
+    options.positioner =
+        placeholder_position_at_cursor_with_moves(&invalid_final_cursor);
+    if (options.positioner.func(options.positioner.ctx, &placeholder, 0,
+                                PLACEHOLDER_POSITION_LINE_END |
+                                    PLACEHOLDER_POSITION_LAST_LINE,
+                                output, sizeof(output)) >= 0) {
+        fprintf(stderr, "%s: bad cursor no-save final cursor behavior\n",
+                ctx->test_name);
+        return 1;
+    }
 
     return 0;
 }
 
-// Check grapheme-only mode keeps placeholder graphemes and linefeeds but
-// removes automatic SGR color and reset sequences.
+// Check grapheme-only mode keeps placeholder graphemes and inter-row linefeeds
+// but removes automatic SGR color and reset sequences.
 static int test_grapheme_only(TestContext *ctx) {
     Placeholder placeholder = base_placeholder();
     PlaceholderOptions options = placeholder_options_default();
@@ -1306,7 +1412,6 @@ static int test_grapheme_only(TestContext *ctx) {
             "\n",
             // Line 1
             PLACE, d(2), d(1), d(7), PLACE, d(2), d(2), d(7),
-            "\n",
             NULL))
         return 1;
     // clang-format on
@@ -1337,7 +1442,7 @@ static int test_unrepresentable_coordinates(TestContext *ctx) {
         expect_output(ctx, output, len, "large trailing column",
             RESET, "\033[38;5;7m",
             PLACE, d(1), d(ROWCOLUMN_DIACRITIC_MAX), PLACE, d(1),
-            RESET, "\n",
+            RESET,
             NULL))
         return 1;
     // clang-format on
@@ -1349,7 +1454,7 @@ static int test_unrepresentable_coordinates(TestContext *ctx) {
     // clang-format off
     if (expect_error(ctx, error, PLACEHOLDER_OK, "large first column") ||
         expect_output(ctx, output, len, "large first column",
-            RESET, "□", "□", "\n",
+            RESET, "□", "□",
             NULL))
         return 1;
     // clang-format on
@@ -1375,7 +1480,7 @@ static int test_unrepresentable_coordinates(TestContext *ctx) {
             PLACE, d(ROWCOLUMN_DIACRITIC_MAX), d(1),
             PLACE, d(ROWCOLUMN_DIACRITIC_MAX), d(2),
             RESET, "\n",
-            RESET, "□", "□", "\n",
+            RESET, "□", "□",
             NULL))
         return 1;
     // clang-format on
@@ -1387,7 +1492,7 @@ static int test_unrepresentable_coordinates(TestContext *ctx) {
                                         sizeof(output), &len);
     if (expect_error(ctx, error, PLACEHOLDER_OK, "custom large row symbol") ||
         expect_output(ctx, output, len, "custom large row symbol", RESET, "xx",
-                      "\n", NULL))
+                      NULL))
         return 1;
 
     placeholder.placement_id = 0x010203;
@@ -1396,7 +1501,7 @@ static int test_unrepresentable_coordinates(TestContext *ctx) {
     if (expect_error(ctx, error, PLACEHOLDER_OK,
                      "large row symbol with placement ID") ||
         expect_output(ctx, output, len, "large row symbol with placement ID",
-                      RESET, "xx", "\n", NULL))
+                      RESET, "xx", NULL))
         return 1;
     placeholder.placement_id = 0;
 
@@ -1404,8 +1509,7 @@ static int test_unrepresentable_coordinates(TestContext *ctx) {
     error = placeholder_write_to_buffer(&placeholder, &options, output,
                                         sizeof(output), &len);
     if (expect_error(ctx, error, PLACEHOLDER_OK, "empty large row symbol") ||
-        expect_output(ctx, output, len, "empty large row symbol", RESET, "\n",
-                      NULL))
+        expect_output(ctx, output, len, "empty large row symbol", RESET, NULL))
         return 1;
 
     options.mode.unrepresentable_cell_symbol = NULL;
@@ -2685,8 +2789,10 @@ static int test_chunking_and_writers(TestContext *ctx) {
     }
     if (expect_newlines_preceded_by_reset(ctx, capture.data, capture.len))
         return 1;
-    if (capture.len == 0 || capture.data[capture.len - 1] != '\n') {
-        fprintf(stderr, "%s: chunked output did not end with newline\n",
+    // The default final cursor position is bottom-right, so chunked default
+    // output must not add a final linefeed after the last row.
+    if (capture.len == 0 || capture.data[capture.len - 1] == '\n') {
+        fprintf(stderr, "%s: chunked output ended with newline\n",
                 ctx->test_name);
         return 1;
     }
@@ -2747,11 +2853,12 @@ static int test_chunking_and_writers(TestContext *ctx) {
                      "mid-line chunk write failure"))
         return 1;
 
-    // A writer failure while flushing the final reset plus row-end positioner
-    // bytes should also propagate as a write failure.
+    // A writer failure while flushing the reset before an inter-row linefeed
+    // should also propagate as a write failure.
     placeholder.rect.end_col = 1;
+    placeholder.rect.end_row = 2;
     options.chunk_size = RESET_LEN + color_len + cell_len + RESET_LEN;
-    capture = (Capture){.fail_after_calls = 2};
+    capture = (Capture){.fail_after_calls = 1};
     error =
         placeholder_write(&placeholder, &options, capture_as_writer(&capture));
     if (expect_error(ctx, error, PLACEHOLDER_WRITE_FAILED,

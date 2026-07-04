@@ -27,6 +27,8 @@ Your comments should be clear and grammatically correct. Avoid using the word
 "one" instead of an article "the/a/an", i.e. instead of "print one error
 message" prefer "print an error message".
 
+If the logic is complex, comments are mandatory.
+
 ## C Style And Coding Recommendations
 
 - Use `CamelCase` for type names.
@@ -51,11 +53,17 @@ message" prefer "print an error message".
   call site, e.g. `foo(arg1, arg2, /*buffer=*/arg3);`. If the values are
   descriptive enough, this is not necessary, e.g.
   `foo(num_items, item_size, buffer);`.
+
+### Documenting function parameters
+
 - All output parameters should be documented. Prefer grouping purely output
   parameters together at the end of the parameter list.
 - If a function has more than 3 parameters, all of them must be explained in the
   function description, and every one of them deserves a separate line in the
   description.
+- An exception to the above rules is when parameters are really obvious. For
+  example, when it is a parsing function, its signature is standard `(void *,
+  const char *, size_t, String *)`, so there is no need explaining it each time.
 
 ### Strings
 

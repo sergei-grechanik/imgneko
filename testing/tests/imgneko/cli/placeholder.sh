@@ -24,6 +24,11 @@ echo '== placeholder help =='
 # CHECK-NEXT: {{^}}                            decimal or 0x-prefixed hex. (default: 0){{$}}
 # CHECK-NEXT: {{^}}  -D, --diacritics MODE     Diacritic mode: minimal, default, or complete.{{$}}
 # CHECK-NEXT: {{^}}  --grapheme-only           Emit grapheme-only output without SGR colors.{{$}}
+# CHECK-NEXT: {{^}}  --cursor-movement MODE    Cursor movement method. (default: auto){{$}}
+# CHECK-NEXT: {{^}}  -C, --final-cursor POS    Final cursor position. (default: next-line){{$}}
+# CHECK-NEXT: {{^}}  --at-cursor               Start at the current cursor position.{{$}}
+# CHECK-NEXT: {{^}}  --at X,Y                  Move to an absolute position before drawing.{{$}}
+# CHECK-NEXT: {{^}}  --at-column X             Move to an absolute column before drawing.{{$}}
 # CHECK-NEXT: {{^}}  --bg BG                   Background color or pattern.{{$}}
 # CHECK-NEXT: {{^}}  --bg-raw STR              Raw background formatting escape sequence.{{$}}
 # CHECK-NEXT: {{^}}  --bg-file PATH            Raw background formatting file path.{{$}}
@@ -60,6 +65,13 @@ echo '== place dimensions X =='
 # CHECK-NEXT: {{^}}== place dimensions X =={{$}}
 # CHECK-NEXT: {{^\x1b\[0m\x1b\[38;2;}}[[rgb(1234)]]m[[ph(0, "0:4")]]{{\x1b\[0m$}}
 # CHECK-NEXT: {{^\x1b\[0m\x1b\[38;2;}}[[rgb(1234)]]m[[ph(1, "0:4")]]{{\x1b\[0m$}}
+
+echo '== place dimensions comma =='
+# Comma spelling is accepted as the same columns-then-rows pair.
+"$IMGNEKO" placeholder --id 1234 -p 3,2
+# CHECK-NEXT: {{^}}== place dimensions comma =={{$}}
+# CHECK-NEXT: {{^\x1b\[0m\x1b\[38;2;}}[[rgb(1234)]]m[[ph(0, "0:2")]]{{\x1b\[0m$}}
+# CHECK-NEXT: {{^\x1b\[0m\x1b\[38;2;}}[[rgb(1234)]]m[[ph(1, "0:2")]]{{\x1b\[0m$}}
 
 echo '== diacritics minimal =='
 # Minimal mode keeps full metadata on the first cell in a row and omits

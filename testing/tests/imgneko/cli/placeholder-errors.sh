@@ -89,6 +89,22 @@ check_exit_code 2 "$IMGNEKO" placeholder --id 1 --rows 1 --cols 1 \
     --diacritics computed
 # CHECK-NEXT: {{^}}error: invalid value for --diacritics: 'computed' (expected one of minimal, default, or complete){{$}}
 
+check_exit_code 2 "$IMGNEKO" placeholder --id 1 --rows 1 --cols 1 \
+    --cursor-movement ""
+# CHECK-NEXT: {{^}}error: invalid value for --cursor-movement: '' (expected one of auto, text, save-restore, move-left, or absolute){{$}}
+
+check_exit_code 2 "$IMGNEKO" placeholder --id 1 --rows 1 --cols 1 \
+    --cursor-movement cursor
+# CHECK-NEXT: {{^}}error: invalid value for --cursor-movement: 'cursor' (expected one of auto, text, save-restore, move-left, or absolute){{$}}
+
+check_exit_code 2 "$IMGNEKO" placeholder --id 1 --rows 1 --cols 1 \
+    --final-cursor ""
+# CHECK-NEXT: {{^}}error: invalid value for --final-cursor: '' (expected one of next-line, bottom-left, below-left, bottom-right, top-left, or top-right){{$}}
+
+check_exit_code 2 "$IMGNEKO" placeholder --id 1 --rows 1 --cols 1 \
+    -C after
+# CHECK-NEXT: {{^}}error: invalid value for --final-cursor: 'after' (expected one of next-line, bottom-left, below-left, bottom-right, top-left, or top-right){{$}}
+
 echo '== invalid background options =='
 check_exit_code 2 "$IMGNEKO" placeholder --id 1 --rows 1 --cols 1 --bg ""
 # CHECK-NEXT: {{^}}== invalid background options =={{$}}
@@ -250,22 +266,70 @@ check_exit_code 2 "$IMGNEKO" placeholder --id 1 --rows 1 --cols 1 \
 # CHECK-NEXT: {{^}}error: invalid value for --bg: 'checkerboard(256,1)' (background color index must be a decimal integer from 0 to 255){{$}}
 
 check_exit_code 2 "$IMGNEKO" placeholder --id 1 --place ""
-# CHECK-NEXT: {{^}}error: invalid value for --place: '' (expected CxR with positive base-10 unsigned integers){{$}}
+# CHECK-NEXT: {{^}}error: invalid value for --place: '' (expected A,B or AxB with base-10 unsigned integers){{$}}
 
 check_exit_code 2 "$IMGNEKO" placeholder --id 1 --place 1
-# CHECK-NEXT: {{^}}error: invalid value for --place: '1' (expected CxR with positive base-10 unsigned integers){{$}}
+# CHECK-NEXT: {{^}}error: invalid value for --place: '1' (expected A,B or AxB with base-10 unsigned integers){{$}}
 
 check_exit_code 2 "$IMGNEKO" placeholder --id 1 --place 1xx1
-# CHECK-NEXT: {{^}}error: invalid value for --place: '1xx1' (expected exactly one x separator in CxR value){{$}}
+# CHECK-NEXT: {{^}}error: invalid value for --place: '1xx1' (expected A,B or AxB with base-10 unsigned integers){{$}}
 
 check_exit_code 2 "$IMGNEKO" placeholder --id 1 --place x
-# CHECK-NEXT: {{^}}error: invalid value for --place: 'x' (expected CxR with positive base-10 unsigned integers){{$}}
+# CHECK-NEXT: {{^}}error: invalid value for --place: 'x' (expected A,B or AxB with base-10 unsigned integers){{$}}
 
 check_exit_code 2 "$IMGNEKO" placeholder --id 1 --place 1x0
-# CHECK-NEXT: {{^}}error: invalid value for --place: '1x0' (expected CxR with positive base-10 unsigned integers){{$}}
+# CHECK-NEXT: {{^}}error: invalid value for --place: '1x0' (expected positive A,B or AxB with base-10 unsigned integers){{$}}
+
+check_exit_code 2 "$IMGNEKO" placeholder --id 1 --place 0x1
+# CHECK-NEXT: {{^}}error: invalid value for --place: '0x1' (expected positive A,B or AxB with base-10 unsigned integers){{$}}
 
 check_exit_code 2 "$IMGNEKO" placeholder --id 1 --place 4294967296x1
-# CHECK-NEXT: {{^}}error: invalid value for --place: '4294967296x1' (expected CxR with positive base-10 unsigned integers){{$}}
+# CHECK-NEXT: {{^}}error: invalid value for --place: '4294967296x1' (expected A,B or AxB with base-10 unsigned integers){{$}}
+
+check_exit_code 2 "$IMGNEKO" placeholder --id 1 --place 1xy
+# CHECK-NEXT: {{^}}error: invalid value for --place: '1xy' (expected A,B or AxB with base-10 unsigned integers){{$}}
+
+check_exit_code 2 "$IMGNEKO" placeholder --id 1 --place 1x-1
+# CHECK-NEXT: {{^}}error: invalid value for --place: '1x-1' (expected A,B or AxB with base-10 unsigned integers){{$}}
+
+check_exit_code 2 "$IMGNEKO" placeholder --id 1 --place 1x4294967296
+# CHECK-NEXT: {{^}}error: invalid value for --place: '1x4294967296' (expected A,B or AxB with base-10 unsigned integers){{$}}
+
+check_exit_code 2 "$IMGNEKO" placeholder --id 1 --place 1x1@0,0
+# CHECK-NEXT: {{^}}error: invalid value for --place: '1x1@0,0' (expected A,B or AxB with base-10 unsigned integers){{$}}
+
+check_exit_code 2 "$IMGNEKO" placeholder --id 1 --place 1x1 --at ""
+# CHECK-NEXT: {{^}}error: invalid value for --at: '' (expected A,B or AxB with base-10 unsigned integers){{$}}
+
+check_exit_code 2 "$IMGNEKO" placeholder --id 1 --place 1x1 --at 1
+# CHECK-NEXT: {{^}}error: invalid value for --at: '1' (expected A,B or AxB with base-10 unsigned integers){{$}}
+
+check_exit_code 2 "$IMGNEKO" placeholder --id 1 --place 1x1 --at 1,2,3
+# CHECK-NEXT: {{^}}error: invalid value for --at: '1,2,3' (expected A,B or AxB with base-10 unsigned integers){{$}}
+
+check_exit_code 2 "$IMGNEKO" placeholder --id 1 --place 1x1 --at -1,0
+# CHECK-NEXT: {{^}}error: invalid value for --at: '-1,0' (expected A,B or AxB with base-10 unsigned integers){{$}}
+
+check_exit_code 2 "$IMGNEKO" placeholder --id 1 --place 1x1 --at 4294967296,0
+# CHECK-NEXT: {{^}}error: invalid value for --at: '4294967296,0' (expected A,B or AxB with base-10 unsigned integers){{$}}
+
+check_exit_code 2 "$IMGNEKO" placeholder --id 1 --place 1x1 --at 4294967295,0
+# CHECK-NEXT: {{^}}error: failed to format --at prefix{{$}}
+
+check_exit_code 2 "$IMGNEKO" placeholder --id 1 --place 1x1 --at 0,4294967295
+# CHECK-NEXT: {{^}}error: failed to format --at prefix{{$}}
+
+check_exit_code 2 "$IMGNEKO" placeholder --id 1 --place 1x1 --at-column -1
+# CHECK-NEXT: {{^}}error: invalid value for --at-column: '-1' (expected a base-10 unsigned integer){{$}}
+
+check_exit_code 2 "$IMGNEKO" placeholder --id 1 --place 1x1 --at-column 4294967296
+# CHECK-NEXT: {{^}}error: invalid value for --at-column: '4294967296' (expected a 32-bit unsigned integer){{$}}
+
+check_exit_code 2 "$IMGNEKO" placeholder --id 1 --place 1x1 --at-column 4294967295
+# CHECK-NEXT: {{^}}error: failed to format --at-column prefix{{$}}
+
+check_exit_code 2 "$IMGNEKO" placeholder --id 1 --place 1x1 --at 1,2 --at-column 3
+# CHECK-NEXT: {{^}}error: --at-cursor, --at, and --at-column are mutually exclusive{{$}}
 
 echo '== broken stdout =='
 broken_stdout_fifo=$IMGNEKO_TEST_OUTPUT_DIR/imgneko-broken-stdout-fifo

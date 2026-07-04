@@ -10,6 +10,7 @@
 
 #include "imgneko/placeholder.h"
 
+#include <assert.h>
 #include <limits.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -159,13 +160,16 @@ const char *placeholder_error_string(PlaceholderError error) {
 // fit, or a negative value when `len` is not representable as an `int`.
 static int memcpy_counted(char *out, size_t out_cap, const char *data,
                           size_t len) {
+    if (out == NULL && out_cap != 0)
+        return -1;
     // IMGNEKO_UNCOVERED_OK: `strlen` cannot practically reach `INT_MAX` here.
     if (len > (size_t)INT_MAX)
         return -1; // IMGNEKO_UNCOVERED_OK
     if (len > out_cap)
         return (int)len;
 
-    memcpy(out, data, len);
+    if (len != 0)
+        memcpy(out, data, len);
     return (int)len;
 }
 
@@ -273,6 +277,166 @@ static int format_counted(char *out, size_t out_cap, const char *fmt,
     return len;
 }
 
+// Build a relative movement sequence from the last rendered cell to a final
+// cursor position.
+//
+// `placeholder`
+//     Placeholder being rendered.
+// `final_cursor`
+//     Requested final cursor position.
+// `linefeed_next_line`
+//     Use a literal newline for `next-line`, preserving text-mode behavior.
+// `out`
+//     Buffer receiving the final cursor sequence.
+// `out_cap`
+//     Number of bytes available in `out`.
+static int write_final_cursor_sequence(const Placeholder *placeholder,
+                                       PlaceholderFinalCursor final_cursor,
+                                       bool linefeed_next_line, char *out,
+                                       size_t out_cap) {
+    if (placeholder == NULL)
+        return -1;
+
+    uint32_t width = placeholder->rect.end_col - placeholder->rect.start_col;
+    uint32_t rows_up =
+        placeholder->rect.end_row - placeholder->rect.start_row - 1;
+
+    switch (final_cursor) {
+    case PLACEHOLDER_FINAL_CURSOR_BOTTOM_RIGHT:
+        return 0;
+    case PLACEHOLDER_FINAL_CURSOR_BOTTOM_LEFT:
+        return format_counted(out, out_cap, "\033[%u", 'D', (unsigned)width);
+    case PLACEHOLDER_FINAL_CURSOR_NEXT_LINE:
+        if (linefeed_next_line)
+            return memcpy_counted(out, out_cap, "\n", 1);
+        return memcpy_counted(out, out_cap, "\n\r", 2);
+    case PLACEHOLDER_FINAL_CURSOR_BELOW_LEFT:
+        return format_counted(out, out_cap, "\033[%uD\033", 'D',
+                              (unsigned)width);
+    case PLACEHOLDER_FINAL_CURSOR_TOP_LEFT:
+        if (rows_up)
+            return format_counted(out, out_cap, "\033[%uD\033[%u", 'A',
+                                  (unsigned)width, (unsigned)rows_up);
+        return format_counted(out, out_cap, "\033[%u", 'D', (unsigned)width);
+    case PLACEHOLDER_FINAL_CURSOR_TOP_RIGHT:
+        if (rows_up)
+            return format_counted(out, out_cap, "\033[%u", 'A',
+                                  (unsigned)rows_up);
+        return 0;
+    }
+
+    return -1;
+}
+
+// Build an absolute movement sequence from the configured terminal origin to a
+// final cursor position.
+//
+// `placeholder`
+//     Placeholder being rendered.
+// `pos`
+//     Zero-based terminal origin used by the absolute positioner.
+// `final_cursor`
+//     Requested final cursor position.
+// `out`
+//     Buffer receiving the final cursor sequence.
+// `out_cap`
+//     Number of bytes available in `out`.
+static int write_absolute_final_cursor_sequence(
+    const Placeholder *placeholder, const PlaceholderAbsPos *pos,
+    PlaceholderFinalCursor final_cursor, char *out, size_t out_cap) {
+    if (placeholder == NULL)
+        return -1;
+
+    uint32_t width = placeholder->rect.end_col - placeholder->rect.start_col;
+    uint32_t height = placeholder->rect.end_row - placeholder->rect.start_row;
+    uint32_t target_col = pos->origin_col;
+    uint32_t target_row = pos->origin_row;
+
+    switch (final_cursor) {
+    case PLACEHOLDER_FINAL_CURSOR_BOTTOM_RIGHT:
+        return 0;
+    case PLACEHOLDER_FINAL_CURSOR_BOTTOM_LEFT:
+        target_row += height - 1;
+        break;
+    case PLACEHOLDER_FINAL_CURSOR_BELOW_LEFT:
+        target_row += height;
+        break;
+    case PLACEHOLDER_FINAL_CURSOR_NEXT_LINE:
+        target_col = 0;
+        target_row += height;
+        break;
+    case PLACEHOLDER_FINAL_CURSOR_TOP_LEFT:
+        break;
+    case PLACEHOLDER_FINAL_CURSOR_TOP_RIGHT:
+        target_col += width;
+        break;
+    default:
+        return -1;
+    }
+
+    return format_counted(out, out_cap, "\033[%u;%u", 'H',
+                          (unsigned)(target_row + 1),
+                          (unsigned)(target_col + 1));
+}
+
+// Return whether the final cursor is in the left column of the placeholder.
+static bool final_cursor_in_left_column(PlaceholderFinalCursor final_cursor) {
+    switch (final_cursor) {
+    case PLACEHOLDER_FINAL_CURSOR_BOTTOM_LEFT:
+    case PLACEHOLDER_FINAL_CURSOR_BELOW_LEFT:
+    case PLACEHOLDER_FINAL_CURSOR_TOP_LEFT:
+        return true;
+    case PLACEHOLDER_FINAL_CURSOR_BOTTOM_RIGHT:
+    case PLACEHOLDER_FINAL_CURSOR_NEXT_LINE:
+    case PLACEHOLDER_FINAL_CURSOR_TOP_RIGHT:
+        return false;
+    }
+
+    return false;
+}
+
+// Build a final cursor sequence that starts by restoring the cursor saved at
+// the beginning of the last placeholder row.
+//
+// `placeholder`
+//     Placeholder being rendered.
+// `final_cursor`
+//     Requested final cursor position.
+// `out`
+//     Buffer receiving the final cursor sequence.
+// `out_cap`
+//     Number of bytes available in `out`.
+static int
+write_saved_final_cursor_sequence(const Placeholder *placeholder,
+                                  PlaceholderFinalCursor final_cursor,
+                                  char *out, size_t out_cap) {
+    if (placeholder == NULL)
+        return -1;
+
+    switch (final_cursor) {
+    case PLACEHOLDER_FINAL_CURSOR_BOTTOM_LEFT:
+        return memcpy_counted(out, out_cap, "\033[u", 3);
+    case PLACEHOLDER_FINAL_CURSOR_BELOW_LEFT:
+        return memcpy_counted(out, out_cap, "\033[u\033D", 5);
+    case PLACEHOLDER_FINAL_CURSOR_TOP_LEFT: {
+        uint32_t rows_up =
+            placeholder->rect.end_row - placeholder->rect.start_row - 1;
+        if (rows_up)
+            return format_counted(out, out_cap, "\033[u\033[%u", 'A',
+                                  (unsigned)rows_up);
+        return memcpy_counted(out, out_cap, "\033[u", 3);
+    }
+    case PLACEHOLDER_FINAL_CURSOR_BOTTOM_RIGHT:
+    case PLACEHOLDER_FINAL_CURSOR_NEXT_LINE:
+    case PLACEHOLDER_FINAL_CURSOR_TOP_RIGHT:
+        return write_final_cursor_sequence(placeholder, final_cursor,
+                                           /*linefeed_next_line=*/false, out,
+                                           out_cap);
+    }
+
+    return -1;
+}
+
 PlaceholderFormat placeholder_format_bg_256(uint8_t index, char *out,
                                             size_t out_cap) {
     require(out != NULL, "placeholder 256-color background buffer is missing");
@@ -358,28 +522,50 @@ placeholder_format_vertical_stripes(PlaceholderAlternatingFormat *format) {
         placeholder_format_vertical_stripes_func, format);
 }
 
-// Positioner callback that emits a newline at row end.
+// Return a zero-initialized config when a standard positioner has no context.
+static const PlaceholderPositionConfig *position_config_or_default(void *ctx) {
+    static const PlaceholderPositionConfig default_config = {0};
+    return ctx ? ctx : &default_config;
+}
+
+// Positioner callback that emits newlines between rows.
 static int linefeed_positioner_write(void *ctx, const Placeholder *placeholder,
                                      uint32_t row,
                                      PlaceholderPositionFlags flags, char *out,
                                      size_t out_cap) {
-    (void)ctx;
-    (void)placeholder;
+    const PlaceholderPositionConfig *config = position_config_or_default(ctx);
+
     (void)row;
 
-    if ((flags & PLACEHOLDER_POSITION_LINE_END) == 0)
+    if (flags & PLACEHOLDER_POSITION_LINE_START) {
+        if ((flags & PLACEHOLDER_POSITION_FIRST_LINE) &&
+            config->first_line_start_prefix) {
+            return memcpy_counted(out, out_cap, config->first_line_start_prefix,
+                                  strlen(config->first_line_start_prefix));
+        }
         return 0;
+    }
+    if (flags & PLACEHOLDER_POSITION_LINE_END) {
+        if (flags & PLACEHOLDER_POSITION_LAST_LINE)
+            return write_final_cursor_sequence(
+                placeholder, config->final_cursor,
+                /*linefeed_next_line=*/true, out, out_cap);
 
-    return memcpy_counted(out, out_cap, "\n", 1);
+        return memcpy_counted(out, out_cap, "\n", 1);
+    }
+
+    return 0;
 }
 
-PlaceholderPositioner placeholder_position_linefeeds(void) {
+PlaceholderPositioner
+placeholder_position_linefeeds(PlaceholderPositionConfig *config) {
     return (PlaceholderPositioner){
         .func = linefeed_positioner_write,
+        .ctx = config,
     };
 }
 
-// Positioner callback that emits an absolute cursor move at row start.
+// Positioner callback that emits absolute cursor moves.
 //
 // `ctx`
 //     `PlaceholderAbsPos` describing the zero-based origin.
@@ -388,49 +574,73 @@ static int absolute_positioner_write(void *ctx, const Placeholder *placeholder,
                                      PlaceholderPositionFlags flags, char *out,
                                      size_t out_cap) {
     PlaceholderAbsPos *pos = ctx;
+    assert(pos);
 
-    (void)placeholder;
+    if (flags & PLACEHOLDER_POSITION_LINE_START)
+        return format_counted(out, out_cap, "\033[%u;%u", 'H',
+                              (unsigned)(pos->origin_row + row + 1),
+                              (unsigned)(pos->origin_col + 1));
 
-    if ((flags & PLACEHOLDER_POSITION_LINE_START) == 0)
-        return 0;
-    if (pos == NULL)
-        return -1;
+    if ((flags & PLACEHOLDER_POSITION_LINE_END) &&
+        (flags & PLACEHOLDER_POSITION_LAST_LINE))
+        return write_absolute_final_cursor_sequence(
+            placeholder, pos, pos->final_cursor, out, out_cap);
 
-    return format_counted(out, out_cap, "\033[%u;%u", 'H',
-                          (unsigned)(pos->origin_row + row + 1),
-                          (unsigned)(pos->origin_col + 1));
+    return 0;
 }
 
 PlaceholderPositioner placeholder_position_absolute(PlaceholderAbsPos *pos) {
+    require(pos != NULL, "absolute positioner context is missing");
     return (PlaceholderPositioner){
         .func = absolute_positioner_write,
         .ctx = pos,
     };
 }
 
-// Positioner callback that saves the cursor before each non-final row and
-// restores it at row end.
+// Positioner callback that saves the cursor before each row whose start may be
+// needed later and restores it at row end.
 static int cursor_positioner_with_save_write(void *ctx,
                                              const Placeholder *placeholder,
                                              uint32_t row,
                                              PlaceholderPositionFlags flags,
                                              char *out, size_t out_cap) {
-    (void)ctx;
-    (void)placeholder;
+    const PlaceholderPositionConfig *config = position_config_or_default(ctx);
     (void)row;
 
-    if ((flags & PLACEHOLDER_POSITION_LAST_LINE) != 0)
-        return 0;
-    if ((flags & PLACEHOLDER_POSITION_LINE_START) != 0)
+    if (flags & PLACEHOLDER_POSITION_LINE_START) {
+        const char *prefix = NULL;
+        bool save_line = true;
+
+        if (flags & PLACEHOLDER_POSITION_FIRST_LINE)
+            prefix = config->first_line_start_prefix;
+        if (flags & PLACEHOLDER_POSITION_LAST_LINE)
+            save_line = final_cursor_in_left_column(config->final_cursor);
+        if (!save_line) {
+            if (prefix != NULL)
+                return memcpy_counted(out, out_cap, prefix, strlen(prefix));
+            return 0;
+        }
+        if (prefix != NULL)
+            return format_counted(out, out_cap, "%s\033[", 's', prefix);
+
         return memcpy_counted(out, out_cap, "\033[s", 3);
-    if ((flags & PLACEHOLDER_POSITION_LINE_END) != 0)
+    }
+    if (flags & PLACEHOLDER_POSITION_LINE_END) {
+        if (flags & PLACEHOLDER_POSITION_LAST_LINE)
+            return write_saved_final_cursor_sequence(
+                placeholder, config->final_cursor, out, out_cap);
+
         return memcpy_counted(out, out_cap, "\033[u\033D", 5);
+    }
+
     return 0;
 }
 
-PlaceholderPositioner placeholder_position_at_cursor_with_save(void) {
+PlaceholderPositioner
+placeholder_position_at_cursor_with_save(PlaceholderPositionConfig *config) {
     return (PlaceholderPositioner){
         .func = cursor_positioner_with_save_write,
+        .ctx = config,
     };
 }
 
@@ -440,25 +650,39 @@ static int cursor_positioner_with_moves_write(void *ctx,
                                               uint32_t row,
                                               PlaceholderPositionFlags flags,
                                               char *out, size_t out_cap) {
-    (void)ctx;
+    const PlaceholderPositionConfig *config = position_config_or_default(ctx);
     (void)row;
 
-    if (placeholder == NULL)
-        return -1;
-    if ((flags & PLACEHOLDER_POSITION_LAST_LINE) != 0)
-        return 0;
-    if ((flags & PLACEHOLDER_POSITION_LINE_START) != 0)
-        return 0;
-    if ((flags & PLACEHOLDER_POSITION_LINE_END) == 0)
-        return 0;
+    if (flags & PLACEHOLDER_POSITION_LINE_START) {
+        if ((flags & PLACEHOLDER_POSITION_FIRST_LINE) &&
+            config->first_line_start_prefix != NULL)
+            return memcpy_counted(out, out_cap, config->first_line_start_prefix,
+                                  strlen(config->first_line_start_prefix));
 
-    uint32_t width = placeholder->rect.end_col - placeholder->rect.start_col;
-    return format_counted(out, out_cap, "\033[%uD\033", 'D', (unsigned)width);
+        return 0;
+    }
+    if (flags & PLACEHOLDER_POSITION_LINE_END) {
+        if (flags & PLACEHOLDER_POSITION_LAST_LINE)
+            return write_final_cursor_sequence(
+                placeholder, config->final_cursor,
+                /*linefeed_next_line=*/false, out, out_cap);
+
+        if (placeholder == NULL)
+            return -1;
+        uint32_t width =
+            placeholder->rect.end_col - placeholder->rect.start_col;
+        return format_counted(out, out_cap, "\033[%uD\033", 'D',
+                              (unsigned)width);
+    }
+
+    return 0;
 }
 
-PlaceholderPositioner placeholder_position_at_cursor_with_moves(void) {
+PlaceholderPositioner
+placeholder_position_at_cursor_with_moves(PlaceholderPositionConfig *config) {
     return (PlaceholderPositioner){
         .func = cursor_positioner_with_moves_write,
+        .ctx = config,
     };
 }
 
@@ -613,7 +837,7 @@ static PlaceholderError chunker_flush_prefix(PlaceholderChunker *chunker,
         write_len += PLACEHOLDER_RESET_LEN;
     }
 
-    if (imgneko_writer_write(chunker->writer, chunker->data, write_len) != 0)
+    if (imgneko_writer_write(chunker->writer, chunker->data, write_len))
         return PLACEHOLDER_WRITE_FAILED;
 
     // Move the unwritten tail to the front of `data` and update chunker state.
@@ -943,7 +1167,7 @@ PlaceholderError placeholder_write(const Placeholder *placeholder,
         options = &default_options;
     } else if (options->positioner.func == NULL) {
         default_options = *options;
-        default_options.positioner = placeholder_position_linefeeds();
+        default_options.positioner = placeholder_position_linefeeds(NULL);
         options = &default_options;
     }
 
