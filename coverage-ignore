@@ -41,3 +41,4 @@ src/util/options.h *_deinit
 
 # We don't care about coverage of the tests themselves.
 testing/tests/*
+testing/support/test_reader.c
