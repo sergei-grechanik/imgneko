@@ -281,6 +281,28 @@ static int expect_error(TestContext *ctx, PlaceholderError actual,
     return 1;
 }
 
+// Require an integer result to match the expected value.
+static int expect_int_result(TestContext *ctx, int actual, int expected,
+                             const char *what) {
+    if (actual == expected)
+        return 0;
+
+    fprintf(stderr, "%s: %s returned %d, expected %d\n", ctx->test_name, what,
+            actual, expected);
+    return 1;
+}
+
+// Require a callback to report failure with a negative return value.
+static int expect_negative_result(TestContext *ctx, int actual,
+                                  const char *what) {
+    if (actual < 0)
+        return 0;
+
+    fprintf(stderr, "%s: %s returned %d, expected a negative value\n",
+            ctx->test_name, what, actual);
+    return 1;
+}
+
 // Verify that a render fails with one chunk size and succeeds with another.
 //
 // Parameters:
@@ -1280,116 +1302,165 @@ static int test_positioners(TestContext *ctx) {
 
 static int test_positioner_edge_cases(TestContext *ctx) {
     Placeholder placeholder = base_placeholder();
-    PlaceholderOptions options = placeholder_options_default();
     PlaceholderAbsPos abs_pos = {.origin_col = 4, .origin_row = 7};
     char output[4096];
 
+    // Linefeed positioning emits only a literal newline between non-final rows.
+    // These checks cover the counted-output contract for that newline and the
+    // final-cursor path that requires placeholder geometry.
     PlaceholderPositioner linefeeds = placeholder_position_linefeeds(NULL);
-    if (linefeeds.func(NULL, &placeholder, 0, 0, output, sizeof(output)) != 0 ||
-        linefeeds.func(NULL, &placeholder, 0, PLACEHOLDER_POSITION_LINE_END,
-                       NULL, 1) >= 0 ||
-        linefeeds.func(NULL, &placeholder, 0, PLACEHOLDER_POSITION_LINE_END,
-                       NULL, 0) != 1 ||
-        linefeeds.func(NULL, NULL, 0,
-                       PLACEHOLDER_POSITION_LINE_END |
-                           PLACEHOLDER_POSITION_LAST_LINE,
-                       output, sizeof(output)) >= 0 ||
-        linefeeds.func(NULL, &placeholder, 0, PLACEHOLDER_POSITION_LINE_END,
-                       output, 0) != 1) {
-        fprintf(stderr, "%s: bad linefeed positioner edge behavior\n",
-                ctx->test_name);
+    if (expect_int_result(
+            ctx,
+            linefeeds.func(NULL, &placeholder, 0, 0, output, sizeof(output)), 0,
+            "linefeed ignores calls without position flags") ||
+        expect_negative_result(
+            ctx,
+            linefeeds.func(NULL, &placeholder, 0, PLACEHOLDER_POSITION_LINE_END,
+                           NULL, 1),
+            "linefeed rejects NULL output with nonzero capacity") ||
+        expect_int_result(
+            ctx,
+            linefeeds.func(NULL, &placeholder, 0, PLACEHOLDER_POSITION_LINE_END,
+                           NULL, 0),
+            1, "linefeed reports newline length in measure-only mode") ||
+        expect_negative_result(
+            ctx,
+            linefeeds.func(NULL, NULL, 0,
+                           PLACEHOLDER_POSITION_LINE_END |
+                               PLACEHOLDER_POSITION_LAST_LINE,
+                           output, sizeof(output)),
+            "linefeed final cursor rejects missing placeholder") ||
+        expect_int_result(
+            ctx,
+            linefeeds.func(NULL, &placeholder, 0, PLACEHOLDER_POSITION_LINE_END,
+                           output, 0),
+            1, "linefeed reports newline length for too-small output"))
         return 1;
-    }
 
+    // Absolute positioning formats an ESC[row;colH movement at line start. It
+    // must support measure-only calls, reject invalid output buffers, and fail
+    // final-cursor modes that cannot compute a target position.
     PlaceholderPositioner abs = placeholder_position_absolute(&abs_pos);
-    if (abs.func(abs.ctx, &placeholder, 0, PLACEHOLDER_POSITION_LINE_START,
-                 NULL, 1) >= 0 ||
-        abs.func(abs.ctx, &placeholder, 0, PLACEHOLDER_POSITION_LINE_START,
-                 NULL, 0) <= 0 ||
-        abs.func(abs.ctx, &placeholder, 0, 0, output, sizeof(output)) != 0 ||
-        abs.func(abs.ctx, NULL, 0,
-                 PLACEHOLDER_POSITION_LINE_END | PLACEHOLDER_POSITION_LAST_LINE,
-                 output, sizeof(output)) >= 0) {
-        fprintf(stderr, "%s: bad absolute positioner null output behavior\n",
-                ctx->test_name);
+    if (expect_negative_result(
+            ctx,
+            abs.func(abs.ctx, &placeholder, 0, PLACEHOLDER_POSITION_LINE_START,
+                     NULL, 1),
+            "absolute rejects NULL output with nonzero capacity") ||
+        expect_int_result(
+            ctx,
+            abs.func(abs.ctx, &placeholder, 0, PLACEHOLDER_POSITION_LINE_START,
+                     NULL, 0),
+            (int)strlen("\033[8;5H"),
+            "absolute reports cursor movement length in measure-only mode") ||
+        expect_int_result(
+            ctx, abs.func(abs.ctx, &placeholder, 0, 0, output, sizeof(output)),
+            0, "absolute ignores calls without position flags") ||
+        expect_negative_result(
+            ctx,
+            abs.func(abs.ctx, NULL, 0,
+                     PLACEHOLDER_POSITION_LINE_END |
+                         PLACEHOLDER_POSITION_LAST_LINE,
+                     output, sizeof(output)),
+            "absolute final cursor rejects missing placeholder"))
         return 1;
-    }
     abs_pos.final_cursor = (PlaceholderFinalCursor)-1;
-    if (abs.func(abs.ctx, &placeholder, 0,
-                 PLACEHOLDER_POSITION_LINE_END | PLACEHOLDER_POSITION_LAST_LINE,
-                 output, sizeof(output)) >= 0) {
-        fprintf(stderr, "%s: bad absolute positioner final cursor behavior\n",
-                ctx->test_name);
+    if (expect_negative_result(
+            ctx,
+            abs.func(abs.ctx, &placeholder, 0,
+                     PLACEHOLDER_POSITION_LINE_END |
+                         PLACEHOLDER_POSITION_LAST_LINE,
+                     output, sizeof(output)),
+            "absolute final cursor rejects invalid cursor mode"))
         return 1;
-    }
     abs_pos.final_cursor = PLACEHOLDER_FINAL_CURSOR_BOTTOM_RIGHT;
 
-    options.positioner = placeholder_position_at_cursor_with_save(NULL);
-    if (options.positioner.func(NULL, &placeholder, 0,
-                                PLACEHOLDER_POSITION_LINE_START, output,
-                                2) != 3 ||
-        options.positioner.func(NULL, &placeholder, 0,
-                                PLACEHOLDER_POSITION_LINE_END, output,
-                                4) != 5 ||
-        options.positioner.func(NULL, &placeholder, 0, 0, output,
-                                sizeof(output)) != 0) {
-        fprintf(stderr, "%s: bad cursor positioner edge behavior\n",
-                ctx->test_name);
+    // Save/restore cursor positioning emits ESC[s at row start and ESC[u ESC D
+    // after non-final rows. The final row end switches to final-cursor logic.
+    PlaceholderPositioner save = placeholder_position_at_cursor_with_save(NULL);
+    if (expect_int_result(ctx,
+                          save.func(save.ctx, &placeholder, 0,
+                                    PLACEHOLDER_POSITION_LINE_START, output, 2),
+                          (int)strlen("\033[s"),
+                          "save-cursor reports line-start length when output "
+                          "is too small") ||
+        expect_int_result(ctx,
+                          save.func(save.ctx, &placeholder, 0,
+                                    PLACEHOLDER_POSITION_LINE_END, output, 4),
+                          (int)strlen("\033[u\033D"),
+                          "save-cursor reports line-end length when output is "
+                          "too small") ||
+        expect_int_result(
+            ctx,
+            save.func(save.ctx, &placeholder, 0, 0, output, sizeof(output)), 0,
+            "save-cursor ignores calls without position flags"))
         return 1;
-    }
-    if (options.positioner.func(NULL, NULL, 0,
-                                PLACEHOLDER_POSITION_LINE_END |
-                                    PLACEHOLDER_POSITION_LAST_LINE,
-                                output, sizeof(output)) >= 0) {
-        fprintf(stderr, "%s: bad cursor positioner null placeholder behavior\n",
-                ctx->test_name);
+    if (expect_negative_result(
+            ctx,
+            save.func(save.ctx, NULL, 0,
+                      PLACEHOLDER_POSITION_LINE_END |
+                          PLACEHOLDER_POSITION_LAST_LINE,
+                      output, sizeof(output)),
+            "save-cursor final cursor rejects missing placeholder"))
         return 1;
-    }
 
+    // Last-line starts only save the cursor for final cursor modes that restore
+    // to a left column. Invalid enum values are rejected when the final-cursor
+    // sequence is emitted at line end.
     PlaceholderPositionConfig invalid_final_cursor = {
         .final_cursor = (PlaceholderFinalCursor)-1,
     };
-    options.positioner =
-        placeholder_position_at_cursor_with_save(&invalid_final_cursor);
-    if (options.positioner.func(options.positioner.ctx, &placeholder, 0,
-                                PLACEHOLDER_POSITION_LINE_START |
-                                    PLACEHOLDER_POSITION_LAST_LINE,
-                                output, sizeof(output)) != 0 ||
-        options.positioner.func(options.positioner.ctx, &placeholder, 0,
-                                PLACEHOLDER_POSITION_LINE_END |
-                                    PLACEHOLDER_POSITION_LAST_LINE,
-                                output, sizeof(output)) >= 0) {
-        fprintf(stderr, "%s: bad cursor positioner invalid final cursor\n",
-                ctx->test_name);
+    save = placeholder_position_at_cursor_with_save(&invalid_final_cursor);
+    if (expect_int_result(
+            ctx,
+            save.func(save.ctx, &placeholder, 0,
+                      PLACEHOLDER_POSITION_LINE_START |
+                          PLACEHOLDER_POSITION_LAST_LINE,
+                      output, sizeof(output)),
+            0, "save-cursor last-line start ignores invalid cursor mode") ||
+        expect_negative_result(
+            ctx,
+            save.func(save.ctx, &placeholder, 0,
+                      PLACEHOLDER_POSITION_LINE_END |
+                          PLACEHOLDER_POSITION_LAST_LINE,
+                      output, sizeof(output)),
+            "save-cursor final cursor rejects invalid cursor mode"))
         return 1;
-    }
 
+    // Move-based cursor positioning uses the placeholder width at non-final
+    // line ends, so missing geometry is an error there as well.
     placeholder.rect.end_col = 333;
-    options.positioner = placeholder_position_at_cursor_with_moves(NULL);
-    if (options.positioner.func(NULL, &placeholder, 0,
-                                PLACEHOLDER_POSITION_LINE_START, output,
-                                sizeof(output)) != 0 ||
-        options.positioner.func(NULL, &placeholder, 0,
-                                PLACEHOLDER_POSITION_LINE_END, output,
-                                3) <= 3 ||
-        options.positioner.func(NULL, NULL, 0, PLACEHOLDER_POSITION_LINE_END,
-                                output, sizeof(output)) >= 0 ||
-        options.positioner.func(NULL, &placeholder, 0, 0, output,
-                                sizeof(output)) != 0) {
-        fprintf(stderr, "%s: bad cursor no-save edge behavior\n",
-                ctx->test_name);
+    PlaceholderPositioner moves =
+        placeholder_position_at_cursor_with_moves(NULL);
+    if (expect_int_result(
+            ctx,
+            moves.func(moves.ctx, &placeholder, 0,
+                       PLACEHOLDER_POSITION_LINE_START, output, sizeof(output)),
+            0, "move-cursor line start without prefix is empty") ||
+        expect_int_result(ctx,
+                          moves.func(moves.ctx, &placeholder, 0,
+                                     PLACEHOLDER_POSITION_LINE_END, output, 3),
+                          (int)strlen("\033[333D\033D"),
+                          "move-cursor reports movement length when output is "
+                          "too small") ||
+        expect_negative_result(
+            ctx,
+            moves.func(moves.ctx, NULL, 0, PLACEHOLDER_POSITION_LINE_END,
+                       output, sizeof(output)),
+            "move-cursor line end rejects missing placeholder") ||
+        expect_int_result(
+            ctx,
+            moves.func(moves.ctx, &placeholder, 0, 0, output, sizeof(output)),
+            0, "move-cursor ignores calls without position flags"))
         return 1;
-    }
-    options.positioner =
-        placeholder_position_at_cursor_with_moves(&invalid_final_cursor);
-    if (options.positioner.func(options.positioner.ctx, &placeholder, 0,
-                                PLACEHOLDER_POSITION_LINE_END |
-                                    PLACEHOLDER_POSITION_LAST_LINE,
-                                output, sizeof(output)) >= 0) {
-        fprintf(stderr, "%s: bad cursor no-save final cursor behavior\n",
-                ctx->test_name);
+    moves = placeholder_position_at_cursor_with_moves(&invalid_final_cursor);
+    if (expect_negative_result(
+            ctx,
+            moves.func(moves.ctx, &placeholder, 0,
+                       PLACEHOLDER_POSITION_LINE_END |
+                           PLACEHOLDER_POSITION_LAST_LINE,
+                       output, sizeof(output)),
+            "move-cursor final cursor rejects invalid cursor mode"))
         return 1;
-    }
 
     return 0;
 }
