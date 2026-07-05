@@ -23,6 +23,15 @@ echo "123 and 456"
 # CHECK: Two {{.*}} lines [[var:[0-9]+]]
 # CHECK-NEXT: [[var]] and 456
 
+# Verify that `^` in CHECK-SAME anchors at the previous match end, which lets
+# tests assert that adjacent same-line fragments have no unverified gap.
+
+echo "Adjacent same-line anchor"
+echo "alphabeta"
+# CHECK: Adjacent same-line anchor
+# CHECK: alpha
+# CHECK-SAME: {{^}}beta
+
 echo "Line with start and end"
 # CHECK: {{^Line with .* end$}}
 

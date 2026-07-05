@@ -796,12 +796,27 @@ static bool add_pending_not_directive(const char *path,
     return true;
 }
 
-// Search one output line segment for a match. When `pmatch` is non-NULL it
-// must point at `nmatch` writable entries.
+// Search an output line segment for a match.
+//
+// `pattern`
+//     The compiled regex to run.
+// `line`
+//     The output line that contains the search segment.
+// `start_column`
+//     The first byte offset in the half-open search segment.
+// `end_column`
+//     The byte offset just after the search segment.
+// `start_column_is_bol`
+//     Controls whether `^` anchors to `start_column` or to the physical start
+//     of the output line.
+// `pmatch`
+//     Writable match entries to fill with match offsets.
+// `nmatch`
+//     The number of entries in `pmatch`.
 static bool regex_search_segment(const CompiledPattern *pattern,
                                  const OutputLine *line, size_t start_column,
-                                 size_t end_column, regmatch_t *pmatch,
-                                 size_t nmatch) {
+                                 size_t end_column, bool start_column_is_bol,
+                                 regmatch_t *pmatch, size_t nmatch) {
     assert(pmatch != NULL);
     assert(nmatch != 0);
 
@@ -822,7 +837,7 @@ static bool regex_search_segment(const CompiledPattern *pattern,
         window = str_from_data(subject, end_column - start_column);
         subject = window.cstr;
     }
-    if (start_column != 0)
+    if (start_column != 0 && !start_column_is_bol)
         regexec_flags |= REG_NOTBOL;
     if (end_column != line->text.len)
         regexec_flags |= REG_NOTEOL;
@@ -906,7 +921,8 @@ static bool find_check_match(const CompiledPattern *pattern,
                 pattern, &lines->data[line_index],
                 /*start_column=*/line_start,
                 /*end_column=*/lines->data[line_index].text.len,
-                /*pmatch=*/captures, /*nmatch=*/capture_count)) {
+                /*start_column_is_bol=*/false, /*pmatch=*/captures,
+                /*nmatch=*/capture_count)) {
             continue;
         }
 
@@ -982,7 +998,8 @@ static bool find_check_dag_match(const CompiledPattern *pattern,
         while (true) {
             if (!regex_search_segment(
                     pattern, line, /*start_column=*/search_column,
-                    /*end_column=*/line->text.len, /*pmatch=*/captures,
+                    /*end_column=*/line->text.len,
+                    /*start_column_is_bol=*/false, /*pmatch=*/captures,
                     /*nmatch=*/capture_count))
                 break;
 
@@ -1108,7 +1125,8 @@ static bool find_check_same_match(const CompiledPattern *pattern,
             pattern, &lines->data[previous_match->line_index],
             /*start_column=*/previous_match->end_column,
             /*end_column=*/lines->data[previous_match->line_index].text.len,
-            /*pmatch=*/captures, /*nmatch=*/capture_count)) {
+            /*start_column_is_bol=*/true, /*pmatch=*/captures,
+            /*nmatch=*/capture_count)) {
         return false;
     }
 
@@ -1134,7 +1152,9 @@ static bool find_check_next_match(const CompiledPattern *pattern,
     if (!regex_search_segment(pattern, &lines->data[line_index],
                               /*start_column=*/0,
                               /*end_column=*/lines->data[line_index].text.len,
-                              /*pmatch=*/captures, /*nmatch=*/capture_count)) {
+                              /*start_column_is_bol=*/false,
+                              /*pmatch=*/captures,
+                              /*nmatch=*/capture_count)) {
         return false;
     }
 
@@ -1224,6 +1244,7 @@ static bool verify_negative_region(const char *path,
                                       &lines->data[line_index],
                                       /*start_column=*/start_column,
                                       /*end_column=*/end_column,
+                                      /*start_column_is_bol=*/false,
                                       /*pmatch=*/&whole_match,
                                       /*nmatch=*/1)) {
                 continue;
