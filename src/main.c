@@ -341,21 +341,11 @@ static bool validate_placement_id(const void *value, String *error_out) {
                  .clear = placeholder_bg_clear_option,                         \
                  .copy = placeholder_bg_copy_option, .cli = "--bg-file PATH",  \
                  .descr = "Raw background formatting file path."))             \
-    X(S, place, OptUint32Pair,                                                 \
+    X(S, size, OptUint32Pair,                                                  \
       OPT_CUSTOM(.parse = parse_uint32_pair_option,                            \
                  .validate = validate_positive_uint32_pair,                    \
-                 .cli = "-p --place CxR",                                      \
-                 .descr = "Placeholder size as COLSxROWS terminal cells."))    \
-    X(S, rows, OptUint32,                                                      \
-      OPT_CUSTOM(.parse = parse_uint32_option,                                 \
-                 .validate = validate_positive_uint32,                         \
-                 .cli = "-r --rows ROWS",                                      \
-                 .descr = "Placeholder height in terminal cells."))            \
-    X(S, cols, OptUint32,                                                      \
-      OPT_CUSTOM(.parse = parse_uint32_option,                                 \
-                 .validate = validate_positive_uint32,                         \
-                 .cli = "-c --cols COLS",                                      \
-                 .descr = "Placeholder width in terminal cells."))
+                 .cli = "-s --size CxR",                                       \
+                 .descr = "Placeholder size as COLSxROWS terminal cells."))
 
 OPT_DEFINE_STRUCT(ProgramOptions, PROGRAM_OPTIONS)
 OPT_DEFINE_STRUCT(PlaceholderCliOptions, PLACEHOLDER_OPTIONS)
@@ -399,13 +389,6 @@ static int run_placeholder_command(const PlaceholderCliOptions *options) {
     // Validate required options and reject conflicting option groups.
     if (!require_option(options->id.is_set, "--id"))
         return 2;
-
-    if (options->place.is_set &&
-        (options->rows.is_set || options->cols.is_set)) {
-        fprintf(stderr,
-                "error: --place cannot be used with --rows or --cols\n");
-        return 2;
-    }
 
     int background_options_set = (options->bg.is_set ? 1 : 0) +
                                  (options->bg_raw.is_set ? 1 : 0) +
@@ -463,20 +446,12 @@ static int run_placeholder_command(const PlaceholderCliOptions *options) {
         }
     }
 
-    // Resolve the rectangle size from either --place or the --rows/--cols pair.
-    uint32_t cols = 0;
-    uint32_t rows = 0;
-    if (options->place.is_set) {
-        cols = options->place.value.first;
-        rows = options->place.value.second;
-    } else {
-        if (!require_option(options->rows.is_set, "--rows") ||
-            !require_option(options->cols.is_set, "--cols")) {
-            return 2;
-        }
-        cols = options->cols.value;
-        rows = options->rows.value;
-    }
+    if (!require_option(options->size.is_set, "--size"))
+        return 2;
+
+    // Resolve the rectangle size from the required COLSxROWS pair.
+    uint32_t cols = options->size.value.first;
+    uint32_t rows = options->size.value.second;
 
     Placeholder placeholder = {
         .image_id = options->id.value,
