@@ -8,8 +8,9 @@
 #include <string.h>
 
 // Reader callback for a source with intentionally awkward maximum chunk sizes.
-static int test_chunked_reader_func(void *ctx, char *out, size_t out_cap,
-                                    size_t *len_out) {
+static ImgnekoReaderStatus test_chunked_reader_func(void *ctx, char *out,
+                                                    size_t out_cap,
+                                                    size_t *len_out) {
     TestChunkedReader *source = ctx;
 
     if (len_out == NULL)
@@ -61,8 +62,9 @@ static int test_chunked_reader_func(void *ctx, char *out, size_t out_cap,
 
 // Reader callback for a source that rejects buffers smaller than its whole
 // logical chunk.
-static int test_complete_chunk_reader_func(void *ctx, char *out, size_t out_cap,
-                                           size_t *len_out) {
+static ImgnekoReaderStatus test_complete_chunk_reader_func(void *ctx, char *out,
+                                                           size_t out_cap,
+                                                           size_t *len_out) {
     TestCompleteChunkReader *source = ctx;
 
     if (len_out == NULL)
@@ -174,7 +176,8 @@ int test_drain_reader(const TestContext *ctx, ImgnekoReader reader,
         size_t len = 0;
 
         memset(buffer, 'x', sizeof(buffer));
-        int status = imgneko_reader_read(reader, buffer, chunk_size, &len);
+        ImgnekoReaderStatus status =
+            imgneko_reader_read(reader, buffer, chunk_size, &len);
 
         if (status == IMGNEKO_READER_EOF)
             return 0;

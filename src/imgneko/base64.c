@@ -243,10 +243,9 @@ ImgnekoBase64Status imgneko_base64_decode(const char *data, size_t len,
 // Reader Transformer Helpers
 //===----------------------------------------------------------------------===//
 
-// Propagate custom source errors, but treat source capacity failures as
-// transformer workspace failures because callers cannot fix them by resizing
-// `out`.
-static int translate_source_error(int status) {
+// Treat source capacity failures as transformer workspace failures because
+// callers cannot fix them by resizing `out`.
+static ImgnekoReaderStatus translate_source_error(ImgnekoReaderStatus status) {
     if (status == IMGNEKO_READER_BUFFER_TOO_SMALL)
         return IMGNEKO_READER_WORKSPACE_TOO_SMALL;
     return status;
@@ -309,8 +308,9 @@ base64_encode_reader_encode_buffer(ImgnekoBase64EncodeReader *reader,
 }
 
 // Reader callback for base64-encoding bytes from an underlying source.
-static int base64_encode_reader_func(void *ctx, char *out, size_t out_cap,
-                                     size_t *len_out) {
+static ImgnekoReaderStatus base64_encode_reader_func(void *ctx, char *out,
+                                                     size_t out_cap,
+                                                     size_t *len_out) {
     ImgnekoBase64EncodeReader *reader = ctx;
 
     assert(len_out != NULL);
@@ -344,7 +344,7 @@ static int base64_encode_reader_func(void *ctx, char *out, size_t out_cap,
         // New source data is appended after carried bytes so the workspace
         // starts with as many complete 3-byte groups as possible.
         size_t len = 0;
-        int status = imgneko_reader_read(
+        ImgnekoReaderStatus status = imgneko_reader_read(
             reader->source, reader->buffer + reader->carry_len, cap, &len);
 
         if (status == IMGNEKO_READER_OK) {
@@ -400,19 +400,24 @@ void imgneko_base64_decode_reader_init(ImgnekoBase64DecodeReader *reader,
         .source = source,
         .buffer = buffer,
         .buffer_cap = buffer_cap,
+        .error_status = IMGNEKO_BASE64_OK,
+        .pending_status = IMGNEKO_READER_OK,
     };
 }
 
 // Verify that a padded quartet is actually followed by source EOF.
-static int verify_decode_source_eof(ImgnekoBase64DecodeReader *reader) {
+static ImgnekoReaderStatus
+verify_decode_source_eof(ImgnekoBase64DecodeReader *reader) {
     size_t len = 0;
-    int status = imgneko_reader_read(reader->source, reader->buffer,
-                                     reader->buffer_cap, &len);
+    ImgnekoReaderStatus status = imgneko_reader_read(
+        reader->source, reader->buffer, reader->buffer_cap, &len);
 
     if (status == IMGNEKO_READER_EOF)
         return IMGNEKO_READER_OK;
-    if (status == IMGNEKO_READER_OK)
-        return IMGNEKO_BASE64_INVALID_INPUT;
+    if (status == IMGNEKO_READER_OK) {
+        reader->error_status = IMGNEKO_BASE64_INVALID_INPUT;
+        return IMGNEKO_READER_ERROR;
+    }
     if (status == IMGNEKO_READER_BUFFER_TOO_SMALL)
         return IMGNEKO_READER_WORKSPACE_TOO_SMALL;
     return status;
@@ -451,9 +456,13 @@ base64_decode_reader_input_cap(const ImgnekoBase64DecodeReader *reader,
 //     Number of bytes already written to the caller's output buffer.
 // `decoded_len_out`
 //     Output parameter receiving `decoded_len` when `status` is deferred.
-static int base64_decode_reader_finish_error(ImgnekoBase64DecodeReader *reader,
-                                             int status, size_t decoded_len,
-                                             size_t *decoded_len_out) {
+static ImgnekoReaderStatus
+base64_decode_reader_finish_error(ImgnekoBase64DecodeReader *reader,
+                                  ImgnekoReaderStatus status,
+                                  size_t decoded_len, size_t *decoded_len_out) {
+    assert(status != IMGNEKO_READER_OK);
+    assert(status != IMGNEKO_READER_EOF);
+
     if (decoded_len == 0)
         return status;
 
@@ -461,6 +470,20 @@ static int base64_decode_reader_finish_error(ImgnekoBase64DecodeReader *reader,
     reader->pending_status = status;
     *decoded_len_out = decoded_len;
     return IMGNEKO_READER_OK;
+}
+
+// Record a detailed base64 failure and expose it through the generic reader
+// interface. Valid decoded bytes take precedence over the error for the
+// current call, so callers can consume them before receiving the failure.
+static ImgnekoReaderStatus
+base64_decode_reader_fail(ImgnekoBase64DecodeReader *reader,
+                          ImgnekoBase64Status error_status, size_t decoded_len,
+                          size_t *decoded_len_out) {
+    assert(error_status != IMGNEKO_BASE64_OK);
+
+    reader->error_status = error_status;
+    return base64_decode_reader_finish_error(reader, IMGNEKO_READER_ERROR,
+                                             decoded_len, decoded_len_out);
 }
 
 // Decode complete quartets from `reader->buffer` directly into `out`.
@@ -475,9 +498,10 @@ static int base64_decode_reader_finish_error(ImgnekoBase64DecodeReader *reader,
 //     Caller-owned output buffer receiving decoded bytes directly.
 // `decoded_len_out`
 //     Output parameter receiving the number of bytes written to `out`.
-static int base64_decode_reader_decode_buffer(ImgnekoBase64DecodeReader *reader,
-                                              size_t input_len, char *out,
-                                              size_t *decoded_len_out) {
+static ImgnekoReaderStatus
+base64_decode_reader_decode_buffer(ImgnekoBase64DecodeReader *reader,
+                                   size_t input_len, char *out,
+                                   size_t *decoded_len_out) {
     size_t total_len = reader->carry_len + input_len;
     size_t decoded_len = 0;
     size_t offset = 0;
@@ -492,20 +516,19 @@ static int base64_decode_reader_decode_buffer(ImgnekoBase64DecodeReader *reader,
             reader->buffer + offset, out + decoded_len, &group_len, &is_final);
 
         if (status != IMGNEKO_BASE64_OK)
-            return base64_decode_reader_finish_error(
-                reader, IMGNEKO_BASE64_INVALID_INPUT, decoded_len,
-                decoded_len_out);
+            return base64_decode_reader_fail(reader, status, decoded_len,
+                                             decoded_len_out);
 
         offset += 4;
         decoded_len += group_len;
 
         if (is_final) {
             if (offset != total_len)
-                return base64_decode_reader_finish_error(
-                    reader, IMGNEKO_BASE64_INVALID_INPUT, decoded_len,
-                    decoded_len_out);
+                return base64_decode_reader_fail(reader,
+                                                 IMGNEKO_BASE64_INVALID_INPUT,
+                                                 decoded_len, decoded_len_out);
 
-            int eof_status = verify_decode_source_eof(reader);
+            ImgnekoReaderStatus eof_status = verify_decode_source_eof(reader);
             if (eof_status != IMGNEKO_READER_OK)
                 return base64_decode_reader_finish_error(
                     reader, eof_status, decoded_len, decoded_len_out);
@@ -530,8 +553,9 @@ static int base64_decode_reader_decode_buffer(ImgnekoBase64DecodeReader *reader,
 }
 
 // Reader callback for base64-decoding bytes from an underlying source.
-static int base64_decode_reader_func(void *ctx, char *out, size_t out_cap,
-                                     size_t *len_out) {
+static ImgnekoReaderStatus base64_decode_reader_func(void *ctx, char *out,
+                                                     size_t out_cap,
+                                                     size_t *len_out) {
     ImgnekoBase64DecodeReader *reader = ctx;
 
     assert(len_out != NULL);
@@ -542,6 +566,9 @@ static int base64_decode_reader_func(void *ctx, char *out, size_t out_cap,
 
     if (reader->eof)
         return IMGNEKO_READER_EOF;
+
+    if (reader->error_status != IMGNEKO_BASE64_OK)
+        return IMGNEKO_READER_ERROR;
 
     if (reader->pending_status != IMGNEKO_READER_OK)
         return reader->pending_status;
@@ -566,7 +593,7 @@ static int base64_decode_reader_func(void *ctx, char *out, size_t out_cap,
             return IMGNEKO_READER_WORKSPACE_TOO_SMALL;
 
         size_t len = 0;
-        int status = imgneko_reader_read(
+        ImgnekoReaderStatus status = imgneko_reader_read(
             reader->source, reader->buffer + reader->carry_len, cap, &len);
 
         if (status == IMGNEKO_READER_OK) {
@@ -589,7 +616,8 @@ static int base64_decode_reader_func(void *ctx, char *out, size_t out_cap,
 
         if (status == IMGNEKO_READER_EOF) {
             if (reader->carry_len != 0)
-                return IMGNEKO_BASE64_TRUNCATED_INPUT;
+                return base64_decode_reader_fail(
+                    reader, IMGNEKO_BASE64_TRUNCATED_INPUT, 0, len_out);
 
             reader->eof = true;
             return IMGNEKO_READER_EOF;

@@ -14,8 +14,9 @@
 #include <sys/types.h>
 #include <unistd.h>
 
-int imgneko_memory_reader_func(void *ctx, char *out, size_t out_cap,
-                               size_t *len_out) {
+ImgnekoReaderStatus imgneko_memory_reader_func(void *ctx, char *out,
+                                               size_t out_cap,
+                                               size_t *len_out) {
     ImgnekoMemoryReader *reader = ctx;
 
     assert(len_out != NULL);
@@ -52,8 +53,8 @@ void imgneko_memory_reader_init(ImgnekoMemoryReader *reader, const char *data,
 }
 
 // Reader callback for a borrowed file descriptor, retrying interrupted reads.
-int imgneko_fd_reader_func(void *ctx, char *out, size_t out_cap,
-                           size_t *len_out) {
+ImgnekoReaderStatus imgneko_fd_reader_func(void *ctx, char *out, size_t out_cap,
+                                           size_t *len_out) {
     ImgnekoFdReader *reader = ctx;
 
     assert(len_out != NULL);

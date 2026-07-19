@@ -110,7 +110,7 @@ typedef struct ImgnekoZlibDecompressReader {
     // successful initialization and is read-only to callers.
     ImgnekoZlibStatus error_status;
     // Source reader status deferred after already-produced output bytes.
-    int pending_source_status;
+    ImgnekoReaderStatus pending_source_status;
     // True after inflateInit() has initialized `stream`.
     bool stream_initialized;
     // True after `source` has reported EOF.

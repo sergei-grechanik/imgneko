@@ -13,8 +13,6 @@
 
 #define STR(text) (text), (sizeof(text) - 1)
 
-#define TEST_CUSTOM_READER_ERROR 1234
-
 static const char RAW_HELLO[] = "hello world";
 static const char ZLIB_HELLO[] =
     "\x78\x9c\xcb\x48\xcd\xc9\xc9\x57\x28\xcf\x2f\xca\x49\x01\x00"
@@ -77,7 +75,7 @@ typedef struct StatusAfterDataReader {
     const char *data;
     size_t len;
     bool emitted;
-    int final_status;
+    ImgnekoReaderStatus final_status;
     size_t final_len;
 } StatusAfterDataReader;
 
@@ -123,23 +121,22 @@ static uint32_t next_test_random(uint32_t *state) {
     return value;
 }
 
-// Reader callback that returns a source-specific error status.
-static int custom_error_reader_func(void *ctx, char *out, size_t out_cap,
-                                    size_t *len_out) {
+// Reader callback that always reports a standard source failure.
+static ImgnekoReaderStatus error_reader_func(void *ctx, char *out,
+                                             size_t out_cap, size_t *len_out) {
     (void)ctx;
     (void)out;
     (void)out_cap;
 
-    if (len_out != NULL)
-        *len_out = 0;
-
-    return TEST_CUSTOM_READER_ERROR;
+    *len_out = 0;
+    return IMGNEKO_READER_ERROR;
 }
 
 // Reader callback that emits a complete chunk and then returns a configured
 // status. It exercises source-EOF verification after a complete zlib stream.
-static int status_after_data_reader_func(void *ctx, char *out, size_t out_cap,
-                                         size_t *len_out) {
+static ImgnekoReaderStatus status_after_data_reader_func(void *ctx, char *out,
+                                                         size_t out_cap,
+                                                         size_t *len_out) {
     StatusAfterDataReader *reader = ctx;
 
     if (len_out == NULL)
@@ -167,8 +164,8 @@ static int status_after_data_reader_func(void *ctx, char *out, size_t out_cap,
 
 // Reader callback that violates the reader contract by reporting an OK read
 // with a caller-selected length while writing no bytes.
-static int bad_ok_reader_func(void *ctx, char *out, size_t out_cap,
-                              size_t *len_out) {
+static ImgnekoReaderStatus bad_ok_reader_func(void *ctx, char *out,
+                                              size_t out_cap, size_t *len_out) {
     BadOkReader *reader = ctx;
     (void)out;
     (void)out_cap;
@@ -921,8 +918,8 @@ static int test_decompress_reader_dictionary_required(TestContext *ctx) {
     return 0;
 }
 
-// Verify source workspace failures and custom statuses preserve the reader
-// transformer contract.
+// Verify source workspace failures and ordinary source failures preserve the
+// reader transformer contract.
 static int test_reader_source_failures(TestContext *ctx) {
     TestCompleteChunkReader raw_source = {
         .data = RAW_HELLO,
@@ -932,8 +929,8 @@ static int test_reader_source_failures(TestContext *ctx) {
         .data = ZLIB_HELLO,
         .len = sizeof(ZLIB_HELLO) - 1,
     };
-    ImgnekoReader custom_source = {
-        .read = custom_error_reader_func,
+    ImgnekoReader error_source = {
+        .read = error_reader_func,
     };
     ImgnekoZlibCompressReader compressor = {0};
     ImgnekoZlibDecompressReader decompressor = {0};
@@ -979,36 +976,35 @@ static int test_reader_source_failures(TestContext *ctx) {
     }
     imgneko_zlib_decompress_reader_deinit(&decompressor);
 
-    // Non-capacity source errors are application-defined and must pass through
-    // compression unchanged.
+    // A non-capacity source error passes through compression unchanged.
     init_status = imgneko_zlib_compress_reader_init(
-        &compressor, custom_source, full_workspace, sizeof(full_workspace));
+        &compressor, error_source, full_workspace, sizeof(full_workspace));
     if (test_expect_status(ctx, init_status, IMGNEKO_ZLIB_OK,
-                           "custom compression initialization"))
+                           "compression error initialization"))
         return 1;
 
     status =
         imgneko_reader_read(imgneko_zlib_compress_reader_as_reader(&compressor),
                             out, sizeof(out), &len);
-    if (test_expect_status(ctx, status, TEST_CUSTOM_READER_ERROR,
-                           "custom compression source status")) {
+    if (test_expect_status(ctx, status, IMGNEKO_READER_ERROR,
+                           "compression source error")) {
         imgneko_zlib_compress_reader_deinit(&compressor);
         return 1;
     }
     imgneko_zlib_compress_reader_deinit(&compressor);
 
-    // Verify the same pass-through behavior on the decompression path.
+    // The same pass-through behavior applies to decompression.
     init_status = imgneko_zlib_decompress_reader_init(
-        &decompressor, custom_source, full_workspace, sizeof(full_workspace));
+        &decompressor, error_source, full_workspace, sizeof(full_workspace));
     if (test_expect_status(ctx, init_status, IMGNEKO_ZLIB_OK,
-                           "custom decompression initialization"))
+                           "decompression error initialization"))
         return 1;
 
     status = imgneko_reader_read(
         imgneko_zlib_decompress_reader_as_reader(&decompressor), out,
         sizeof(out), &len);
-    if (test_expect_status(ctx, status, TEST_CUSTOM_READER_ERROR,
-                           "custom decompression source status")) {
+    if (test_expect_status(ctx, status, IMGNEKO_READER_ERROR,
+                           "decompression source error")) {
         imgneko_zlib_decompress_reader_deinit(&decompressor);
         return 1;
     }
@@ -1086,7 +1082,7 @@ static int test_decompress_reader_completion_error(TestContext *ctx) {
     StatusAfterDataReader source = {
         .data = ZLIB_HELLO,
         .len = sizeof(ZLIB_HELLO) - 1,
-        .final_status = TEST_CUSTOM_READER_ERROR,
+        .final_status = IMGNEKO_READER_ERROR,
     };
     ImgnekoReader source_reader = {
         .read = status_after_data_reader_func,
@@ -1097,7 +1093,7 @@ static int test_decompress_reader_completion_error(TestContext *ctx) {
     char out[64];
     size_t len = 0;
 
-    // The source emits the whole compressed stream, then returns its custom
+    // The source emits the whole compressed stream, then returns a generic
     // error when the decompressor checks that no trailing bytes remain.
     ImgnekoZlibStatus init_status = imgneko_zlib_decompress_reader_init(
         &decompressor, source_reader, workspace, sizeof(workspace));
@@ -1123,7 +1119,7 @@ static int test_decompress_reader_completion_error(TestContext *ctx) {
     status = imgneko_reader_read(
         imgneko_zlib_decompress_reader_as_reader(&decompressor), out,
         sizeof(out), &len);
-    if (test_expect_status(ctx, status, TEST_CUSTOM_READER_ERROR,
+    if (test_expect_status(ctx, status, IMGNEKO_READER_ERROR,
                            "completion-error deferred status") ||
         test_expect_size(ctx, len, 0, "completion-error deferred size")) {
         imgneko_zlib_decompress_reader_deinit(&decompressor);
@@ -1206,7 +1202,7 @@ static int test_decompress_reader_empty_completion_error(TestContext *ctx) {
     StatusAfterDataReader source = {
         .data = ZLIB_EMPTY,
         .len = sizeof(ZLIB_EMPTY) - 1,
-        .final_status = TEST_CUSTOM_READER_ERROR,
+        .final_status = IMGNEKO_READER_ERROR,
     };
     ImgnekoReader source_reader = {
         .read = status_after_data_reader_func,
@@ -1229,7 +1225,7 @@ static int test_decompress_reader_empty_completion_error(TestContext *ctx) {
     int status = imgneko_reader_read(
         imgneko_zlib_decompress_reader_as_reader(&decompressor), out,
         sizeof(out), &len);
-    if (test_expect_status(ctx, status, TEST_CUSTOM_READER_ERROR,
+    if (test_expect_status(ctx, status, IMGNEKO_READER_ERROR,
                            "empty-completion-error status") ||
         test_expect_size(ctx, len, 0, "empty-completion-error size") ||
         test_expect_buffer_output(ctx, out, len, sizeof(out), "", 0, 'x',

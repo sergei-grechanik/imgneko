@@ -47,8 +47,12 @@ typedef enum ImgnekoReaderStatus {
 //   required or best-effort retry size greater than `out_cap` to `len_out`.
 // - Return IMGNEKO_READER_EOF, copy no bytes to `out`, and write zero to
 //   `len_out`. The reader must keep returning EOF until it is reset.
-// - Return IMGNEKO_READER_ERROR, or IMGNEKO_READER_BUFFER_TOO_SMALL, or a
-//   custom error status, copy no bytes to `out`, and write zero to `len_out`.
+// - Return IMGNEKO_READER_ERROR or IMGNEKO_READER_WORKSPACE_TOO_SMALL, copy no
+//   bytes to `out`, and write zero to `len_out`.
+//
+// A reader never returns an implementation-specific status. A concrete reader
+// that has detailed failure information must record it in its own state and
+// return IMGNEKO_READER_ERROR through this interface.
 //
 // `ctx`
 //     Opaque context owned by the concrete reader.
@@ -61,8 +65,9 @@ typedef enum ImgnekoReaderStatus {
 //     Output parameter receiving the number of copied bytes, or the required
 //     or best-effort retry size for IMGNEKO_READER_BUFFER_TOO_SMALL. It must
 //     not be NULL.
-typedef int (*ImgnekoReaderFunc)(void *ctx, char *out, size_t out_cap,
-                                 size_t *len_out);
+typedef ImgnekoReaderStatus (*ImgnekoReaderFunc)(void *ctx, char *out,
+                                                 size_t out_cap,
+                                                 size_t *len_out);
 
 // A byte reader from an implementation-specific source.
 typedef struct ImgnekoReader {
@@ -88,8 +93,9 @@ typedef struct ImgnekoReader {
 //     Output parameter receiving the number of copied bytes, or the required
 //     or best-effort retry size for IMGNEKO_READER_BUFFER_TOO_SMALL. It must
 //     not be NULL.
-static inline int imgneko_reader_read(ImgnekoReader reader, char *out,
-                                      size_t out_cap, size_t *len_out) {
+static inline ImgnekoReaderStatus imgneko_reader_read(ImgnekoReader reader,
+                                                      char *out, size_t out_cap,
+                                                      size_t *len_out) {
     // IMGNEKO_UNCOVERED_OK[2 lines]
     if (len_out == NULL)
         return IMGNEKO_READER_ERROR;
@@ -120,8 +126,8 @@ void imgneko_memory_reader_init(ImgnekoMemoryReader *reader, const char *data,
                                 size_t len);
 
 // Reader callback for an ImgnekoMemoryReader context.
-int imgneko_memory_reader_func(void *ctx, char *out, size_t out_cap,
-                               size_t *len_out);
+ImgnekoReaderStatus imgneko_memory_reader_func(void *ctx, char *out,
+                                               size_t out_cap, size_t *len_out);
 
 // Return a generic reader view of `reader`. The caller must keep `reader`
 // alive while the returned value is used.
@@ -144,8 +150,8 @@ typedef struct ImgnekoFdReader {
 void imgneko_fd_reader_init(ImgnekoFdReader *reader, int fd);
 
 // Reader callback for an ImgnekoFdReader context.
-int imgneko_fd_reader_func(void *ctx, char *out, size_t out_cap,
-                           size_t *len_out);
+ImgnekoReaderStatus imgneko_fd_reader_func(void *ctx, char *out, size_t out_cap,
+                                           size_t *len_out);
 
 // Return a generic reader view of `reader`. The caller must keep `reader`
 // alive while the returned value is used.

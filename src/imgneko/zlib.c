@@ -41,10 +41,10 @@ static uInt zlib_uInt_cap(size_t cap) {
     return (uInt)cap;
 }
 
-// Propagate custom source errors, but treat source capacity failures as
-// transformer workspace failures because callers cannot fix them by resizing
-// the output buffer.
-static int zlib_translate_source_error(int status) {
+// Treat source capacity failures as transformer workspace failures because
+// callers cannot fix them by resizing the output buffer.
+static ImgnekoReaderStatus
+zlib_translate_source_error(ImgnekoReaderStatus status) {
     if (status == IMGNEKO_READER_BUFFER_TOO_SMALL)
         return IMGNEKO_READER_WORKSPACE_TOO_SMALL;
     return status;
@@ -65,9 +65,9 @@ static int zlib_translate_source_error(int status) {
 //
 // Returns IMGNEKO_READER_OK after loading input or observing source EOF.
 // Other statuses are source failures translated for transformer semantics.
-static int zlib_reader_fill_input(ImgnekoReader source, char *buffer,
-                                  size_t buffer_cap, z_stream *stream,
-                                  bool *source_eof_out) {
+static ImgnekoReaderStatus
+zlib_reader_fill_input(ImgnekoReader source, char *buffer, size_t buffer_cap,
+                       z_stream *stream, bool *source_eof_out) {
     assert(buffer != NULL);
     assert(buffer_cap != 0);
     assert(buffer_cap <= UINT_MAX);
@@ -77,7 +77,8 @@ static int zlib_reader_fill_input(ImgnekoReader source, char *buffer,
 
     uInt input_cap = (uInt)buffer_cap;
     size_t input_len = 0;
-    int status = imgneko_reader_read(source, buffer, input_cap, &input_len);
+    ImgnekoReaderStatus status =
+        imgneko_reader_read(source, buffer, input_cap, &input_len);
 
     if (status == IMGNEKO_READER_OK) {
         if (input_len == 0 || input_len > input_cap)
@@ -111,9 +112,10 @@ static int zlib_reader_fill_input(ImgnekoReader source, char *buffer,
 // `len_out`
 //     Output parameter receiving `output_len` when bytes must be returned
 //     first.
-static int zlib_reader_fail(ImgnekoZlibStatus *error_status,
-                            ImgnekoZlibStatus zlib_status, size_t output_len,
-                            size_t *len_out) {
+static ImgnekoReaderStatus zlib_reader_fail(ImgnekoZlibStatus *error_status,
+                                            ImgnekoZlibStatus zlib_status,
+                                            size_t output_len,
+                                            size_t *len_out) {
     assert(error_status != NULL);
     assert(zlib_status != IMGNEKO_ZLIB_OK);
     assert(len_out != NULL);
@@ -166,8 +168,9 @@ void imgneko_zlib_compress_reader_deinit(ImgnekoZlibCompressReader *reader) {
 }
 
 // Reader callback for zlib-compressing bytes from an underlying source.
-static int zlib_compress_reader_func(void *ctx, char *out, size_t out_cap,
-                                     size_t *len_out) {
+static ImgnekoReaderStatus zlib_compress_reader_func(void *ctx, char *out,
+                                                     size_t out_cap,
+                                                     size_t *len_out) {
     ImgnekoZlibCompressReader *reader = ctx;
 
     assert(reader != NULL);
@@ -200,7 +203,7 @@ static int zlib_compress_reader_func(void *ctx, char *out, size_t out_cap,
         // input.
         if (reader->needs_input && reader->stream.avail_in == 0) {
             if (!reader->source_eof) {
-                int status = zlib_reader_fill_input(
+                ImgnekoReaderStatus status = zlib_reader_fill_input(
                     reader->source, reader->buffer, reader->buffer_cap,
                     &reader->stream, &reader->source_eof);
                 if (status != IMGNEKO_READER_OK)
@@ -322,9 +325,9 @@ void imgneko_zlib_decompress_reader_deinit(
 //
 // Returns IMGNEKO_READER_OK after observing source EOF or trailing bytes.
 // Other statuses are source failures translated for transformer semantics.
-static int zlib_reader_verify_source_eof(ImgnekoReader source, char *buffer,
-                                         size_t buffer_cap,
-                                         bool *has_trailing_input_out) {
+static ImgnekoReaderStatus
+zlib_reader_verify_source_eof(ImgnekoReader source, char *buffer,
+                              size_t buffer_cap, bool *has_trailing_input_out) {
     assert(buffer != NULL);
     assert(buffer_cap != 0);
     assert(buffer_cap <= UINT_MAX);
@@ -334,7 +337,8 @@ static int zlib_reader_verify_source_eof(ImgnekoReader source, char *buffer,
 
     uInt input_cap = (uInt)buffer_cap;
     size_t input_len = 0;
-    int status = imgneko_reader_read(source, buffer, input_cap, &input_len);
+    ImgnekoReaderStatus status =
+        imgneko_reader_read(source, buffer, input_cap, &input_len);
 
     if (status == IMGNEKO_READER_EOF)
         return IMGNEKO_READER_OK;
@@ -351,9 +355,10 @@ static int zlib_reader_verify_source_eof(ImgnekoReader source, char *buffer,
 
 // Finish a decompression stream after inflate() has reported Z_STREAM_END.
 // `len_out` receives `output_len` when the completed stream emitted bytes.
-static int zlib_decompress_reader_finish(ImgnekoZlibDecompressReader *reader,
-                                         size_t output_len, size_t *len_out) {
-    int status = IMGNEKO_READER_OK;
+static ImgnekoReaderStatus
+zlib_decompress_reader_finish(ImgnekoZlibDecompressReader *reader,
+                              size_t output_len, size_t *len_out) {
+    ImgnekoReaderStatus status = IMGNEKO_READER_OK;
     bool has_trailing_input = false;
 
     reader->needs_input = false;
@@ -393,8 +398,9 @@ static int zlib_decompress_reader_finish(ImgnekoZlibDecompressReader *reader,
 }
 
 // Reader callback for zlib-decompressing bytes from an underlying source.
-static int zlib_decompress_reader_func(void *ctx, char *out, size_t out_cap,
-                                       size_t *len_out) {
+static ImgnekoReaderStatus zlib_decompress_reader_func(void *ctx, char *out,
+                                                       size_t out_cap,
+                                                       size_t *len_out) {
     ImgnekoZlibDecompressReader *reader = ctx;
 
     assert(reader != NULL);
@@ -431,7 +437,7 @@ static int zlib_decompress_reader_func(void *ctx, char *out, size_t out_cap,
         // input.
         if (reader->needs_input && reader->stream.avail_in == 0) {
             if (!reader->source_eof) {
-                int status = zlib_reader_fill_input(
+                ImgnekoReaderStatus status = zlib_reader_fill_input(
                     reader->source, reader->buffer, reader->buffer_cap,
                     &reader->stream, &reader->source_eof);
                 if (status != IMGNEKO_READER_OK)

@@ -12,8 +12,6 @@
 
 #define STR(text) (text), (sizeof(text) - 1)
 
-#define TEST_CUSTOM_READER_ERROR 1234
-
 typedef struct Base64Vector {
     const char *raw;
     size_t raw_len;
@@ -25,12 +23,23 @@ typedef struct StatusAfterDataReader {
     const char *data;
     size_t len;
     bool emitted;
-    int final_status;
+    ImgnekoReaderStatus final_status;
 } StatusAfterDataReader;
 
 typedef struct BadOkReader {
     size_t reported_len;
 } BadOkReader;
+
+// Reader callback that always reports a standard source failure.
+static ImgnekoReaderStatus error_reader_func(void *ctx, char *out,
+                                             size_t out_cap, size_t *len_out) {
+    (void)ctx;
+    (void)out;
+    (void)out_cap;
+
+    *len_out = 0;
+    return IMGNEKO_READER_ERROR;
+}
 
 // Generate deterministic pseudo-random values for repeatable stress tests.
 static uint32_t next_test_random(uint32_t *state) {
@@ -44,23 +53,11 @@ static uint32_t next_test_random(uint32_t *state) {
     return value;
 }
 
-// Reader callback that returns a source-specific error status.
-static int custom_error_reader_func(void *ctx, char *out, size_t out_cap,
-                                    size_t *len_out) {
-    (void)ctx;
-    (void)out;
-    (void)out_cap;
-
-    if (len_out != NULL)
-        *len_out = 0;
-
-    return TEST_CUSTOM_READER_ERROR;
-}
-
 // Reader callback that emits one data chunk and then returns a configured
 // status. This lets tests exercise decoder verification after padded input.
-static int status_after_data_reader_func(void *ctx, char *out, size_t out_cap,
-                                         size_t *len_out) {
+static ImgnekoReaderStatus status_after_data_reader_func(void *ctx, char *out,
+                                                         size_t out_cap,
+                                                         size_t *len_out) {
     StatusAfterDataReader *reader = ctx;
 
     if (len_out == NULL)
@@ -86,8 +83,8 @@ static int status_after_data_reader_func(void *ctx, char *out, size_t out_cap,
 
 // Reader callback that violates the reader protocol by reporting an OK read
 // with a caller-selected length.
-static int bad_ok_reader_func(void *ctx, char *out, size_t out_cap,
-                              size_t *len_out) {
+static ImgnekoReaderStatus bad_ok_reader_func(void *ctx, char *out,
+                                              size_t out_cap, size_t *len_out) {
     BadOkReader *reader = ctx;
     (void)out;
     (void)out_cap;
@@ -722,10 +719,11 @@ static int test_reader_source_requires_larger_workspace(TestContext *ctx) {
     return 0;
 }
 
-// Verify that custom source errors propagate through transformer readers.
-static int test_reader_source_custom_errors(TestContext *ctx) {
+// Verify that transformer readers preserve ordinary source failures without
+// treating them as Base64 decoding failures.
+static int test_reader_source_errors(TestContext *ctx) {
     ImgnekoReader source = {
-        .read = custom_error_reader_func,
+        .read = error_reader_func,
     };
     ImgnekoBase64EncodeReader encoder = {0};
     ImgnekoBase64DecodeReader decoder = {0};
@@ -741,10 +739,10 @@ static int test_reader_source_custom_errors(TestContext *ctx) {
     status =
         imgneko_reader_read(imgneko_base64_encode_reader_as_reader(&encoder),
                             out, sizeof(out), &len);
-    if (test_expect_status(ctx, status, TEST_CUSTOM_READER_ERROR,
-                           "encode custom source error") ||
+    if (test_expect_status(ctx, status, IMGNEKO_READER_ERROR,
+                           "encode source error") ||
         test_expect_data(ctx, out, sizeof(out), STR("xxxx"),
-                         "encode custom error leaves output alone"))
+                         "encode source error leaves output alone"))
         return 1;
 
     imgneko_base64_decode_reader_init(&decoder, source, decode_workspace,
@@ -753,10 +751,12 @@ static int test_reader_source_custom_errors(TestContext *ctx) {
     status =
         imgneko_reader_read(imgneko_base64_decode_reader_as_reader(&decoder),
                             out, sizeof(out), &len);
-    if (test_expect_status(ctx, status, TEST_CUSTOM_READER_ERROR,
-                           "decode custom source error") ||
+    if (test_expect_status(ctx, status, IMGNEKO_READER_ERROR,
+                           "decode source error") ||
+        test_expect_status(ctx, decoder.error_status, IMGNEKO_BASE64_OK,
+                           "decode source error base64 status") ||
         test_expect_data(ctx, out, sizeof(out), STR("xxxx"),
-                         "decode custom error leaves output alone"))
+                         "decode source error leaves output alone"))
         return 1;
 
     return 0;
@@ -814,13 +814,13 @@ static int test_reader_source_protocol_errors(TestContext *ctx) {
 // Verify that decode errors found while checking source EOF after a padded
 // final quartet are deferred until after the decoded bytes are returned.
 static int test_decode_reader_padded_verify_errors(TestContext *ctx) {
-    const int final_statuses[] = {
+    const ImgnekoReaderStatus final_statuses[] = {
         IMGNEKO_READER_BUFFER_TOO_SMALL,
-        TEST_CUSTOM_READER_ERROR,
+        IMGNEKO_READER_ERROR,
     };
-    const int expected_statuses[] = {
+    const ImgnekoReaderStatus expected_statuses[] = {
         IMGNEKO_READER_WORKSPACE_TOO_SMALL,
-        TEST_CUSTOM_READER_ERROR,
+        IMGNEKO_READER_ERROR,
     };
 
     for (size_t i = 0; i < ARRAY_SIZE(final_statuses); ++i) {
@@ -873,7 +873,7 @@ static int test_decode_reader_padded_verify_errors(TestContext *ctx) {
 static int test_decode_reader_invalid_input(TestContext *ctx) {
     const struct {
         const char *input;
-        int expected_status;
+        ImgnekoBase64Status expected_error_status;
     } inputs[] = {
         {"Zg=", IMGNEKO_BASE64_TRUNCATED_INPUT},
         {"!!!!", IMGNEKO_BASE64_INVALID_INPUT},
@@ -897,8 +897,11 @@ static int test_decode_reader_invalid_input(TestContext *ctx) {
         status = imgneko_reader_read(
             imgneko_base64_decode_reader_as_reader(&decoder), out, sizeof(out),
             &len);
-        if (test_expect_status(ctx, status, inputs[i].expected_status,
-                               "decode reader invalid input") ||
+        if (test_expect_status(ctx, status, IMGNEKO_READER_ERROR,
+                               "decode reader generic invalid input") ||
+            test_expect_status(ctx, decoder.error_status,
+                               inputs[i].expected_error_status,
+                               "decode reader invalid input detail") ||
             test_expect_data(ctx, out, sizeof(out), STR("xxx"),
                              "decode reader error leaves output alone"))
             return 1;
@@ -947,8 +950,11 @@ static int test_decode_reader_partial_success_before_error(TestContext *ctx) {
 
         memset(out, 'x', sizeof(out));
         status = imgneko_reader_read(reader, out, sizeof(out), &len);
-        if (test_expect_status(ctx, status, IMGNEKO_BASE64_INVALID_INPUT,
-                               "decode reader deferred error") ||
+        if (test_expect_status(ctx, status, IMGNEKO_READER_ERROR,
+                               "decode reader deferred generic error") ||
+            test_expect_status(ctx, decoder.error_status,
+                               IMGNEKO_BASE64_INVALID_INPUT,
+                               "decode reader deferred error detail") ||
             test_expect_size(ctx, len, 0,
                              "decode deferred error output size") ||
             test_expect_data(ctx, out, sizeof(out), STR("xxxxxx"),
@@ -1129,7 +1135,7 @@ int main(int argc, char **argv) {
         PREFIXED_TEST(test_decode_reader_padded_eof),
         PREFIXED_TEST(test_reader_invalid_workspace),
         PREFIXED_TEST(test_reader_source_requires_larger_workspace),
-        PREFIXED_TEST(test_reader_source_custom_errors),
+        PREFIXED_TEST(test_reader_source_errors),
         PREFIXED_TEST(test_reader_source_protocol_errors),
         PREFIXED_TEST(test_decode_reader_padded_verify_errors),
         PREFIXED_TEST(test_decode_reader_invalid_input),

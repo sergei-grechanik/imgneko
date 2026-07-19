@@ -14,9 +14,8 @@
 
 #include "imgneko/reader.h"
 
-// Base64-related status codes returned by helpers and reader transformers.
-// Non-OK values intentionally do not overlap with ImgnekoReaderStatus,
-// because base64 reader transformers can return them directly.
+// Base64-related status codes returned by direct helpers and recorded in a
+// decoding transformer's error_status after a stream-specific failure.
 typedef enum ImgnekoBase64Status {
     // Operation completed successfully.
     IMGNEKO_BASE64_OK = 0,
@@ -146,8 +145,12 @@ typedef struct ImgnekoBase64DecodeReader {
     size_t buffer_cap;
     // Number of encoded bytes currently carried in `buffer`.
     size_t carry_len;
-    // Deferred status reported after already-decoded bytes have been emitted.
-    int pending_status;
+    // Detailed base64 failure status. It is IMGNEKO_BASE64_OK after
+    // initialization and is read-only to callers.
+    ImgnekoBase64Status error_status;
+    // Standard reader status deferred after already-decoded bytes have been
+    // emitted.
+    ImgnekoReaderStatus pending_status;
     // True after this transformer has reported EOF.
     bool eof;
 } ImgnekoBase64DecodeReader;

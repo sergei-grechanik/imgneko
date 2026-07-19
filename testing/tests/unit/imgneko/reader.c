@@ -17,8 +17,6 @@
 
 #define STR(text) (text), (sizeof(text) - 1)
 
-#define TEST_CUSTOM_READER_ERROR 1234
-
 // Write the full byte span to a descriptor used by a test fixture.
 static int write_full(const TestContext *ctx, int fd, const char *data,
                       size_t len) {
@@ -37,20 +35,6 @@ static int write_full(const TestContext *ctx, int fd, const char *data,
     }
 
     return 0;
-}
-
-// Reader callback that returns a source-specific error status for wrapper
-// passthrough testing.
-static int custom_error_reader_func(void *ctx, char *out, size_t out_cap,
-                                    size_t *len_out) {
-    (void)ctx;
-    (void)out;
-    (void)out_cap;
-
-    if (len_out != NULL)
-        *len_out = 0;
-
-    return TEST_CUSTOM_READER_ERROR;
 }
 
 // Verify memory reader chunking, zero-capacity retry sizing, and sticky EOF.
@@ -97,9 +81,6 @@ static int test_memory_reader(TestContext *ctx) {
 static int test_reader_validation(TestContext *ctx) {
     ImgnekoMemoryReader memory = {0};
     ImgnekoReader reader;
-    ImgnekoReader custom_reader = {
-        .read = custom_error_reader_func,
-    };
     char out[4];
     size_t len = 123;
     int status;
@@ -123,9 +104,7 @@ static int test_reader_validation(TestContext *ctx) {
                            "missing len_out"))
         return 1;
 
-    status = imgneko_reader_read(custom_reader, out, sizeof(out), &len);
-    return test_expect_status(ctx, status, TEST_CUSTOM_READER_ERROR,
-                              "custom reader error");
+    return 0;
 }
 
 // Verify reader initialization and open failures that should leave readers
