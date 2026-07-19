@@ -56,6 +56,9 @@ INVALID_DEPFILES_BUILD=$ROOT_DIR/build/test-invalid-depfiles
 INVALID_TEST_JOBS_BUILD=$ROOT_DIR/build/test-invalid-test-jobs
 COMPDB_WITH_MESSAGE_BUILD=$ROOT_DIR/build/test-compdb-with-message
 COMPDB_WITHOUT_MESSAGE_BUILD=$ROOT_DIR/build/test-compdb-without-message
+COMPDB_MALFORMED_COMMAND_BUILD=$ROOT_DIR/build/test-compdb-malformed-command
+COMPDB_COMMAND_SIDE_EFFECT_BUILD=$ROOT_DIR/build/test-compdb-command-side-effect
+COMPDB_COMPILER_ENV_BUILD=$ROOT_DIR/build/test-compdb-compiler-env
 COVERAGE_WITH_MESSAGE_BUILD=$ROOT_DIR/build/test-coverage-with-message
 COVERAGE_WITHOUT_MESSAGE_BUILD=$ROOT_DIR/build/test-coverage-without-message
 DEPFILES_WITH_MESSAGE_BUILD=$ROOT_DIR/build/test-depfiles-with-message
@@ -67,6 +70,11 @@ SPACE_BUILD="$ROOT_DIR/build/test bad dir"
 RECONFIGURE_BUILD=$ROOT_DIR/build/test-reconfigure-check
 RELATIVE_BUILD_DIR_TEST=$ROOT_DIR/build/test-relative-builddir
 TEST_JOBS_BUILD=$ROOT_DIR/build/test-jobs-default
+ZLIB_CPP_OVERRIDE_BUILD=$ROOT_DIR/build/test-zlib-cpp-override
+ZLIB_LDLIB_OVERRIDE_BUILD=$ROOT_DIR/build/test-zlib-ldlib-override
+ZLIB_FULL_OVERRIDE_BUILD=$ROOT_DIR/build/test-zlib-full-override
+ZLIB_FALLBACK_BUILD=$ROOT_DIR/build/test-zlib-fallback
+INVALID_ZLIB_BUILD=$ROOT_DIR/build/test-invalid-zlib
 
 # Use one temporary root for scenarios that intentionally leave the project
 # tree, and clean it up on exit.
@@ -296,6 +304,9 @@ assert_path_absent "$INVALID_DEPFILES_BUILD"
 assert_path_absent "$INVALID_TEST_JOBS_BUILD"
 assert_path_absent "$COMPDB_WITH_MESSAGE_BUILD"
 assert_path_absent "$COMPDB_WITHOUT_MESSAGE_BUILD"
+assert_path_absent "$COMPDB_MALFORMED_COMMAND_BUILD"
+assert_path_absent "$COMPDB_COMMAND_SIDE_EFFECT_BUILD"
+assert_path_absent "$COMPDB_COMPILER_ENV_BUILD"
 assert_path_absent "$COVERAGE_WITH_MESSAGE_BUILD"
 assert_path_absent "$COVERAGE_WITHOUT_MESSAGE_BUILD"
 assert_path_absent "$DEPFILES_WITH_MESSAGE_BUILD"
@@ -306,7 +317,50 @@ assert_path_absent "$SPACE_BUILD"
 assert_path_absent "$RECONFIGURE_BUILD"
 assert_path_absent "$RELATIVE_BUILD_DIR_TEST"
 assert_path_absent "$TEST_JOBS_BUILD"
+assert_path_absent "$ZLIB_CPP_OVERRIDE_BUILD"
+assert_path_absent "$ZLIB_LDLIB_OVERRIDE_BUILD"
+assert_path_absent "$ZLIB_FULL_OVERRIDE_BUILD"
+assert_path_absent "$ZLIB_FALLBACK_BUILD"
+assert_path_absent "$INVALID_ZLIB_BUILD"
 mkdir -p "$LOG_DIR"
+
+# Provide deterministic pkg-config results so the zlib override tests can
+# distinguish detected values from caller-provided values.
+FAKE_PKG_CONFIG=$TMP_TEST_ROOT/fake-pkg-config
+{
+    printf '%s\n' '#!/bin/sh'
+    printf '%s\n' 'case $1 in'
+    printf '%s\n' '    --exists) exit 0 ;;'
+    printf '%s\n' "    --cflags) printf '%s\\n' '-DIMGNEKO_ZLIB_DETECTED=1' ;;"
+    printf '%s\n' "    --libs) printf '%s\\n' '-lz' ;;"
+    printf '%s\n' '    *) exit 1 ;;'
+    printf '%s\n' 'esac'
+} >"$FAKE_PKG_CONFIG"
+chmod +x "$FAKE_PKG_CONFIG"
+
+# Produce deterministic multiline diagnostics for compiler-probe failure
+# tests. This verifies that configure does not truncate useful tool output.
+FAKE_DIAGNOSTIC_COMPILER=$TMP_TEST_ROOT/fake-diagnostic-compiler
+{
+    printf '%s\n' '#!/bin/sh'
+    printf '%s\n' "printf '%s\\n' 'first compiler diagnostic' >&2"
+    printf '%s\n' "printf '%s\\n' 'second compiler diagnostic' >&2"
+    printf '%s\n' 'exit 1'
+} >"$FAKE_DIAGNOSTIC_COMPILER"
+chmod +x "$FAKE_DIAGNOSTIC_COMPILER"
+
+# Check that compiler probes preserve the configured build variables for
+# wrappers that consult their environment before launching the real compiler.
+FAKE_ENV_COMPILER=$TMP_TEST_ROOT/fake-env-compiler
+{
+    printf '%s\n' '#!/bin/sh'
+    printf '%s\n' '[ "$CC" = "$0" ] || exit 81'
+    printf '%s\n' '[ "$CPPFLAGS" = "-DIMGNEKO_PROBE_CPPFLAGS=1" ] || exit 82'
+    printf '%s\n' '[ "$CFLAGS" = "-DIMGNEKO_PROBE_CFLAGS=1" ] || exit 83'
+    printf '%s\n' '[ -n "${PROBE_SRC:-}" ] || exit 84'
+    printf '%s\n' 'exec clang "$@"'
+} >"$FAKE_ENV_COMPILER"
+chmod +x "$FAKE_ENV_COMPILER"
 
 # Verify the fully default path: no --build-dir, no profile override, and a
 # normal build/run from build/default.
@@ -339,6 +393,81 @@ assert_status_zero
 assert_output_contains "profile: debug"
 assert_output_contains "cc: cc"
 assert_output_contains "-DFEATURE_X=1"
+
+# Dependency-specific overrides preserve the supplied half while normal
+# detection fills the missing half. Configure reports both the mechanism and
+# the final values.
+say "Partial zlib flag overrides retain detection for missing values"
+run_capture "$LOG_DIR/zlib-cpp-override.out" env PKG_CONFIG="$FAKE_PKG_CONFIG" \
+    sh "$ROOT_DIR/configure" --build-dir="$ZLIB_CPP_OVERRIDE_BUILD" \
+    --zlib-cppflags=-DIMGNEKO_ZLIB_EXPLICIT=1
+assert_status_zero
+assert_output_contains \
+    "Keeping caller-provided ZLIB_CPPFLAGS; resolving ZLIB_LDLIBS."
+assert_output_contains "Checking for zlib flags with $FAKE_PKG_CONFIG... found"
+assert_output_contains "ZLIB_CPPFLAGS=-DIMGNEKO_ZLIB_EXPLICIT=1"
+assert_output_contains "ZLIB_LDLIBS=-lz"
+assert_output_contains "Checking whether the resolved zlib flags work... yes"
+assert_file_contains "$ZLIB_CPP_OVERRIDE_BUILD/config.mk" \
+    "override ZLIB_CPPFLAGS = -DIMGNEKO_ZLIB_EXPLICIT=1"
+assert_file_not_contains "$ZLIB_CPP_OVERRIDE_BUILD/config.mk" \
+    "IMGNEKO_ZLIB_DETECTED"
+
+run_capture "$LOG_DIR/zlib-ldlib-override.out" env PKG_CONFIG="$FAKE_PKG_CONFIG" \
+    sh "$ROOT_DIR/configure" --build-dir="$ZLIB_LDLIB_OVERRIDE_BUILD" \
+    "--zlib-ldlibs=-lz -lz"
+assert_status_zero
+assert_output_contains \
+    "Keeping caller-provided ZLIB_LDLIBS; resolving ZLIB_CPPFLAGS."
+assert_output_contains "Checking for zlib flags with $FAKE_PKG_CONFIG... found"
+assert_output_contains "ZLIB_CPPFLAGS=-DIMGNEKO_ZLIB_DETECTED=1"
+assert_output_contains "ZLIB_LDLIBS=-lz -lz"
+assert_file_contains "$ZLIB_LDLIB_OVERRIDE_BUILD/config.mk" \
+    "override ZLIB_CPPFLAGS = -DIMGNEKO_ZLIB_DETECTED=1"
+assert_file_contains "$ZLIB_LDLIB_OVERRIDE_BUILD/config.mk" \
+    "override ZLIB_LDLIBS = -lz -lz"
+
+# Full dependency overrides skip pkg-config. Generic LDLIBS remain separate
+# additional libraries and follow the zlib libraries on actual link commands.
+say "Full zlib overrides and additional LDLIBS"
+run_capture "$LOG_DIR/zlib-full-override.out" env PKG_CONFIG=false \
+    sh "$ROOT_DIR/configure" --build-dir="$ZLIB_FULL_OVERRIDE_BUILD" \
+    --zlib-cppflags=-DIMGNEKO_ZLIB_EXPLICIT=1 --zlib-ldlibs=-lz --ldlibs=-lm
+assert_status_zero
+assert_output_contains "Using caller-provided zlib flags."
+assert_output_not_contains "Checking for zlib flags with"
+assert_file_contains "$ZLIB_FULL_OVERRIDE_BUILD/config.mk" \
+    "override LDLIBS = -lm"
+assert_file_contains "$ZLIB_FULL_OVERRIDE_BUILD/config.mk" \
+    "override ZLIB_LDLIBS = -lz"
+run_capture "$LOG_DIR/zlib-full-override-build.out" \
+    make -C "$ZLIB_FULL_OVERRIDE_BUILD"
+assert_status_zero
+assert_output_contains "-lz -lm"
+
+# If pkg-config is unavailable, configure reports and verifies the conventional
+# empty-include-flags/-lz fallback.
+say "Zlib pkg-config fallback"
+run_capture "$LOG_DIR/zlib-fallback.out" env PKG_CONFIG=false \
+    sh "$ROOT_DIR/configure" --build-dir="$ZLIB_FALLBACK_BUILD"
+assert_status_zero
+assert_output_contains "Checking for zlib flags with false... unavailable"
+assert_output_contains \
+    "Using fallback values for missing zlib flags: empty CPPFLAGS and LDLIBS=-lz."
+assert_output_contains "ZLIB_CPPFLAGS="
+assert_output_contains "ZLIB_LDLIBS=-lz"
+
+# Invalid explicit dependency flags should fail during configuration rather
+# than much later in the build.
+say "Configure rejects unusable zlib flags"
+run_capture "$LOG_DIR/zlib-invalid.out" env PKG_CONFIG="$FAKE_PKG_CONFIG" \
+    sh "$ROOT_DIR/configure" --build-dir="$INVALID_ZLIB_BUILD" \
+    --zlib-ldlibs=-limgneko_zlib_that_does_not_exist
+assert_status_nonzero
+assert_output_contains "Checking whether the resolved zlib flags work... no"
+assert_output_contains "error: resolved zlib flags do not compile and link"
+assert_output_contains "  command:"
+assert_output_contains "  output:"
 
 # The dev profile is the CI/development configuration: ASan plus every
 # generation-oriented build feature enabled by default.
@@ -565,12 +694,15 @@ run_capture "$LOG_DIR/cfg-bad-test-jobs.out" sh "$ROOT_DIR/configure" --build-di
 assert_status_nonzero
 assert_output_contains "error: TEST_JOBS must be a positive integer (got: 0)"
 
-# Ask for --comp-db-mj with compiler flags that force the probe to fail and
-# print a first stderr line, which should be echoed in the custom error.
+# Ask for --comp-db-mj with a compiler that emits multiple diagnostics. The
+# failure report must include the attempted command and complete stderr.
 say "configure error: --comp-db-mj with stderr output"
-run_capture "$LOG_DIR/cfg-compdb-with-message.out" sh "$ROOT_DIR/configure" --build-dir="$COMPDB_WITH_MESSAGE_BUILD" --comp-db-mj --cc=gcc --cflags=--definitely-invalid-flag
+run_capture "$LOG_DIR/cfg-compdb-with-message.out" sh "$ROOT_DIR/configure" --build-dir="$COMPDB_WITH_MESSAGE_BUILD" --comp-db-mj --cc="$FAKE_DIAGNOSTIC_COMPILER"
 assert_status_nonzero
-assert_output_contains "error: --comp-db-mj requires a compiler that accepts -MJ (got:"
+assert_output_contains "error: --comp-db-mj requires a compiler that accepts -MJ"
+assert_output_contains "  command: $FAKE_DIAGNOSTIC_COMPILER"
+assert_output_contains "    first compiler diagnostic"
+assert_output_contains "    second compiler diagnostic"
 
 # Ask for --comp-db-mj with a command that fails without producing stderr so
 # the shorter fallback error path is tested too.
@@ -578,15 +710,52 @@ say "configure error: --comp-db-mj without stderr output"
 run_capture "$LOG_DIR/cfg-compdb-without-message.out" sh "$ROOT_DIR/configure" --build-dir="$COMPDB_WITHOUT_MESSAGE_BUILD" --comp-db-mj --cc=false
 assert_status_nonzero
 assert_output_contains "error: --comp-db-mj requires a compiler that accepts -MJ"
-assert_output_not_contains "(got:"
+assert_output_contains "  command: false"
+assert_output_not_contains "  output:"
 
-# Ask for --coverage-report with compiler flags that force the coverage probe
-# to fail and print a first stderr line, which should be echoed in the custom
-# error.
-say "configure error: --coverage-report with stderr output"
-run_capture "$LOG_DIR/cfg-coverage-with-message.out" sh "$ROOT_DIR/configure" --build-dir="$COVERAGE_WITH_MESSAGE_BUILD" --coverage-report --cc=clang --cflags=--definitely-invalid-flag
+# Malformed shell syntax in a configured command must be captured as a probe
+# failure instead of terminating configure from an unguarded eval.
+say "configure error: malformed compiler command remains inside probe"
+run_capture "$LOG_DIR/cfg-compdb-malformed-command.out" \
+    sh "$ROOT_DIR/configure" \
+    --build-dir="$COMPDB_MALFORMED_COMMAND_BUILD" --comp-db-mj "--cc='"
 assert_status_nonzero
-assert_output_contains "error: --coverage-report requires a Clang-compatible compiler and linker that accept -fprofile-instr-generate -fcoverage-mapping (got:"
+assert_output_contains \
+    "error: --comp-db-mj requires a compiler that accepts -MJ"
+assert_output_contains "  command: '"
+assert_output_contains "  output:"
+
+# Shell control flow embedded in the configured command may stop the disposable
+# probe shell, but it must not escape into the long-lived configure process.
+say "configure error: compiler command side effects remain inside probe"
+run_capture "$LOG_DIR/cfg-compdb-command-side-effect.out" \
+    sh "$ROOT_DIR/configure" \
+    --build-dir="$COMPDB_COMMAND_SIDE_EFFECT_BUILD" --comp-db-mj \
+    "--cc=cc; exit 23"
+assert_status_nonzero
+assert_output_contains \
+    "error: --comp-db-mj requires a compiler that accepts -MJ"
+assert_output_contains "  command: cc; exit 23"
+
+# A compiler wrapper sees the same configured environment during both the
+# capability probe and the final zlib link probe.
+say "compiler probes export configured build variables"
+run_capture "$LOG_DIR/cfg-compdb-compiler-env.out" \
+    sh "$ROOT_DIR/configure" --build-dir="$COMPDB_COMPILER_ENV_BUILD" \
+    --comp-db-mj --cc="$FAKE_ENV_COMPILER" \
+    --cppflags=-DIMGNEKO_PROBE_CPPFLAGS=1 \
+    --cflags=-DIMGNEKO_PROBE_CFLAGS=1
+assert_status_zero
+assert_file_exists "$COMPDB_COMPILER_ENV_BUILD/config.mk"
+
+# Verify the coverage probe uses the same complete diagnostic format.
+say "configure error: --coverage-report with stderr output"
+run_capture "$LOG_DIR/cfg-coverage-with-message.out" sh "$ROOT_DIR/configure" --build-dir="$COVERAGE_WITH_MESSAGE_BUILD" --coverage-report --cc="$FAKE_DIAGNOSTIC_COMPILER"
+assert_status_nonzero
+assert_output_contains "error: --coverage-report requires a Clang-compatible compiler and linker that accept -fprofile-instr-generate -fcoverage-mapping"
+assert_output_contains "  command: $FAKE_DIAGNOSTIC_COMPILER"
+assert_output_contains "    first compiler diagnostic"
+assert_output_contains "    second compiler diagnostic"
 
 # Ask for --coverage-report with a command that fails without producing stderr
 # so the shorter fallback error path is tested too.
@@ -594,14 +763,17 @@ say "configure error: --coverage-report without stderr output"
 run_capture "$LOG_DIR/cfg-coverage-without-message.out" sh "$ROOT_DIR/configure" --build-dir="$COVERAGE_WITHOUT_MESSAGE_BUILD" --coverage-report --cc=false
 assert_status_nonzero
 assert_output_contains "error: --coverage-report requires a Clang-compatible compiler and linker that accept -fprofile-instr-generate -fcoverage-mapping"
-assert_output_not_contains "(got:"
+assert_output_contains "  command: false"
+assert_output_not_contains "  output:"
 
-# Ask for --depfiles with compiler flags that force the probe to fail and print
-# a first stderr line, which should be echoed in the custom error.
+# Verify the depfile probe uses the same complete diagnostic format.
 say "configure error: --depfiles with stderr output"
-run_capture "$LOG_DIR/cfg-depfiles-with-message.out" sh "$ROOT_DIR/configure" --build-dir="$DEPFILES_WITH_MESSAGE_BUILD" --depfiles --cc=gcc --cflags=--definitely-invalid-flag
+run_capture "$LOG_DIR/cfg-depfiles-with-message.out" sh "$ROOT_DIR/configure" --build-dir="$DEPFILES_WITH_MESSAGE_BUILD" --depfiles --cc="$FAKE_DIAGNOSTIC_COMPILER"
 assert_status_nonzero
-assert_output_contains "error: --depfiles requires a compiler that accepts -MMD -MP -MT -MF (got:"
+assert_output_contains "error: --depfiles requires a compiler that accepts -MMD -MP -MT -MF"
+assert_output_contains "  command: $FAKE_DIAGNOSTIC_COMPILER"
+assert_output_contains "    first compiler diagnostic"
+assert_output_contains "    second compiler diagnostic"
 
 # Ask for --depfiles with a command that fails without producing stderr so the
 # shorter fallback error path is tested too.
@@ -609,7 +781,8 @@ say "configure error: --depfiles without stderr output"
 run_capture "$LOG_DIR/cfg-depfiles-without-message.out" sh "$ROOT_DIR/configure" --build-dir="$DEPFILES_WITHOUT_MESSAGE_BUILD" --depfiles --cc=false
 assert_status_nonzero
 assert_output_contains "error: --depfiles requires a compiler that accepts -MMD -MP -MT -MF"
-assert_output_not_contains "(got:"
+assert_output_contains "  command: false"
+assert_output_not_contains "  output:"
 
 # Enable compile_commands.json generation with clang and verify that
 # non-test builds keep test entries out, while test-list brings them in.

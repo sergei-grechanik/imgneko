@@ -371,6 +371,8 @@ static void print_version(void) {
     printf("cflags: %s\n", BUILD_CONFIG_CFLAGS);
     printf("ldflags: %s\n", BUILD_CONFIG_LDFLAGS);
     printf("ldlibs: %s\n", BUILD_CONFIG_LDLIBS);
+    printf("zlib_cppflags: %s\n", BUILD_CONFIG_ZLIB_CPPFLAGS);
+    printf("zlib_ldlibs: %s\n", BUILD_CONFIG_ZLIB_LDLIBS);
     printf("feature_x: %s\n", BUILD_CONFIG_FEATURE_X);
     printf("coverage_report: %s\n", BUILD_CONFIG_COVERAGE_REPORT);
 }

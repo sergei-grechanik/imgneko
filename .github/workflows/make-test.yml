@@ -47,6 +47,11 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y zlib1g-dev
+
       - name: Configure depfile regeneration build
         run: ./configure --build-dir=build/depfiles --depfiles
 
@@ -68,6 +73,11 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y zlib1g-dev
+
       - name: Configure default build
         run: ./configure
 
@@ -82,10 +92,10 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Install clang
+      - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y clang
+          sudo apt-get install -y clang pkg-config zlib1g-dev
 
       - name: Configure dev build
         run: ./configure --profile=dev
@@ -112,8 +122,9 @@ jobs:
 
       - name: Install build tools
         run: |
-          brew install make llvm
+          brew install make llvm pkgconf zlib
           echo "$(brew --prefix llvm)/bin" >> "$GITHUB_PATH"
+          echo "PKG_CONFIG_PATH=$(brew --prefix zlib)/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}" >> "$GITHUB_ENV"
 
       - name: Configure dev build
         run: ./configure --profile=dev

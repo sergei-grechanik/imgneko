@@ -22,7 +22,10 @@ Options:
   --cppflags=FLAGS     Preprocessor flags
   --cflags=FLAGS       C compiler flags
   --ldflags=FLAGS      Linker flags
-  --ldlibs=LIBS        Libraries for linking
+  --ldlibs=LIBS        Additional libraries appended after dependency libraries
+  --zlib-cppflags=FLAGS
+                       Override automatically detected zlib preprocessor flags
+  --zlib-ldlibs=LIBS   Override automatically detected zlib link libraries
   --feature-x=ON|OFF   Example feature toggle
   --force              Overwrite an existing different config
   --help               Show this help
@@ -130,6 +133,71 @@ pretty_path() {
     esac
 }
 
+# Parse and execute a compiler probe without exposing the configure shell to
+# shell syntax in configured commands or flags. The command file starts with a
+# best-effort representation so parsing failures still have useful context;
+# after successful parsing it contains the exact argv passed to the compiler.
+# The compiler also receives the configured variables in its environment, as
+# compiler launchers may inspect them.
+#
+# `command_expr`
+#     Shell expression that builds the complete compiler argv with `set --`.
+# `command_file`
+#     Output file receiving the best available command representation.
+# `stderr_file`
+#     Output file receiving parsing and compiler diagnostics.
+# `environment_names`
+#     Shell word list naming the variables exported to the compiler.
+run_compiler_probe() (
+    command_expr=$1
+    command_file=$2
+    stderr_file=$3
+    environment_names=$4
+    exec 2>"$stderr_file"
+
+    # Keep expansion deterministic and contain any `eval` side effects in this
+    # disposable subshell.
+    unset IFS
+    set +f
+    command_text=${command_expr#'set -- '}
+    printf '%s' "$command_text" >"$command_file"
+
+    # The names are internal constants supplied by the individual probes.
+    export $environment_names
+
+    eval "$command_expr" || exit $?
+    join_shell_words "$@" >"$command_file" || exit $?
+    exec "$@"
+)
+
+# Report a failed compiler probe and terminate configuration.
+#
+# `message`
+#     Explanation of the capability required by the selected configuration.
+# `command_file`
+#     File containing the best available form of the compiler command.
+# `stderr_file`
+#     File containing the complete diagnostic output from the compiler.
+# `probe_dir`
+#     Temporary probe directory to remove before exiting.
+report_probe_failure() {
+    message=$1
+    command_file=$2
+    stderr_file=$3
+    probe_dir=$4
+
+    printf '%s\n' "error: $message" >&2
+    printf '%s' '  command: ' >&2
+    cat "$command_file" >&2
+    printf '\n' >&2
+    if [ -s "$stderr_file" ]; then
+        printf '%s\n' '  output:' >&2
+        sed 's/^/    /' "$stderr_file" >&2
+    fi
+    rm -rf "$probe_dir"
+    exit 1
+}
+
 # A function to test if the compiler supports -MJ for generating
 # compile_commands.json.
 probe_comp_db_mj() {
@@ -137,19 +205,21 @@ probe_comp_db_mj() {
     probe_src="$probe_dir/probe.c"
     probe_obj="$probe_dir/probe.o"
     probe_json="$probe_dir/probe.json"
+    probe_command_file="$probe_dir/command"
     probe_err="$probe_dir/stderr"
 
     printf '%s\n' 'int main(void) { return 0; }' >"$probe_src"
 
-    if ! CC=$CC CPPFLAGS=$CPPFLAGS CFLAGS=$CFLAGS PROBE_SRC=$probe_src PROBE_OBJ=$probe_obj PROBE_JSON=$probe_json \
-        sh -ec 'eval "set -- $CC $CPPFLAGS $CFLAGS"; exec "$@" -MJ "$PROBE_JSON" -c "$PROBE_SRC" -o "$PROBE_OBJ"' \
-        > /dev/null 2>"$probe_err"; then
-        probe_msg=$(sed -n '1p' "$probe_err")
-        rm -rf "$probe_dir"
-        if [ -n "$probe_msg" ]; then
-            die "--comp-db-mj requires a compiler that accepts -MJ (got: $probe_msg)"
-        fi
-        die "--comp-db-mj requires a compiler that accepts -MJ"
+    PROBE_SRC=$probe_src
+    PROBE_OBJ=$probe_obj
+    PROBE_JSON=$probe_json
+    if ! run_compiler_probe \
+        "set -- $CC $CPPFLAGS $CFLAGS -MJ $(shell_quote "$PROBE_JSON") -c $(shell_quote "$PROBE_SRC") -o $(shell_quote "$PROBE_OBJ")" \
+        "$probe_command_file" "$probe_err" \
+        'CC CPPFLAGS CFLAGS PROBE_SRC PROBE_OBJ PROBE_JSON' > /dev/null; then
+        report_probe_failure \
+            '--comp-db-mj requires a compiler that accepts -MJ' \
+            "$probe_command_file" "$probe_err" "$probe_dir"
     fi
 
     rm -rf "$probe_dir"
@@ -161,19 +231,21 @@ probe_depfiles() {
     probe_src="$probe_dir/probe.c"
     probe_obj="$probe_dir/probe.o"
     probe_dep="$probe_dir/probe.d"
+    probe_command_file="$probe_dir/command"
     probe_err="$probe_dir/stderr"
 
     printf '%s\n' 'int main(void) { return 0; }' >"$probe_src"
 
-    if ! CC=$CC CPPFLAGS=$CPPFLAGS CFLAGS=$CFLAGS PROBE_SRC=$probe_src PROBE_OBJ=$probe_obj PROBE_DEP=$probe_dep \
-        sh -ec 'eval "set -- $CC $CPPFLAGS $CFLAGS"; exec "$@" -MMD -MP -MT probe-target -MF "$PROBE_DEP" -c "$PROBE_SRC" -o "$PROBE_OBJ"' \
-        > /dev/null 2>"$probe_err"; then
-        probe_msg=$(sed -n '1p' "$probe_err")
-        rm -rf "$probe_dir"
-        if [ -n "$probe_msg" ]; then
-            die "--depfiles requires a compiler that accepts -MMD -MP -MT -MF (got: $probe_msg)"
-        fi
-        die "--depfiles requires a compiler that accepts -MMD -MP -MT -MF"
+    PROBE_SRC=$probe_src
+    PROBE_OBJ=$probe_obj
+    PROBE_DEP=$probe_dep
+    if ! run_compiler_probe \
+        "set -- $CC $CPPFLAGS $CFLAGS -MMD -MP -MT probe-target -MF $(shell_quote "$PROBE_DEP") -c $(shell_quote "$PROBE_SRC") -o $(shell_quote "$PROBE_OBJ")" \
+        "$probe_command_file" "$probe_err" \
+        'CC CPPFLAGS CFLAGS PROBE_SRC PROBE_OBJ PROBE_DEP' > /dev/null; then
+        report_probe_failure \
+            '--depfiles requires a compiler that accepts -MMD -MP -MT -MF' \
+            "$probe_command_file" "$probe_err" "$probe_dir"
     fi
 
     rm -rf "$probe_dir"
@@ -256,19 +328,21 @@ probe_coverage() {
     probe_dir="$(mktemp -d)"
     probe_src="$probe_dir/probe.c"
     probe_bin="$probe_dir/probe.bin"
+    probe_command_file="$probe_dir/command"
     probe_err="$probe_dir/stderr"
 
     printf '%s\n' 'int main(void) { return 0; }' >"$probe_src"
 
-    if ! CC=$CC CPPFLAGS=$CPPFLAGS CFLAGS=$CFLAGS LDFLAGS=$LDFLAGS LDLIBS=$LDLIBS PROBE_SRC=$probe_src PROBE_BIN=$probe_bin \
-        sh -ec 'eval "set -- $CC $CPPFLAGS $CFLAGS -fprofile-instr-generate -fcoverage-mapping $PROBE_SRC -o $PROBE_BIN $LDFLAGS -fprofile-instr-generate $LDLIBS"; exec "$@"' \
-        > /dev/null 2>"$probe_err"; then
-        probe_msg=$(sed -n '1p' "$probe_err")
-        rm -rf "$probe_dir"
-        if [ -n "$probe_msg" ]; then
-            die "--coverage-report requires a Clang-compatible compiler and linker that accept -fprofile-instr-generate -fcoverage-mapping (got: $probe_msg)"
-        fi
-        die "--coverage-report requires a Clang-compatible compiler and linker that accept -fprofile-instr-generate -fcoverage-mapping"
+    PROBE_SRC=$probe_src
+    PROBE_BIN=$probe_bin
+    if ! run_compiler_probe \
+        "set -- $CC $CPPFLAGS $CFLAGS -fprofile-instr-generate -fcoverage-mapping $(shell_quote "$PROBE_SRC") -o $(shell_quote "$PROBE_BIN") $LDFLAGS -fprofile-instr-generate $LDLIBS" \
+        "$probe_command_file" "$probe_err" \
+        'CC CPPFLAGS CFLAGS LDFLAGS LDLIBS PROBE_SRC PROBE_BIN' \
+        > /dev/null; then
+        report_probe_failure \
+            '--coverage-report requires a Clang-compatible compiler and linker that accept -fprofile-instr-generate -fcoverage-mapping' \
+            "$probe_command_file" "$probe_err" "$probe_dir"
     fi
 
     if ! command -v python3 >/dev/null 2>&1; then
@@ -281,6 +355,105 @@ probe_coverage() {
 
     rm -rf "$probe_dir"
 }
+
+# Verify that the resolved compiler and linker flags provide a usable zlib.
+probe_zlib() {
+    probe_dir="$(mktemp -d)"
+    probe_src="$probe_dir/probe.c"
+    probe_bin="$probe_dir/probe.bin"
+    probe_command_file="$probe_dir/command"
+    probe_err="$probe_dir/stderr"
+
+    printf '%s\n' '#include <zlib.h>' \
+        'int main(void) { return zlibVersion() == Z_NULL; }' >"$probe_src"
+
+    PROBE_SRC=$probe_src
+    PROBE_BIN=$probe_bin
+
+    printf '%s' 'Checking whether the resolved zlib flags work... '
+    if ! run_compiler_probe \
+        "set -- $CC $CPPFLAGS $ZLIB_CPPFLAGS $CFLAGS $(shell_quote "$PROBE_SRC") -o $(shell_quote "$PROBE_BIN") $LDFLAGS $ZLIB_LDLIBS $LDLIBS" \
+        "$probe_command_file" "$probe_err" \
+        'CC CPPFLAGS ZLIB_CPPFLAGS CFLAGS LDFLAGS ZLIB_LDLIBS LDLIBS PROBE_SRC PROBE_BIN' \
+        > /dev/null; then
+        printf '%s\n' no
+        report_probe_failure 'resolved zlib flags do not compile and link' \
+            "$probe_command_file" "$probe_err" "$probe_dir"
+    fi
+
+    printf '%s\n' yes
+    rm -rf "$probe_dir"
+}
+
+# Resolve each zlib flag group that the caller did not provide. Prefer
+# pkg-config, with conventional compiler defaults and -lz as fallbacks.
+resolve_zlib_flags() {
+    detected_cppflags=
+    detected_ldlibs=
+
+    if [ "$ZLIB_CPPFLAGS_SET" -eq 1 ] && [ "$ZLIB_LDLIBS_SET" -eq 1 ]; then
+        printf '%s\n' \
+            'Using caller-provided zlib flags.'
+    else
+        if [ "$ZLIB_CPPFLAGS_SET" -eq 1 ]; then
+            printf '%s\n' \
+                'Keeping caller-provided ZLIB_CPPFLAGS; resolving ZLIB_LDLIBS.'
+        elif [ "$ZLIB_LDLIBS_SET" -eq 1 ]; then
+            printf '%s\n' \
+                'Keeping caller-provided ZLIB_LDLIBS; resolving ZLIB_CPPFLAGS.'
+        else
+            printf '%s\n' 'Resolving ZLIB_CPPFLAGS and ZLIB_LDLIBS.'
+        fi
+
+        printf 'Checking for zlib flags with %s... ' "$PKG_CONFIG"
+        if command -v "$PKG_CONFIG" >/dev/null 2>&1 &&
+               "$PKG_CONFIG" --exists zlib >/dev/null 2>&1 &&
+               detected_cppflags=$("$PKG_CONFIG" --cflags zlib 2>/dev/null) &&
+               detected_ldlibs=$("$PKG_CONFIG" --libs zlib 2>/dev/null);
+        then
+            detected_cppflags=$(printf '%s' "$detected_cppflags" | sed 's/[[:space:]]*$//')
+            detected_ldlibs=$(printf '%s' "$detected_ldlibs" | sed 's/[[:space:]]*$//')
+        fi
+
+        if [ -n "$detected_ldlibs" ]; then
+            printf '%s\n' found
+        else
+            printf '%s\n' unavailable
+            detected_cppflags=
+            detected_ldlibs=-lz
+            printf '%s\n' \
+                'Using fallback values for missing zlib flags: empty CPPFLAGS and LDLIBS=-lz.'
+        fi
+
+        if [ "$ZLIB_CPPFLAGS_SET" -eq 0 ]; then
+            ZLIB_CPPFLAGS=$detected_cppflags
+        fi
+        if [ "$ZLIB_LDLIBS_SET" -eq 0 ]; then
+            ZLIB_LDLIBS=$detected_ldlibs
+        fi
+    fi
+
+    printf '%s\n' 'Resolved zlib flags:'
+    printf '%s\n' "  ZLIB_CPPFLAGS=$ZLIB_CPPFLAGS"
+    printf '%s\n' "  ZLIB_LDLIBS=$ZLIB_LDLIBS"
+}
+
+# The caller may explicitly provide an empty dependency flag group. Track
+# presence separately from value so detection fills only genuinely missing
+# groups.
+ZLIB_CPPFLAGS_SET=0
+if [ "${ZLIB_CPPFLAGS+x}" = x ]; then
+    ZLIB_CPPFLAGS_SET=1
+else
+    ZLIB_CPPFLAGS=
+fi
+
+ZLIB_LDLIBS_SET=0
+if [ "${ZLIB_LDLIBS+x}" = x ]; then
+    ZLIB_LDLIBS_SET=1
+else
+    ZLIB_LDLIBS=
+fi
 
 # Absolute repository root, assuming this script lives in the project root.
 ROOT_DIR=$(CDPATH= cd "$(dirname "$0")" && pwd)
@@ -298,6 +471,8 @@ ARG_CPPFLAGS_SET=0
 ARG_CFLAGS_SET=0
 ARG_LDFLAGS_SET=0
 ARG_LDLIBS_SET=0
+ARG_ZLIB_CPPFLAGS_SET=0
+ARG_ZLIB_LDLIBS_SET=0
 ARG_LLVM_PROFDATA_SET=0
 ARG_LLVM_COV_SET=0
 ARG_FEATURE_X_SET=0
@@ -314,6 +489,8 @@ ARG_CPPFLAGS=
 ARG_CFLAGS=
 ARG_LDFLAGS=
 ARG_LDLIBS=
+ARG_ZLIB_CPPFLAGS=
+ARG_ZLIB_LDLIBS=
 ARG_LLVM_PROFDATA=
 ARG_LLVM_COV=
 ARG_FEATURE_X=
@@ -402,6 +579,14 @@ while [ "$#" -gt 0 ]; do
             ARG_LDLIBS_SET=1
             ARG_LDLIBS=${1#*=}
             ;;
+        --zlib-cppflags=*)
+            ARG_ZLIB_CPPFLAGS_SET=1
+            ARG_ZLIB_CPPFLAGS=${1#*=}
+            ;;
+        --zlib-ldlibs=*)
+            ARG_ZLIB_LDLIBS_SET=1
+            ARG_ZLIB_LDLIBS=${1#*=}
+            ;;
         --feature-x=*)
             ARG_FEATURE_X_SET=1
             ARG_FEATURE_X=${1#*=}
@@ -437,6 +622,14 @@ while [ "$#" -gt 0 ]; do
         LDLIBS=*)
             ARG_LDLIBS_SET=1
             ARG_LDLIBS=${1#*=}
+            ;;
+        ZLIB_CPPFLAGS=*)
+            ARG_ZLIB_CPPFLAGS_SET=1
+            ARG_ZLIB_CPPFLAGS=${1#*=}
+            ;;
+        ZLIB_LDLIBS=*)
+            ARG_ZLIB_LDLIBS_SET=1
+            ARG_ZLIB_LDLIBS=${1#*=}
             ;;
         LLVM_PROFDATA=*)
             ARG_LLVM_PROFDATA_SET=1
@@ -577,6 +770,14 @@ if [ "$ARG_CPPFLAGS_SET" -eq 1 ]; then CPPFLAGS=$ARG_CPPFLAGS; fi
 if [ "$ARG_CFLAGS_SET" -eq 1 ]; then CFLAGS=$ARG_CFLAGS; fi
 if [ "$ARG_LDFLAGS_SET" -eq 1 ]; then LDFLAGS=$ARG_LDFLAGS; fi
 if [ "$ARG_LDLIBS_SET" -eq 1 ]; then LDLIBS=$ARG_LDLIBS; fi
+if [ "$ARG_ZLIB_CPPFLAGS_SET" -eq 1 ]; then
+    ZLIB_CPPFLAGS=$ARG_ZLIB_CPPFLAGS
+    ZLIB_CPPFLAGS_SET=1
+fi
+if [ "$ARG_ZLIB_LDLIBS_SET" -eq 1 ]; then
+    ZLIB_LDLIBS=$ARG_ZLIB_LDLIBS
+    ZLIB_LDLIBS_SET=1
+fi
 if [ "$ARG_FEATURE_X_SET" -eq 1 ]; then FEATURE_X=$ARG_FEATURE_X; fi
 if [ "$ARG_COMP_DB_MJ_SET" -eq 1 ]; then COMP_DB_MJ=$ARG_COMP_DB_MJ; fi
 if [ "$ARG_COVERAGE_REPORT_SET" -eq 1 ]; then COVERAGE_REPORT=$ARG_COVERAGE_REPORT; fi
@@ -613,6 +814,9 @@ esac
 
 validate_positive_integer TEST_JOBS "$TEST_JOBS"
 
+: "${PKG_CONFIG:=pkg-config}"
+resolve_zlib_flags
+
 if [ "$COMP_DB_MJ" = "ON" ]; then
     probe_comp_db_mj
 fi
@@ -624,6 +828,8 @@ fi
 if [ "$DEPFILES" = "ON" ]; then
     probe_depfiles
 fi
+
+probe_zlib
 
 # Create the build directory if it does not exist.
 if [ "$ARG_BUILD_DIR_SET" -eq 1 ]; then
@@ -662,6 +868,8 @@ override CPPFLAGS = $(escape_make "$CPPFLAGS")
 override CFLAGS = $(escape_make "$CFLAGS")
 override LDFLAGS = $(escape_make "$LDFLAGS")
 override LDLIBS = $(escape_make "$LDLIBS")
+override ZLIB_CPPFLAGS = $(escape_make "$ZLIB_CPPFLAGS")
+override ZLIB_LDLIBS = $(escape_make "$ZLIB_LDLIBS")
 override FEATURE_X = $(escape_make "$FEATURE_X")
 override COMP_DB_MJ = $(escape_make "$COMP_DB_MJ")
 override DEPFILES = $(escape_make "$DEPFILES")
@@ -708,6 +916,8 @@ printf '%s\n' "  CPPFLAGS=$CPPFLAGS"
 printf '%s\n' "  CFLAGS=$CFLAGS"
 printf '%s\n' "  LDFLAGS=$LDFLAGS"
 printf '%s\n' "  LDLIBS=$LDLIBS"
+printf '%s\n' "  ZLIB_CPPFLAGS=$ZLIB_CPPFLAGS"
+printf '%s\n' "  ZLIB_LDLIBS=$ZLIB_LDLIBS"
 printf '%s\n' "  FEATURE_X=$FEATURE_X"
 printf '%s\n' "  COMP_DB_MJ=$COMP_DB_MJ"
 printf '%s\n' "  DEPFILES=$DEPFILES"

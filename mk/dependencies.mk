@@ -40,6 +40,10 @@ $(BUILD_DIR)/obj/src/imgneko/rowcolumn_diacritics.o: \
 $(BUILD_DIR)/obj/src/imgneko/writer.o: \
 	$(ROOT_DIR)/src/imgneko/writer.c \
 	$(ROOT_DIR)/src/imgneko/writer.h
+$(BUILD_DIR)/obj/src/imgneko/zlib.o: \
+	$(ROOT_DIR)/src/imgneko/reader.h \
+	$(ROOT_DIR)/src/imgneko/zlib.c \
+	$(ROOT_DIR)/src/imgneko/zlib.h
 $(BUILD_DIR)/obj/src/main.o: \
 	$(BUILD_DIR)/generated/build_info.h \
 	$(ROOT_DIR)/src/cli/placeholder_bg.h \
@@ -151,6 +155,15 @@ $(BUILD_DIR)/obj/test-bin/unit/imgneko/rowcolumn_diacritics.c.bin: \
 	$(ROOT_DIR)/src/util/common.h \
 	$(ROOT_DIR)/testing/support/test_main.h \
 	$(ROOT_DIR)/testing/tests/unit/imgneko/rowcolumn_diacritics.c
+$(BUILD_DIR)/obj/test-bin/unit/imgneko/zlib.c.bin: \
+	$(ROOT_DIR)/src/imgneko/reader.h \
+	$(ROOT_DIR)/src/imgneko/zlib.h \
+	$(ROOT_DIR)/src/util/array.h \
+	$(ROOT_DIR)/src/util/common.h \
+	$(ROOT_DIR)/src/util/string.h \
+	$(ROOT_DIR)/testing/support/test_main.h \
+	$(ROOT_DIR)/testing/support/test_reader.h \
+	$(ROOT_DIR)/testing/tests/unit/imgneko/zlib.c
 $(BUILD_DIR)/obj/test-bin/unit/util/array.c.bin: \
 	$(ROOT_DIR)/src/util/array.h \
 	$(ROOT_DIR)/src/util/common.h \
