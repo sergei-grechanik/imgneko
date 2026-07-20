@@ -87,6 +87,7 @@ TIMEOUT_DISABLED_LOG=$(mktemp /tmp/imgneko-runner-timeout-disabled.XXXXXX)
 DISABLED_ONLY_LOG=$(mktemp /tmp/imgneko-runner-disabled-only.XXXXXX)
 TIMEOUT_CLOSED_FDS_OUTPUT=$TIMEOUT_CLOSED_FDS_OUTPUT_ROOT/runner/timeout-closed-fds.sh/output
 TIMEOUT_DETACHED_OUTPUT=$TIMEOUT_DETACHED_OUTPUT_ROOT/runner/timeout-detached-output.sh/output
+TIMEOUT_DETACHED_TIMING=$TIMEOUT_DETACHED_OUTPUT_ROOT/test-times.txt
 FILTER=runner/markers.c\|runner/xfail.sh\|runner/disabled.sh
 
 cleanup() {
@@ -225,9 +226,10 @@ assert_file_exists "$TIMEOUT_CLOSED_FDS_OUTPUT"
 [ ! -s "$TIMEOUT_CLOSED_FDS_OUTPUT" ] ||
     fail "expected closed-fds timeout output to be empty"
 
-# Keep the detached child alive well past the allowed elapsed time, leaving room
-# for coarse date +%s timing and macOS ASan scheduling.
-detached_start=$(date +%s)
+# Keep the detached child alive well past the allowed test duration. The
+# runner's timing file measures only the selected test, avoiding unrelated
+# discovery and ASan startup time that made the former wall-clock check flaky
+# on macOS.
 set +e
 IMGNEKO_TEST_TIMEOUT_DETACHED_OUTPUT_SLEEP_SECONDS=10 \
     "$RUNNER" --jobs=1 --output-dir "$TIMEOUT_DETACHED_OUTPUT_ROOT" --timeout 1 \
@@ -235,11 +237,8 @@ IMGNEKO_TEST_TIMEOUT_DETACHED_OUTPUT_SLEEP_SECONDS=10 \
     >"$TIMEOUT_DETACHED_OUTPUT_LOG" 2>&1
 status=$?
 set -e
-detached_elapsed=$(( $(date +%s) - detached_start ))
 
 [ "$status" -ne 0 ] || fail "detached-output timeout run unexpectedly passed"
-[ "$detached_elapsed" -lt 6 ] ||
-    fail "detached-output timeout run took too long: ${detached_elapsed}s"
 
 assert_file_contains "$TIMEOUT_DETACHED_OUTPUT_LOG" \
     "TIMEOUT: runner/timeout-detached-output.sh"
@@ -253,6 +252,22 @@ assert_file_contains "$TIMEOUT_DETACHED_OUTPUT_LOG" "Result: FAILURE"
 assert_file_exists "$TIMEOUT_DETACHED_OUTPUT"
 assert_file_contains "$TIMEOUT_DETACHED_OUTPUT" \
     "timeout detached output script started"
+assert_file_exists "$TIMEOUT_DETACHED_TIMING"
+
+detached_test_elapsed=$(awk '
+    $2 == "timeout" && $3 == "runner/timeout-detached-output.sh" {
+        print $1
+        exit
+    }
+' "$TIMEOUT_DETACHED_TIMING")
+[ -n "$detached_test_elapsed" ] ||
+    fail "missing detached-output timeout timing record"
+
+# The direct test process times out after one second, followed by a short
+# output-drain grace period. Five seconds leaves generous scheduling headroom
+# while still detecting a runner that waits for the detached ten-second child.
+awk -v elapsed="$detached_test_elapsed" 'BEGIN { exit !(elapsed < 5.0) }' ||
+    fail "detached-output timeout test took too long: ${detached_test_elapsed}s"
 
 "$RUNNER" --jobs=1 --output-dir "$TIMEOUT_DISABLED_OUTPUT_ROOT" --timeout 0 \
     runner/timeout.sh >"$TIMEOUT_DISABLED_LOG" 2>&1 ||
