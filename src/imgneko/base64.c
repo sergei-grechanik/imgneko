@@ -56,18 +56,46 @@ ImgnekoBase64Status imgneko_base64_encoded_len(size_t input_len,
     return IMGNEKO_BASE64_OK;
 }
 
-// Encode one 1-, 2-, or 3-byte group into a padded base64 quartet.
-static void encode_group(const unsigned char *data, size_t len, char out[4]) {
-    assert(1 <= len && len <= 3);
+// Encode a complete 3-byte group without any padding decisions.
+static void encode_complete_group(const unsigned char data[3], char out[4]) {
+    // Base64 divides the three input bytes, in network bit order, into four
+    // consecutive six-bit alphabet indices.
+    uint32_t bits = ((uint32_t)data[0] << 16) | ((uint32_t)data[1] << 8) |
+                    (uint32_t)data[2];
+
+    out[0] = BASE64_ALPHABET[(bits >> 18) & 0x3fu];
+    out[1] = BASE64_ALPHABET[(bits >> 12) & 0x3fu];
+    out[2] = BASE64_ALPHABET[(bits >> 6) & 0x3fu];
+    out[3] = BASE64_ALPHABET[bits & 0x3fu];
+}
+
+// Encode every complete 3-byte group in `data[0..len)` and return the number
+// of output bytes written. `len` must be a multiple of three.
+static size_t encode_complete_groups(const unsigned char *data, size_t len,
+                                     char *out) {
+    assert(len % 3 == 0);
+
+    size_t out_offset = 0;
+    for (size_t offset = 0; offset < len; offset += 3) {
+        encode_complete_group(data + offset, out + out_offset);
+        out_offset += 4;
+    }
+
+    return out_offset;
+}
+
+// Encode the final 1- or 2-byte group into a padded base64 quartet.
+static void encode_final_group(const unsigned char *data, size_t len,
+                               char out[4]) {
+    assert(1 <= len && len <= 2);
 
     unsigned char b0 = data[0];
-    unsigned char b1 = len > 1 ? data[1] : 0;
-    unsigned char b2 = len > 2 ? data[2] : 0;
+    unsigned char b1 = len == 2 ? data[1] : 0;
 
     out[0] = BASE64_ALPHABET[b0 >> 2];
     out[1] = BASE64_ALPHABET[((b0 & 0x03u) << 4) | (b1 >> 4)];
-    out[2] = len > 1 ? BASE64_ALPHABET[((b1 & 0x0fu) << 2) | (b2 >> 6)] : '=';
-    out[3] = len > 2 ? BASE64_ALPHABET[b2 & 0x3fu] : '=';
+    out[2] = len == 2 ? BASE64_ALPHABET[(b1 & 0x0fu) << 2] : '=';
+    out[3] = '=';
 }
 
 ImgnekoBase64Status imgneko_base64_encode(const char *data, size_t len,
@@ -88,36 +116,45 @@ ImgnekoBase64Status imgneko_base64_encode(const char *data, size_t len,
     if (required > out_cap)
         return IMGNEKO_BASE64_BUFFER_TOO_SMALL;
 
-    size_t offset = 0;
-    size_t out_offset = 0;
-    while (offset < len) {
-        size_t group_len = MIN(len - offset, 3);
+    size_t complete_len = len - len % 3;
+    size_t out_offset =
+        encode_complete_groups((const unsigned char *)data, complete_len, out);
 
-        encode_group((const unsigned char *)data + offset, group_len,
-                     out + out_offset);
-        offset += group_len;
-        out_offset += 4;
-    }
+    if (complete_len != len)
+        encode_final_group((const unsigned char *)data + complete_len,
+                           len - complete_len, out + out_offset);
 
     return IMGNEKO_BASE64_OK;
 }
 
-// Return a decoded value, -1 for an invalid byte, or -2 for base64 padding.
-static int decode_char(char ch) {
-    if ('A' <= ch && ch <= 'Z')
-        return ch - 'A';
-    if ('a' <= ch && ch <= 'z')
-        return ch - 'a' + 26;
-    if ('0' <= ch && ch <= '9')
-        return ch - '0' + 52;
-    if (ch == '+')
-        return 62;
-    if (ch == '/')
-        return 63;
-    if (ch == '=')
-        return -2;
-    return -1;
-}
+enum {
+    // Valid decoded values occupy six bits, so this bit marks every other
+    // ASCII byte (including padding) without colliding with valid data.
+    BASE64_INVALID_VALUE = 0x40,
+};
+
+// Map ASCII bytes to their decoded values. Keeping invalid bytes in the table
+// lets the common path validate a quartet with a single predictable branch.
+// Bytes with the high bit set are rejected before indexing this table.
+// clang-format off
+static const unsigned char BASE64_DECODE_TABLE[128] = {
+    // 0x00-0x1f
+    64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64,
+    64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64,
+    // 0x20-0x2f: '+' and '/'
+    64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 62, 64, 64, 64, 63,
+    // 0x30-0x3f: '0'-'9'
+    52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 64, 64, 64, 64, 64, 64,
+    // 0x40-0x4f: 'A'-'O'
+    64, 0,  1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12, 13, 14,
+    // 0x50-0x5f: 'P'-'Z'
+    15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 64, 64, 64, 64, 64,
+    // 0x60-0x6f: 'a'-'o'
+    64, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40,
+    // 0x70-0x7f: 'p'-'z'
+    41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 64, 64, 64, 64, 64,
+};
+// clang-format on
 
 // Decode one strict base64 quartet.
 //
@@ -125,49 +162,61 @@ static int decode_char(char ch) {
 // when the quartet contains padding and therefore must be the final quartet.
 static ImgnekoBase64Status decode_quartet(const char quartet[4], char out[3],
                                           size_t *len_out, bool *is_final_out) {
-    int values[4];
-
     *len_out = 0;
     *is_final_out = false;
 
-    for (size_t i = 0; i < 4; ++i)
-        values[i] = decode_char(quartet[i]);
+    const unsigned char ch0 = (unsigned char)quartet[0];
+    const unsigned char ch1 = (unsigned char)quartet[1];
+    const unsigned char ch2 = (unsigned char)quartet[2];
+    const unsigned char ch3 = (unsigned char)quartet[3];
 
-    if (values[0] < 0 || values[1] < 0)
+    // Make sure all bytes are in [0, 128) so we can use the decode table.
+    if ((ch0 | ch1 | ch2 | ch3) >= 128)
         return IMGNEKO_BASE64_INVALID_INPUT;
 
-    if (values[2] == -2) {
-        if (values[3] != -2 || (values[1] & 0x0f) != 0)
+    const unsigned int value0 = BASE64_DECODE_TABLE[ch0];
+    const unsigned int value1 = BASE64_DECODE_TABLE[ch1];
+    const unsigned int value2 = BASE64_DECODE_TABLE[ch2];
+    const unsigned int value3 = BASE64_DECODE_TABLE[ch3];
+
+    // Unpadded quartets account for virtually all bytes in ordinary input.
+    // Decode that case directly and leave padding checks on the cold path.
+    if (((value0 | value1 | value2 | value3) & BASE64_INVALID_VALUE) == 0) {
+        out[0] = (char)((value0 << 2) | (value1 >> 4));
+        out[1] = (char)(((value1 & 0x0f) << 4) | (value2 >> 2));
+        out[2] = (char)(((value2 & 0x03) << 6) | value3);
+        *len_out = 3;
+        return IMGNEKO_BASE64_OK;
+    }
+
+    if (value0 == BASE64_INVALID_VALUE || value1 == BASE64_INVALID_VALUE)
+        return IMGNEKO_BASE64_INVALID_INPUT;
+
+    if (ch2 == '=') {
+        if (ch3 != '=' || (value1 & 0x0f) != 0)
             return IMGNEKO_BASE64_INVALID_INPUT;
 
-        out[0] = (char)((values[0] << 2) | (values[1] >> 4));
+        out[0] = (char)((value0 << 2) | (value1 >> 4));
         *len_out = 1;
         *is_final_out = true;
         return IMGNEKO_BASE64_OK;
     }
 
-    if (values[2] < 0)
+    if (value2 == BASE64_INVALID_VALUE)
         return IMGNEKO_BASE64_INVALID_INPUT;
 
-    if (values[3] == -2) {
-        if ((values[2] & 0x03) != 0)
+    if (ch3 == '=') {
+        if ((value2 & 0x03) != 0)
             return IMGNEKO_BASE64_INVALID_INPUT;
 
-        out[0] = (char)((values[0] << 2) | (values[1] >> 4));
-        out[1] = (char)(((values[1] & 0x0f) << 4) | (values[2] >> 2));
+        out[0] = (char)((value0 << 2) | (value1 >> 4));
+        out[1] = (char)(((value1 & 0x0f) << 4) | (value2 >> 2));
         *len_out = 2;
         *is_final_out = true;
         return IMGNEKO_BASE64_OK;
     }
 
-    if (values[3] < 0)
-        return IMGNEKO_BASE64_INVALID_INPUT;
-
-    out[0] = (char)((values[0] << 2) | (values[1] >> 4));
-    out[1] = (char)(((values[1] & 0x0f) << 4) | (values[2] >> 2));
-    out[2] = (char)(((values[2] & 0x03) << 6) | values[3]);
-    *len_out = 3;
-    return IMGNEKO_BASE64_OK;
+    return IMGNEKO_BASE64_INVALID_INPUT;
 }
 
 ImgnekoBase64Status imgneko_base64_decoded_len(const char *data, size_t len,
@@ -292,14 +341,9 @@ base64_encode_reader_encode_buffer(ImgnekoBase64EncodeReader *reader,
                                    size_t *out_len) {
     size_t total_len = reader->carry_len + input_len;
     size_t process_len = total_len - total_len % 3;
-    size_t offset = 0;
 
-    while (offset < process_len) {
-        encode_group((const unsigned char *)reader->buffer + offset, 3,
-                     out + *out_len);
-        offset += 3;
-        *out_len += 4;
-    }
+    *out_len = encode_complete_groups((const unsigned char *)reader->buffer,
+                                      process_len, out);
 
     reader->carry_len = total_len - process_len;
     if (reader->carry_len != 0)
@@ -368,8 +412,8 @@ static ImgnekoReaderStatus base64_encode_reader_func(void *ctx, char *out,
 
             // Source EOF turns the carried 1-2 bytes into the final padded
             // quartet. The earlier out_cap check guarantees room for it.
-            encode_group((const unsigned char *)reader->buffer,
-                         reader->carry_len, out);
+            encode_final_group((const unsigned char *)reader->buffer,
+                               reader->carry_len, out);
             *len_out = 4;
             reader->carry_len = 0;
             reader->eof = true;

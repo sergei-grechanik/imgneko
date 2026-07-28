@@ -176,15 +176,64 @@ static int test_decode_vectors(TestContext *ctx) {
     return 0;
 }
 
+// Return true for bytes that belong to the Base64 alphabet or are the padding
+// byte. Separate tests cover whether padding appears in a valid position.
+static bool is_base64_syntax_byte(unsigned int byte) {
+    return ('A' <= byte && byte <= 'Z') || ('a' <= byte && byte <= 'z') ||
+           ('0' <= byte && byte <= '9') || byte == '+' || byte == '/' ||
+           byte == '=';
+}
+
+// Verify that every other byte value is rejected at every quartet position.
+// Explicit lengths ensure that the test includes NUL and all high-bit bytes.
+static int test_decode_rejects_all_non_base64_bytes(TestContext *ctx) {
+    for (unsigned int byte = 0; byte <= UINT8_MAX; ++byte) {
+        if (is_base64_syntax_byte(byte))
+            continue;
+
+        for (size_t offset = 0; offset < 4; ++offset) {
+            char input[4];
+            char out[3];
+            size_t len = 0;
+
+            memcpy(input, "Zm9v", sizeof(input));
+            input[offset] = (char)(unsigned char)byte;
+            memset(out, 'x', sizeof(out));
+
+            ImgnekoBase64Status status = imgneko_base64_decode(
+                input, sizeof(input), out, sizeof(out), &len);
+            if (status != IMGNEKO_BASE64_INVALID_INPUT) {
+                fprintf(stderr, "%s: byte 0x%02x at offset %zu returned %s\n",
+                        ctx->test_name, byte, offset,
+                        imgneko_base64_error_string(status));
+                return 1;
+            }
+            if (memcmp(out, "xxx", sizeof(out)) != 0) {
+                fprintf(stderr,
+                        "%s: byte 0x%02x at offset %zu modified output\n",
+                        ctx->test_name, byte, offset);
+                return 1;
+            }
+        }
+    }
+
+    return 0;
+}
+
 // Verify helper buffer sizing, overflow detection, and strict decode failures.
 static int test_helper_failures(TestContext *ctx) {
     const char *invalid_length_inputs[] = {
         "Zg=", "Z===", "Zg=A", "Zm9v=", "Zm 8=",
     };
+    // The final vectors ensure non-ASCII bytes are rejected before the
+    // decoder uses an input byte as an ASCII table index.
+    // clang-format off
     const char *invalid_decode_inputs[] = {
         "Zg=",   "Z===", "Zg=A", "Zm9v=", "Zh==", "Zm9=",
         "Zm 8=", "{m9v", "Z!!!", "Zm!v",  "Zm9!",
+        "\x80" "m9v", "Z\xff" "9v",
     };
+    // clang-format on
     char out[4];
     size_t len = 0;
     ImgnekoBase64Status status;
@@ -1123,6 +1172,7 @@ int main(int argc, char **argv) {
     const Subtest subtests[] = {
         PREFIXED_TEST(test_encode_vectors),
         PREFIXED_TEST(test_decode_vectors),
+        PREFIXED_TEST(test_decode_rejects_all_non_base64_bytes),
         PREFIXED_TEST(test_helper_failures),
         PREFIXED_TEST(test_encode_reader_padding),
         PREFIXED_TEST(test_encode_reader_small_output),
