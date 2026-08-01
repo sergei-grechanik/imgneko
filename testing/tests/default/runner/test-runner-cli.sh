@@ -17,9 +17,9 @@ if [ -z "${IMGNEKO_TEST_OUTPUT_DIR:-}" ] ||
 fi
 
 RUNNER=$IMGNEKO_BUILD_DIR/bin/test-runner
-TESTS_ROOT=$IMGNEKO_ROOT_DIR/testing/tests
+TESTS_ROOT=$IMGNEKO_ROOT_DIR/testing/tests/default
 NO_SUBTESTS_ABS_PATH=$TESTS_ROOT/runner/no-subtests.c
-NO_SUBTESTS_REPO_PATH=testing/tests/runner/no-subtests.c
+NO_SUBTESTS_REPO_PATH=testing/tests/default/runner/no-subtests.c
 NO_SUBTESTS_PATH=$NO_SUBTESTS_ABS_PATH
 OUTPUT_C_SUBTEST_PATH=$TESTS_ROOT/runner/output.c/emit_output
 OPTION_TEST_DIR=$IMGNEKO_TEST_OUTPUT_DIR/cli-tests-dir

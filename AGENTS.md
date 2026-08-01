@@ -53,6 +53,8 @@ If the logic is complex, comments are mandatory.
   call site, e.g. `foo(arg1, arg2, /*buffer=*/arg3);`. If the values are
   descriptive enough, this is not necessary, e.g.
   `foo(num_items, item_size, buffer);`.
+- When doing CLI parsing, always use the option parsing utilities from
+  `src/util/options.h`.
 
 ### Documenting function parameters
 
@@ -82,6 +84,7 @@ For owned dynamically allocated strings, use the `String` type from
 
 ## Shell scripting recommendations
 
+- Never use bash, only sh. Avoid non-portable feature.
 - Avoid saving the output to a variable just to print it a few lines later. Just
   pass through the output whenever possible. Same with exit codes.
   Bad:
@@ -96,6 +99,11 @@ For owned dynamically allocated strings, use the `String` type from
   some_command
   printf "Exit code: %d\n" "$?"
   ```
+
+- In shell functions, prefix argument variables with `arg_` and local variables
+  with `local_`; reserve unprefixed names for global state. Use uppercase names
+  only for exported variables.
+- Don't forget to surround variable expansions with double quotes.
 
 ## Testing
 

@@ -549,6 +549,25 @@ assert_file_exists "$DEFAULT_BUILD/bin/test-runner"
 assert_file_exists "$DEFAULT_BUILD/obj/test-bin/unit/util/path.c.bin"
 assert_output_not_contains "RUN:"
 
+# Benchmark dependencies should be exposed through targets parallel to the
+# default suite's test-tools and test-c-bins targets.
+say "Build benchmark dependencies without executing benchmarks"
+run_capture "$LOG_DIR/make-benchmark-deps.out" \
+    make -C "$DEFAULT_BUILD" benchmark-deps
+assert_status_zero
+assert_file_exists "$DEFAULT_BUILD/bin/benchmark-readers"
+assert_output_not_contains "RUN:"
+[ ! -e "$DEFAULT_BUILD/bin/benchmark-timer" ] ||
+    fail "benchmark-timer should not be built"
+
+# Benchmark workloads may legitimately take longer than the normal test
+# timeout, so verify that their runner invocation disables it explicitly.
+say "Benchmark runs disable the test timeout"
+run_capture "$LOG_DIR/make-benchmark-timeout.out" \
+    make -n -C "$DEFAULT_BUILD" benchmark FILTER=build-info.sh
+assert_status_zero
+assert_output_contains "--timeout 0"
+
 # Configure a build with a non-default compiled-in parallelism and verify the
 # runner help reflects that saved default.
 say "Configure default test jobs"
@@ -560,29 +579,48 @@ assert_status_zero
 assert_output_contains "Run up to JOBS tests concurrently. (default: 3)"
 
 # The top-level `make test` target should accept both JOBS and PARALLEL as the
-# user-facing override knobs for test-runner parallelism.
+# user-facing override knobs for test-runner parallelism. Seed benchmark
+# history directly to verify that ordinary test runs preserve it without
+# executing the benchmark suite in this regression.
 say "Make test accepts JOBS and PARALLEL"
+mkdir -p "$DEFAULT_BUILD/test-outputs/benchmark/retained"
+printf '%s\n' retained \
+    >"$DEFAULT_BUILD/test-outputs/benchmark/retained/result.txt"
 run_capture "$LOG_DIR/make-test-jobs-var.out" make -C "$DEFAULT_BUILD" test FILTER=runner/output.sh JOBS=2
 assert_status_zero
 assert_output_contains "discovered: 1"
 assert_output_contains "passed: 1"
+assert_file_exists \
+    "$DEFAULT_BUILD/test-outputs/benchmark/retained/result.txt"
 run_capture "$LOG_DIR/make-test-parallel-var.out" make -C "$DEFAULT_BUILD" test FILTER=runner/output.sh PARALLEL=2
 assert_status_zero
 assert_output_contains "discovered: 1"
 assert_output_contains "passed: 1"
+
+# Benchmark cleanup should preserve the latest default test output while
+# removing every retained benchmark run.
+say "Clean benchmark output independently"
+assert_file_exists "$DEFAULT_BUILD/test-outputs/default/test-times.txt"
+run_capture "$LOG_DIR/clean-benchmark-output.out" \
+    make -C "$DEFAULT_BUILD" clean-benchmark-output
+assert_status_zero
+assert_path_absent "$DEFAULT_BUILD/test-outputs/benchmark"
+assert_file_exists "$DEFAULT_BUILD/test-outputs/default/test-times.txt"
 
 # A relative BUILD_DIR with a trailing slash should normalize to the same
 # absolute build directory so test-runner env vars remain stable, and `make
 # test` should also clear the default output tree before running tests.
 say "Root make test accepts relative BUILD_DIR with trailing slash"
 sh "$ROOT_DIR/configure" --build-dir="$RELATIVE_BUILD_DIR_TEST"
-mkdir -p "$RELATIVE_BUILD_DIR_TEST/test-outputs/stale"
-printf '%s\n' stale >"$RELATIVE_BUILD_DIR_TEST/test-outputs/stale/old-file"
+mkdir -p "$RELATIVE_BUILD_DIR_TEST/test-outputs/default/stale"
+printf '%s\n' stale \
+    >"$RELATIVE_BUILD_DIR_TEST/test-outputs/default/stale/old-file"
 run_capture "$LOG_DIR/root-make-relative-builddir.out" make -C "$ROOT_DIR" test BUILD_DIR=build/test-relative-builddir/ FILTER=runner/environment.sh
 assert_status_zero
 assert_output_contains "discovered: 1"
 assert_output_contains "passed: 1"
-assert_path_absent "$RELATIVE_BUILD_DIR_TEST/test-outputs/stale/old-file"
+assert_path_absent \
+    "$RELATIVE_BUILD_DIR_TEST/test-outputs/default/stale/old-file"
 
 # Exercise a build directory outside ./build and verify that install still puts
 # the binary in the requested DESTDIR layout.
@@ -620,23 +658,37 @@ assert_path_absent "$STALE_REPO/build/stale/bin/imgneko"
 
 # clean-test-output should still work when the saved configuration is stale so
 # users can discard stale test logs before rerunning configure.
-mkdir -p "$STALE_REPO/build/stale/bin" "$STALE_REPO/build/stale/test-outputs"
-touch "$STALE_REPO/build/stale/bin/imgneko" "$STALE_REPO/build/stale/test-outputs/stale.log"
+mkdir -p "$STALE_REPO/build/stale/bin" \
+    "$STALE_REPO/build/stale/test-outputs/default"
+touch "$STALE_REPO/build/stale/bin/imgneko" \
+    "$STALE_REPO/build/stale/test-outputs/default/stale.log"
 
 run_capture "$LOG_DIR/stale-clean-test-output.out" make -C "$STALE_REPO/build/stale" clean-test-output
 assert_status_zero
 assert_file_exists "$STALE_REPO/build/stale/bin/imgneko"
-assert_path_absent "$STALE_REPO/build/stale/test-outputs/stale.log"
+assert_path_absent "$STALE_REPO/build/stale/test-outputs/default/stale.log"
 
-mkdir -p "$STALE_REPO/build/stale/test-outputs"
-touch "$STALE_REPO/build/stale/test-outputs/stale.log"
+mkdir -p "$STALE_REPO/build/stale/test-outputs/default" \
+    "$STALE_REPO/build/stale/test-outputs/benchmark/retained"
+touch "$STALE_REPO/build/stale/test-outputs/default/stale.log"
+touch "$STALE_REPO/build/stale/test-outputs/benchmark/retained/results.tsv"
 
-# clean should keep delegating to clean-test-output while also removing other
-# build outputs when the saved configuration is stale.
+# clean should remove ordinary build outputs while preserving benchmark history
+# even when the saved configuration is stale.
 run_capture "$LOG_DIR/stale-clean.out" make -C "$STALE_REPO/build/stale" clean
 assert_status_zero
 assert_path_absent "$STALE_REPO/build/stale/bin/imgneko"
-assert_path_absent "$STALE_REPO/build/stale/test-outputs/stale.log"
+assert_path_absent "$STALE_REPO/build/stale/test-outputs/default/stale.log"
+assert_file_exists \
+    "$STALE_REPO/build/stale/test-outputs/benchmark/retained/results.tsv"
+
+# clean-all is the explicit way to remove ordinary outputs and benchmark
+# history together, including files from the legacy flat test-output layout.
+touch "$STALE_REPO/build/stale/test-outputs/legacy-test.log"
+run_capture "$LOG_DIR/stale-clean-all.out" \
+    make -C "$STALE_REPO/build/stale" clean-all
+assert_status_zero
+assert_path_absent "$STALE_REPO/build/stale/test-outputs"
 
 # Remove VERSION in a copied repository so the top-level Makefile parse-time
 # check fails before any target logic runs.
@@ -826,7 +878,7 @@ assert_file_exists "$COVERAGE_BUILD/coverage/tests.stamp"
 assert_file_contains "$COVERAGE_BUILD/coverage/summary.txt" "File 'src/main.c'"
 assert_file_contains "$COVERAGE_BUILD/coverage/summary.txt" "File 'src/util/path.c'"
 assert_file_contains "$COVERAGE_BUILD/coverage/summary.txt" "File 'testing/tools/test-runner.c'"
-assert_file_contains "$COVERAGE_BUILD/coverage/summary.txt" "File 'testing/tests/unit/util/path.c'"
+assert_file_contains "$COVERAGE_BUILD/coverage/summary.txt" "File 'testing/tests/default/unit/util/path.c'"
 assert_file_contains "$COVERAGE_BUILD/coverage/summary.txt" "Lines executed:"
 assert_file_contains "$COVERAGE_BUILD/coverage/summary.txt" "Branches covered:"
 assert_file_contains "$COVERAGE_BUILD/coverage/summary.txt" "Uncovered locations:"
@@ -842,7 +894,7 @@ coverage_tests_repeat_mtime=$(stat -c %Y "$COVERAGE_BUILD/coverage/tests.stamp")
 assert_equal "$coverage_tests_initial_mtime" "$coverage_tests_repeat_mtime"
 
 sleep 1
-touch "$ROOT_DIR/testing/tests/runner/test-runner-cli.sh"
+touch "$ROOT_DIR/testing/tests/default/runner/test-runner-cli.sh"
 run_capture "$LOG_DIR/coverage-rerun-on-test-change.out" make -C "$COVERAGE_BUILD" coverage
 assert_status_zero
 coverage_changed_mtime=$(stat -c %Y "$COVERAGE_BUILD/coverage/uncovered.qf")
@@ -920,7 +972,7 @@ run_capture "$LOG_DIR/depfile-normal-rebuild.out" make -C "$NORMAL_DEPS_BUILD" t
 assert_status_zero
 assert_output_contains "src/util/path.c"
 assert_output_contains "testing/tools/test-runner.c"
-assert_output_contains "testing/tests/unit/util/path.c"
+assert_output_contains "testing/tests/default/unit/util/path.c"
 assert_output_not_contains "src/main.c"
 
 # Reject build directories whose path includes whitespace before any files are

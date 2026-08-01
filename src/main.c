@@ -6,11 +6,12 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <unistd.h>
+#include <zlib.h>
 
-#include "build_info.h"
 #include "cli/placeholder_bg.h"
 #include "imgneko/placeholder.h"
 #include "util/options.h"
+#include "util/print_build_info.h"
 #include "util/string.h"
 
 OPT_DEFINE_WRAPPER_STRUCT(OptUint32, uint32_t);
@@ -31,12 +32,6 @@ typedef struct Uint32Pair {
     uint32_t first;
     uint32_t second;
 } Uint32Pair;
-
-// Named enum value accepted by a CLI parser.
-typedef struct NamedEnumOption {
-    const char *name;
-    int value;
-} NamedEnumOption;
 
 OPT_DEFINE_WRAPPER_STRUCT(OptUint32Pair, Uint32Pair);
 OPT_DEFINE_WRAPPER_STRUCT(OptPlaceholderCursorMovement,
@@ -113,51 +108,6 @@ static bool parse_uint32_pair_option(void *value, const char *text,
     return true;
 }
 
-// Parse a named enum from a fixed option table.
-//
-// `options`
-//     Accepted names and their enum values.
-// `num_options`
-//     Number of entries in `options`.
-// `text`
-//     Option value text.
-// `text_len`
-//     Length of `text` in bytes.
-// `out`
-//     Receives the matching enum value on success.
-// `error_out`
-//     Optional. Receives a parse-error reason when parsing fails.
-static bool parse_named_enum_option(const NamedEnumOption *options,
-                                    size_t num_options, const char *text,
-                                    size_t text_len, int *out,
-                                    String *error_out) {
-    for (size_t i = 0; i < num_options; ++i) {
-        if (str_data_equals_cstr(text, text_len, options[i].name)) {
-            *out = options[i].value;
-            return true;
-        }
-    }
-
-    String expected = str_from_cstr("expected one of ");
-    for (size_t i = 0; i < num_options; ++i) {
-        if (i != 0) {
-            // IMGNEKO_UNCOVERED_OK[3 lines]: Current enum parsers have at
-            // least three values.
-            if (i + 1 == num_options && num_options == 2)
-                str_append_cstr(expected, " or ");
-            else if (i + 1 == num_options)
-                str_append_cstr(expected, ", or ");
-            else
-                str_append_cstr(expected, ", ");
-        }
-        str_append_cstr(expected, options[i].name);
-    }
-
-    bool ok = opt_parse_error(error_out, expected.cstr);
-    str_free(expected);
-    return ok;
-}
-
 // Parse a placeholder diacritic mode name.
 static bool parse_diacritics_option(void *value, const char *text,
                                     size_t text_len, String *error_out) {
@@ -187,7 +137,7 @@ static bool parse_diacritics_option(void *value, const char *text,
 // Parse the terminal cursor movement method for drawing placeholder rows.
 static bool parse_cursor_movement_option(void *value, const char *text,
                                          size_t text_len, String *error_out) {
-    static const NamedEnumOption options[] = {
+    static const OptNamedEnumOption options[] = {
         {"auto", PLACEHOLDER_CURSOR_MOVEMENT_AUTO},
         {"text", PLACEHOLDER_CURSOR_MOVEMENT_TEXT},
         {"save-restore", PLACEHOLDER_CURSOR_MOVEMENT_SAVE_RESTORE},
@@ -196,8 +146,8 @@ static bool parse_cursor_movement_option(void *value, const char *text,
     };
     int parsed = 0;
 
-    if (!parse_named_enum_option(options, ARRAY_SIZE(options), text, text_len,
-                                 &parsed, error_out))
+    if (!opt_parse_named_enum_option(options, ARRAY_SIZE(options), text,
+                                     text_len, &parsed, error_out))
         return false;
 
     *(PlaceholderCursorMovement *)value = (PlaceholderCursorMovement)parsed;
@@ -207,7 +157,7 @@ static bool parse_cursor_movement_option(void *value, const char *text,
 // Parse the final cursor position after placeholder output is complete.
 static bool parse_final_cursor_option(void *value, const char *text,
                                       size_t text_len, String *error_out) {
-    static const NamedEnumOption options[] = {
+    static const OptNamedEnumOption options[] = {
         {"next-line", PLACEHOLDER_FINAL_CURSOR_NEXT_LINE},
         {"bottom-left", PLACEHOLDER_FINAL_CURSOR_BOTTOM_LEFT},
         {"below-left", PLACEHOLDER_FINAL_CURSOR_BELOW_LEFT},
@@ -217,8 +167,8 @@ static bool parse_final_cursor_option(void *value, const char *text,
     };
     int parsed = 0;
 
-    if (!parse_named_enum_option(options, ARRAY_SIZE(options), text, text_len,
-                                 &parsed, error_out))
+    if (!opt_parse_named_enum_option(options, ARRAY_SIZE(options), text,
+                                     text_len, &parsed, error_out))
         return false;
 
     *(PlaceholderFinalCursor *)value = (PlaceholderFinalCursor)parsed;
@@ -359,23 +309,6 @@ OPT_DEFINE_PROGRAM_PARSER_WITH_TOP_LEVEL_OPTIONS(
     OPT_PROGRAM(.program_name = "imgneko",
                 .descr = "Terminal image placeholder utilities."),
     ProgramOptions, IMGNEKO_COMMANDS);
-
-// Print the build information reported by the historical --version path.
-static void print_version(void) {
-    printf("version: %s\n", BUILD_IMGNEKO_VERSION);
-    printf("compiled: %s\n", BUILD_COMPILED_AT);
-    printf("profile: %s\n", BUILD_CONFIG_PROFILE);
-    printf("prefix: %s\n", BUILD_CONFIG_PREFIX);
-    printf("cc: %s\n", BUILD_CONFIG_CC);
-    printf("cppflags: %s\n", BUILD_CONFIG_CPPFLAGS);
-    printf("cflags: %s\n", BUILD_CONFIG_CFLAGS);
-    printf("ldflags: %s\n", BUILD_CONFIG_LDFLAGS);
-    printf("ldlibs: %s\n", BUILD_CONFIG_LDLIBS);
-    printf("zlib_cppflags: %s\n", BUILD_CONFIG_ZLIB_CPPFLAGS);
-    printf("zlib_ldlibs: %s\n", BUILD_CONFIG_ZLIB_LDLIBS);
-    printf("feature_x: %s\n", BUILD_CONFIG_FEATURE_X);
-    printf("coverage_report: %s\n", BUILD_CONFIG_COVERAGE_REPORT);
-}
 
 // Report a missing required command option.
 static bool require_option(bool is_set, const char *cli_name) {
@@ -574,7 +507,7 @@ int main(int argc, char **argv) {
         return rc;
 
     if (parsed.top_level.version.value) {
-        print_version();
+        build_info_print();
         opt_program_result_deinit(&ImgnekoCLI_parser, &parsed);
         return 0;
     }

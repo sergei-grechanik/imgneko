@@ -61,14 +61,14 @@ typedef enum TestMarker {
     TEST_MARKER_DISABLED,
 } TestMarker;
 
-// A discovered runnable file under `testing/tests/`.
+// A discovered runnable file under the tests directory.
 //
 // rel_path is the path relative to that test root, for example:
 // `integration/unit/util/string.c`
 //
 // abs_path is the corresponding absolute path in the working tree, for
 // example:
-// `/repo/testing/tests/integration/unit/util/string.c`
+// `/repo/testing/tests/default/integration/unit/util/string.c`
 typedef struct TestFile {
     TestKind kind;
     TestMarker marker;
@@ -87,7 +87,7 @@ typedef struct CSubtest {
 // Example for a C test with subtests:
 // id:            `integration/unit/util/string.c/empty_and_reserve`
 // file_id:       `integration/unit/util/string.c`
-// file_abs_path: `/repo/testing/tests/integration/unit/util/string.c`
+// file_abs_path: `/repo/testing/tests/default/integration/unit/util/string.c`
 // c_exe_path:    `/repo/build/release/obj/test-bin/.../util/string.c.bin`
 // c_subtest:     `empty_and_reserve`
 //
@@ -789,7 +789,7 @@ static void validate_output_dir(const char *output_dir) {
     X(S, output_dir, OptString,                                                \
       OPT_STRING(.cli = "--output-dir --out-dir DIR",                          \
                  .descr = "Write captured test output under DIR.",             \
-                 .dflt = TEST_RUNNER_BUILD_DIR "/test-outputs"))               \
+                 .dflt = TEST_RUNNER_BUILD_DIR "/test-outputs/default"))       \
     X(S, out_tmp, OptBool,                                                     \
       OPT_BOOL_FLAG(.cli = "--output-tmp --out-tmp",                           \
                     .descr = "Create a temporary output directory instead of " \
@@ -797,7 +797,7 @@ static void validate_output_dir(const char *output_dir) {
     X(S, tests_dir, OptString,                                                 \
       OPT_STRING(.cli = "--tests-dir DIR",                                     \
                  .descr = "Discover runnable tests under DIR.",                \
-                 .dflt = TEST_RUNNER_ROOT_DIR "/testing/tests"))               \
+                 .dflt = TEST_RUNNER_ROOT_DIR "/testing/tests/default"))       \
     X(S, test_bin_dir, OptString,                                              \
       OPT_STRING(.cli = "--test-bin-dir DIR",                                  \
                  .descr = "Read compiled C test binaries from DIR.",           \

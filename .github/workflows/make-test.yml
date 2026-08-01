@@ -2,7 +2,8 @@
 
 name: Make Test
 
-# This workflow runs all tests with the default and development configurations.
+# This workflow runs all tests with the default and development configurations
+# and the small benchmark suite with the release configuration.
 
 on:
   push:
@@ -83,6 +84,25 @@ jobs:
 
       - name: Run default-profile tests
         run: make test 2>&1
+
+  benchmark-small:
+    runs-on: ubuntu-latest
+    needs: generated-file-check
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install benchmark dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config qpdf zlib1g-dev
+
+      - name: Configure release build
+        run: ./configure --profile=release
+
+      - name: Run small benchmark suite
+        run: make -C build/release benchmark-small 2>&1
 
   make-test-dev:
     runs-on: ubuntu-latest

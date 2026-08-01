@@ -42,3 +42,7 @@ src/util/options.h *_deinit
 # We don't care about coverage of the tests themselves.
 testing/tests/*
 testing/support/test_reader.c
+
+# The benchmark-only helper is intentionally outside the default test suite, so
+# we can't cover it.
+testing/tools/benchmark-readers.c

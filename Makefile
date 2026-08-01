@@ -39,13 +39,21 @@ OBJ_DIR        := $(BUILD_DIR)/obj
 GEN_DIR        := $(BUILD_DIR)/generated
 TEST_BIN_DIR   := $(OBJ_DIR)/test-bin
 TEST_OUTPUT_DIR := $(BUILD_DIR)/test-outputs
+TEST_OUTPUT_DIR_DEFAULT := $(TEST_OUTPUT_DIR)/default
+TEST_OUTPUT_DIR_BENCHMARK := $(TEST_OUTPUT_DIR)/benchmark
+TESTS_DIR_DEFAULT := $(ROOT_DIR)/testing/tests/default
+TESTS_DIR_BENCHMARK := $(ROOT_DIR)/testing/tests/benchmark
 COVERAGE_DIR   := $(BUILD_DIR)/coverage
 COVERAGE_PROFILE_DIR := $(COVERAGE_DIR)/profiles
+
+# User-selectable benchmark workload: small or large.
+BENCHMARK_PRESET ?= large
 
 # Important targets.
 BIN_IMGNEKO     := $(BIN_DIR)/imgneko
 BIN_TEST_RUNNER := $(BIN_DIR)/test-runner
 BIN_RUN_AND_CHECK := $(BIN_DIR)/run-and-check
+BIN_BENCHMARK_READERS := $(BIN_DIR)/benchmark-readers
 TEST_TOOL_NAMES := \
 	sample-cli \
 	sample-cli-default-no-top-level \
@@ -82,13 +90,16 @@ APP_SOURCES := src/main.c $(CLI_SOURCES)
 IMGNEKO_SOURCES := $(shell if [ -d "$(ROOT_DIR)/src/imgneko" ]; then cd "$(ROOT_DIR)" && find src/imgneko -type f -name '*.c' -print | LC_ALL=C sort; fi)
 UTIL_SOURCES := $(shell if [ -d "$(ROOT_DIR)/src/util" ]; then cd "$(ROOT_DIR)" && find src/util -type f -name '*.c' -print | LC_ALL=C sort; fi)
 TEST_RUNNER_SOURCE := testing/tools/test-runner.c
+BENCHMARK_READERS_SOURCE := testing/tools/benchmark-readers.c
 RUN_AND_CHECK_SOURCES := \
 	testing/tools/run-and-check.c \
 	testing/tools/run-and-check-expr.c
 TEST_TOOL_SOURCES := $(addprefix testing/tools/,$(addsuffix .c,$(TEST_TOOL_NAMES)))
 TEST_SUPPORT_SOURCES := $(shell if [ -d "$(ROOT_DIR)/testing/support" ]; then cd "$(ROOT_DIR)" && find testing/support -type f -name '*.c' -print | LC_ALL=C sort; fi)
-TEST_SOURCES := $(shell if [ -d "$(ROOT_DIR)/testing/tests" ]; then cd "$(ROOT_DIR)" && find testing/tests -type f -print | LC_ALL=C sort; fi)
-TEST_C_SOURCES := $(shell if [ -d "$(ROOT_DIR)/testing/tests" ]; then cd "$(ROOT_DIR)" && find testing/tests -type f -name '*.c' -print | LC_ALL=C sort; fi)
+TEST_SOURCES_DEFAULT := $(shell if [ -d "$(TESTS_DIR_DEFAULT)" ]; then cd "$(ROOT_DIR)" && find testing/tests/default -type f -print | LC_ALL=C sort; fi)
+TEST_C_SOURCES_DEFAULT := $(shell if [ -d "$(TESTS_DIR_DEFAULT)" ]; then cd "$(ROOT_DIR)" && find testing/tests/default -type f -name '*.c' -print | LC_ALL=C sort; fi)
+TEST_SOURCES_BENCHMARK := $(shell if [ -d "$(TESTS_DIR_BENCHMARK)" ]; then cd "$(ROOT_DIR)" && find testing/tests/benchmark -type f -print | LC_ALL=C sort; fi)
+TEST_C_SOURCES_BENCHMARK := $(shell if [ -d "$(TESTS_DIR_BENCHMARK)" ]; then cd "$(ROOT_DIR)" && find testing/tests/benchmark -type f -name '*.c' -print | LC_ALL=C sort; fi)
 
 # Preserve the source tree under $(OBJ_DIR), so:
 #   src/main.c -> $(OBJ_DIR)/src/main.o
@@ -100,15 +111,20 @@ SHARED_OBJECTS := $(IMGNEKO_OBJECTS) $(UTIL_OBJECTS)
 TEST_BIN_SHARED_OBJECTS := $(CLI_OBJECTS) $(SHARED_OBJECTS)
 OBJECTS := $(APP_OBJECTS) $(SHARED_OBJECTS)
 TEST_RUNNER_OBJECT := $(OBJ_DIR)/$(TEST_RUNNER_SOURCE:.c=.o)
+BENCHMARK_READERS_OBJECT := $(OBJ_DIR)/$(BENCHMARK_READERS_SOURCE:.c=.o)
 RUN_AND_CHECK_OBJECTS := $(addprefix $(OBJ_DIR)/,$(RUN_AND_CHECK_SOURCES:.c=.o))
 TEST_TOOL_OBJECTS := $(addprefix $(OBJ_DIR)/,$(TEST_TOOL_SOURCES:.c=.o))
 TEST_SUPPORT_OBJECTS := $(addprefix $(OBJ_DIR)/,$(TEST_SUPPORT_SOURCES:.c=.o))
 TEST_TOOLS := $(BIN_TEST_RUNNER) $(BIN_RUN_AND_CHECK) $(TEST_TOOL_BINS)
-TEST_C_BINS := $(patsubst testing/tests/%.c,$(TEST_BIN_DIR)/%.c.bin,$(TEST_C_SOURCES))
+BENCHMARK_TOOLS := $(BIN_TEST_RUNNER) $(BIN_BENCHMARK_READERS)
+TEST_C_BINS_DEFAULT := $(patsubst testing/tests/default/%.c,$(TEST_BIN_DIR)/%.c.bin,$(TEST_C_SOURCES_DEFAULT))
+TEST_C_BINS_BENCHMARK := $(patsubst testing/tests/benchmark/%.c,$(TEST_BIN_DIR)/%.c.bin,$(TEST_C_SOURCES_BENCHMARK))
 ALL_OBJECTS_AND_BINS := \
 		$(OBJECTS) $(TEST_RUNNER_OBJECT) $(RUN_AND_CHECK_OBJECTS) \
+		$(BENCHMARK_READERS_OBJECT) \
 		$(TEST_TOOL_OBJECTS) \
-		$(TEST_SUPPORT_OBJECTS) $(TEST_C_BINS)
+		$(TEST_SUPPORT_OBJECTS) $(TEST_C_BINS_DEFAULT) \
+		$(TEST_C_BINS_BENCHMARK)
 
 ###############################################################################
 # Fixed project metadata
@@ -128,9 +144,10 @@ IMGNEKO_VERSION := $(strip $(file <$(VERSION_FILE)))
 
 # These targets do not need config.mk:
 #   - help: should always work
-#   - clean-test-output: should remove stale test logs without requiring configure
+#   - output cleanup targets: should remove stale logs without requiring
+#     configure
 #   - clean: should remove outputs even if the build dir was never configured
-NO_CONFIG_TARGETS := help clean clean-test-output
+NO_CONFIG_TARGETS := help clean clean-all clean-test-output clean-benchmark-output
 
 # Use the requested goals, or "all" if the user did not name one explicitly.
 REQUESTED_GOALS := $(if $(MAKECMDGOALS),$(MAKECMDGOALS),all)
@@ -291,6 +308,11 @@ $(BIN_RUN_AND_CHECK): $(RUN_AND_CHECK_OBJECTS) $(SHARED_OBJECTS) $(CONFIG_MK) $(
 	@mkdir -p "$(dir $@)"
 	$(CC) $(COMMON_LINK_FLAGS) -o "$@" $(RUN_AND_CHECK_OBJECTS) $(SHARED_OBJECTS) $(COMMON_LDLIBS)
 
+# Link the benchmark helper separately so normal test builds do not need it.
+$(BIN_BENCHMARK_READERS): $(BENCHMARK_READERS_OBJECT) $(SHARED_OBJECTS) $(CONFIG_MK) $(BUILD_INFO_H) | check-config-date
+	@mkdir -p "$(dir $@)"
+	$(CC) $(COMMON_LINK_FLAGS) -o "$@" $(BENCHMARK_READERS_OBJECT) $(SHARED_OBJECTS) $(COMMON_LDLIBS)
+
 # Link each helper listed in TEST_TOOL_NAMES against the shared utility
 # objects. This is a static pattern rule: make expands the explicit target list
 # in TEST_TOOL_BINS, then uses the `$(BIN_DIR)/%` pattern to derive the matching
@@ -324,9 +346,15 @@ $(OBJ_DIR)/%.o: %.c $(CONFIG_MK) $(BUILD_INFO_H) | check-config-date
 	@mkdir -p "$(dir $@)"
 	$(CC) $(COMMON_INCLUDES) $(COMMON_COMPILE_FLAGS) -c "$<" -o "$@"
 
-$(TEST_BIN_DIR)/%.c.bin: testing/tests/%.c $(TEST_SUPPORT_OBJECTS) $(TEST_BIN_SHARED_OBJECTS) $(CONFIG_MK) $(BUILD_INFO_H) | check-config-date
+$(TEST_C_BINS_DEFAULT): $(TEST_BIN_DIR)/%.c.bin: testing/tests/default/%.c $(TEST_SUPPORT_OBJECTS) $(TEST_BIN_SHARED_OBJECTS) $(CONFIG_MK) $(BUILD_INFO_H) | check-config-date
 	@mkdir -p "$(dir $@)"
 	$(CC) $(TEST_INCLUDES) $(COMMON_COMPILE_FLAGS) $(COMMON_LINK_FLAGS) "$<" $(TEST_SUPPORT_OBJECTS) $(TEST_BIN_SHARED_OBJECTS) -o "$@" $(COMMON_LDLIBS)
+
+ifneq ($(strip $(TEST_C_BINS_BENCHMARK)),)
+$(TEST_C_BINS_BENCHMARK): $(TEST_BIN_DIR)/%.c.bin: testing/tests/benchmark/%.c $(TEST_SUPPORT_OBJECTS) $(TEST_BIN_SHARED_OBJECTS) $(CONFIG_MK) $(BUILD_INFO_H) | check-config-date
+	@mkdir -p "$(dir $@)"
+	$(CC) $(TEST_INCLUDES) $(COMMON_COMPILE_FLAGS) $(COMMON_LINK_FLAGS) "$<" $(TEST_SUPPORT_OBJECTS) $(TEST_BIN_SHARED_OBJECTS) -o "$@" $(COMMON_LDLIBS)
+endif
 
 # Build a checked-in, normalized dependency file from per-target depfiles
 # generated by an explicit depfile-enabled configure run.
@@ -350,18 +378,29 @@ endif
 
 .DEFAULT_GOAL := all
 
-.PHONY: all install clean coverage coverage-report depfile help check-config-date test test-deps test-list test-tools test-c-bins clean-test-output
+.PHONY: all install clean coverage coverage-report depfile help \
+	check-config-date test test-deps test-list test-tools test-c-bins \
+	benchmark benchmark-small benchmark-large benchmark-deps \
+	benchmark-tools benchmark-c-bins \
+	clean-test-output clean-benchmark-output clean-all
 
 # Targets to build things.
 all: check-config-date $(BIN_IMGNEKO)
 	@$(COMPILE_DB_REFRESH)
 test-tools: check-config-date $(TEST_TOOLS)
 	@$(COMPILE_DB_REFRESH)
-test-c-bins: check-config-date $(TEST_C_BINS)
+test-c-bins: check-config-date $(TEST_C_BINS_DEFAULT)
+	@$(COMPILE_DB_REFRESH)
+benchmark-tools: check-config-date $(BENCHMARK_TOOLS)
+	@$(COMPILE_DB_REFRESH)
+benchmark-c-bins: check-config-date $(TEST_C_BINS_BENCHMARK)
 	@$(COMPILE_DB_REFRESH)
 
 # Build everything required to run tests without actually executing them.
 test-deps: check-config-date all test-tools test-c-bins
+
+# Build everything required to run benchmarks without executing them.
+benchmark-deps: check-config-date benchmark-tools benchmark-c-bins
 
 # Install the built binary.
 install: check-config-date all
@@ -374,12 +413,49 @@ test: check-config-date test-deps clean-test-output
 	if [ -n "$(FILTER)" ]; then set -- "$(FILTER)"; else set -- --all; fi; \
 	"$(BIN_TEST_RUNNER)" -j "$(TEST_RUNNER_JOBS)" "$$@"
 
+# The plain benchmark target runs the large workload; this shortcut selects the
+# small workload for quicker comparisons.
+benchmark-small: override BENCHMARK_PRESET := small
+benchmark-small: benchmark
+
+benchmark-large: override BENCHMARK_PRESET := large
+benchmark-large: benchmark
+
+# Run benchmarks serially without a per-test timeout and retain every run under
+# a timestamped directory.
+benchmark: check-config-date benchmark-deps
+	@set -eu; \
+	run_name="$$(date -u '+%Y%m%dT%H%M%SZ')"; \
+	run_dir="$(TEST_OUTPUT_DIR_BENCHMARK)/$$run_name"; \
+	suffix=1; \
+	while [ -e "$$run_dir" ]; do \
+		run_dir="$(TEST_OUTPUT_DIR_BENCHMARK)/$$run_name-$$suffix"; \
+		suffix=$$((suffix + 1)); \
+	done; \
+	case ' $(CFLAGS) ' in \
+		*' -O2 '*) ;; \
+		*) printf '%s\n' 'WARNING: benchmark binaries were compiled without -O2; results may not be representative.' >&2 ;; \
+	esac; \
+	set -- --all; \
+	if [ -n "$(FILTER)" ]; then set -- "build-info.sh|$(FILTER)"; fi; \
+	BENCHMARK_PRESET="$(BENCHMARK_PRESET)" "$(BIN_TEST_RUNNER)" \
+		--jobs 1 \
+		--timeout 0 \
+		--output-passthrough \
+		--tests-dir "$(TESTS_DIR_BENCHMARK)" \
+		--out-dir "$$run_dir" \
+		"$$@"; \
+	"$(ROOT_DIR)/testing/scripts/report-benchmarks.sh" "$$run_dir"; \
+	rm -f "$(TEST_OUTPUT_DIR_BENCHMARK)/last"; \
+	ln -s "$${run_dir##*/}" "$(TEST_OUTPUT_DIR_BENCHMARK)/last"
+
+
 ifeq ($(COVERAGE_REPORT),ON)
 # Run the full instrumented test suite only when any instrumented binary
 # changed, then regenerate the merged coverage artifacts only when the raw
 # profiles or reporting inputs changed.
-$(COVERAGE_TESTS_STAMP): $(BIN_IMGNEKO) $(TEST_TOOLS) $(TEST_C_BINS) $(TEST_SOURCES) | check-config-date
-	@rm -rf "$(COVERAGE_PROFILE_DIR)" "$(TEST_OUTPUT_DIR)"
+$(COVERAGE_TESTS_STAMP): $(BIN_IMGNEKO) $(TEST_TOOLS) $(TEST_C_BINS_DEFAULT) $(TEST_SOURCES_DEFAULT) | check-config-date
+	@rm -rf "$(COVERAGE_PROFILE_DIR)" "$(TEST_OUTPUT_DIR_DEFAULT)"
 	@mkdir -p "$(COVERAGE_PROFILE_DIR)"
 	@LLVM_PROFILE_FILE="$(COVERAGE_PROFILE_DIR)/%m-%p.profraw" "$(BIN_TEST_RUNNER)" -j "$(TEST_RUNNER_JOBS)" --all
 	@touch "$@"
@@ -404,7 +480,7 @@ coverage-report: check-config-date
 	@"$(ROOT_DIR)/tools/build-coverage-report.sh" \
 		"$(ROOT_DIR)" "$(BUILD_DIR)" "$(COVERAGE_DIR)" \
 		"$(LLVM_PROFDATA)" "$(LLVM_COV)" \
-		"$(BIN_IMGNEKO)" $(TEST_TOOLS) $(TEST_C_BINS)
+		"$(BIN_IMGNEKO)" $(TEST_TOOLS) $(TEST_C_BINS_DEFAULT)
 	@printf '%s\n' "Wrote $(call display_path,$(COVERAGE_SUMMARY))"
 	@printf '%s\n' "Wrote $(call display_path,$(COVERAGE_UNCOVERED))"
 endif
@@ -425,11 +501,19 @@ test-list: check-config-date test-tools test-c-bins
 
 # Remove captured per-test output files so each `make test` run starts fresh.
 clean-test-output:
-	rm -rf "$(TEST_OUTPUT_DIR)"
+	rm -rf "$(TEST_OUTPUT_DIR_DEFAULT)"
 
-# Remove build outputs but keep the saved configuration and wrapper Makefile.
+# Remove all retained benchmark runs without touching default test output.
+clean-benchmark-output:
+	rm -rf "$(TEST_OUTPUT_DIR_BENCHMARK)"
+
+# Remove ordinary build and test outputs while retaining benchmark history.
 clean: clean-test-output
 	rm -rf "$(OBJ_DIR)" "$(BIN_DIR)" "$(GEN_DIR)" "$(COVERAGE_DIR)" "$(STAGED_DEPFILE)" "$(COMPILE_DB)"
+
+# Remove every generated output, including retained benchmark history.
+clean-all: clean
+	rm -rf "$(TEST_OUTPUT_DIR)"
 
 # Brief user-facing help.
 help:
@@ -457,3 +541,9 @@ help:
 	@printf '%s\n' '  make BUILD_DIR=build/debug test JOBS=4'
 	@printf '%s\n' '  make BUILD_DIR=build/debug test FILTER='\''test-runner*|some_test.c/subtest'\'''
 	@printf '%s\n' '  make BUILD_DIR=build/debug test-list FILTER='\''*.sh|*.test'\'''
+	@printf '%s\n' ''
+	@printf '%s\n' 'To run and manage reader benchmarks:'
+	@printf '%s\n' '  make BUILD_DIR=build/release benchmark-small'
+	@printf '%s\n' '  make BUILD_DIR=build/release benchmark'
+	@printf '%s\n' '  make BUILD_DIR=build/release clean-benchmark-output'
+	@printf '%s\n' '  make BUILD_DIR=build/release clean-all'

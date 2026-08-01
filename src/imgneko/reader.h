@@ -37,6 +37,9 @@ typedef enum ImgnekoReaderStatus {
     IMGNEKO_READER_WORKSPACE_TOO_SMALL = 4,
 } ImgnekoReaderStatus;
 
+// Return a stable string for a reader status, or a fallback for unknown values.
+const char *imgneko_reader_status_string(ImgnekoReaderStatus status);
+
 // Pull callback for the next logical byte chunk.
 //
 // This function must do one of the following:

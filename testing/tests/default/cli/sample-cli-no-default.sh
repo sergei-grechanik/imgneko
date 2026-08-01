@@ -27,7 +27,7 @@ env COLUMNS=80 "$SAMPLE_CLI" --help 2>&1
 # CHECK-NEXT: {{^}}                            command-local options.{{$}}
 # CHECK-NEXT: {{^}}  apply                     Exercise no-default parsing with two positional{{$}}
 # CHECK-NEXT: {{^}}                            arguments.{{$}}
-# CHECK-NEXT: {{^}}  repeat                    Exercise integer positional parsing without a{{$}}
+# CHECK-NEXT: {{^}}  repeat-items              Exercise integer positional parsing without a{{$}}
 # CHECK-NEXT: {{^}}                            default command.{{$}}
 # CHECK-NEXT: {{^}}  unexplained{{$}}
 # CHECK-NEXT: {{^}}  labels                    Exercise help and diagnostic label fallbacks.{{$}}
@@ -226,12 +226,12 @@ set -e
 # CHECK-NEXT: {{^}}error: invalid value for FILE2_COUNT: 'nope' (expected a base-10 integer){{$}}
 # CHECK-NEXT: {{^}}status=2{{$}}
 
-echo '== repeat command help =='
-env COLUMNS=80 "$SAMPLE_CLI" repeat --help 2>&1
-# CHECK-NEXT: {{^}}== repeat command help =={{$}}
+echo '== repeat-items command help =='
+env COLUMNS=80 "$SAMPLE_CLI" repeat-items --help 2>&1
+# CHECK-NEXT: {{^}}== repeat-items command help =={{$}}
 # CHECK-NEXT: {{^}}Exercise integer positional parsing without a default command.{{$}}
 # CHECK-NEXT: {{^$}}
-# CHECK-NEXT: {{^}}Usage: sample-cli-no-default repeat COPIES{{$}}
+# CHECK-NEXT: {{^}}Usage: sample-cli-no-default repeat-items COPIES{{$}}
 # CHECK-NEXT: {{^$}}
 # CHECK-NEXT: {{^}}Positional arguments:{{$}}
 # CHECK-NEXT: {{^}}  COPIES                    Number of synthetic repetitions.{{$}}
@@ -240,18 +240,18 @@ env COLUMNS=80 "$SAMPLE_CLI" repeat --help 2>&1
 # CHECK-NEXT: {{^}}  -h, --help                Show this help message and exit.{{$}}
 # CHECK-NEXT: {{^$}}
 
-echo '== explicit repeat parse =='
-"$SAMPLE_CLI" repeat 3 2>&1
-# CHECK-NEXT: {{^}}== explicit repeat parse =={{$}}
-# CHECK-NEXT: {{^}}command: repeat{{$}}
+echo '== explicit repeat-items parse =='
+"$SAMPLE_CLI" repeat-items 3 2>&1
+# CHECK-NEXT: {{^}}== explicit repeat-items parse =={{$}}
+# CHECK-NEXT: {{^}}command: repeat-items{{$}}
 # CHECK-NEXT: {{^}}copies: 3 (cli){{$}}
 
-echo '== invalid repeat count =='
+echo '== invalid repeat-items count =='
 set +e
-"$SAMPLE_CLI" repeat nope 2>&1
+"$SAMPLE_CLI" repeat-items nope 2>&1
 printf 'status=%d\n' "$?"
 set -e
-# CHECK-NEXT: {{^}}== invalid repeat count =={{$}}
+# CHECK-NEXT: {{^}}== invalid repeat-items count =={{$}}
 # CHECK-NEXT: {{^}}error: invalid value for COPIES: 'nope' (expected a base-10 integer){{$}}
 # CHECK-NEXT: {{^}}status=2{{$}}
 

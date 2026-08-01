@@ -37,6 +37,49 @@ static int write_full(const TestContext *ctx, int fd, const char *data,
     return 0;
 }
 
+// Verify reader statuses have non-empty, distinguishable diagnostics and an
+// unknown value has a distinct usable fallback for failure reporting.
+static int test_reader_status_strings(TestContext *ctx) {
+    static const ImgnekoReaderStatus statuses[] = {
+        IMGNEKO_READER_OK,
+        IMGNEKO_READER_EOF,
+        IMGNEKO_READER_BUFFER_TOO_SMALL,
+        IMGNEKO_READER_ERROR,
+        IMGNEKO_READER_WORKSPACE_TOO_SMALL,
+    };
+    const char *status_strings[ARRAY_SIZE(statuses)] = {0};
+    const char *unknown_status = NULL;
+
+    for (size_t i = 0; i < ARRAY_SIZE(statuses); ++i) {
+        status_strings[i] = imgneko_reader_status_string(statuses[i]);
+
+        if (status_strings[i] == NULL || status_strings[i][0] == '\0') {
+            return test_fail_message(ctx,
+                                     "reader status has an empty diagnostic");
+        }
+        for (size_t j = 0; j < i; ++j) {
+            if (strcmp(status_strings[i], status_strings[j]) == 0) {
+                return test_fail_message(
+                    ctx, "reader statuses share the same diagnostic");
+            }
+        }
+    }
+
+    unknown_status = imgneko_reader_status_string((ImgnekoReaderStatus)99);
+    if (unknown_status == NULL || unknown_status[0] == '\0') {
+        return test_fail_message(ctx,
+                                 "unknown reader status lacks a diagnostic");
+    }
+    for (size_t i = 0; i < ARRAY_SIZE(status_strings); ++i) {
+        if (strcmp(unknown_status, status_strings[i]) == 0) {
+            return test_fail_message(
+                ctx, "unknown reader status matches a known diagnostic");
+        }
+    }
+
+    return 0;
+}
+
 // Verify memory reader chunking, zero-capacity retry sizing, and sticky EOF.
 static int test_memory_reader(TestContext *ctx) {
     ImgnekoMemoryReader memory = {0};
@@ -297,6 +340,7 @@ cleanup:
 
 int main(int argc, char **argv) {
     const Subtest subtests[] = {
+        PREFIXED_TEST(test_reader_status_strings),
         PREFIXED_TEST(test_memory_reader),
         PREFIXED_TEST(test_reader_validation),
         PREFIXED_TEST(test_reader_init_failures),

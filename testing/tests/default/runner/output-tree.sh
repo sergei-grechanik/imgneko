@@ -129,7 +129,7 @@ assert_file_contains "$PASSTHROUGH_LOG" "PASS: runner/output.sh"
 assert_file_contains "$PASSTHROUGH_LOG" "Result: SUCCESS"
 
 # C tests should get their own nested output files too, including tests under
-# testing/tests/runner/.
+# testing/tests/default/runner/.
 "$RUNNER" --jobs=1 --output-dir "$RUNNER_C_OUTPUT_ROOT" runner/output.c/emit_output >"$C_LOG" 2>&1 ||
     fail "nested runner C test run failed"
 

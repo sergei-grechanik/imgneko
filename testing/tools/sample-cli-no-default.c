@@ -105,8 +105,9 @@ OPT_DEFINE_STRUCT(UnexplainedOptions, UNEXPLAINED_OPTIONS)
     X(Name, apply, ApplyOptions,                                               \
       OPT_COMMAND(.descr = "Exercise no-default parsing with two positional "  \
                            "arguments."))                                      \
-    X(Name, repeat, RepeatOptions,                                             \
-      OPT_COMMAND(.descr = "Exercise integer positional parsing without a "    \
+    X(Name, repeat_items, RepeatOptions,                                       \
+      OPT_COMMAND(.name = "repeat-items",                                      \
+                  .descr = "Exercise integer positional parsing without a "    \
                            "default command."))                                \
     X(Name, unexplained, UnexplainedOptions, OPT_COMMAND(.descr = NULL))       \
     X(Name, labels, LabelsOptions,                                             \
@@ -185,9 +186,9 @@ static int process_apply_command(const ApplyOptions *options) {
     return 0;
 }
 
-// Print the parsed repeat command.
-static int process_repeat_command(const RepeatOptions *options) {
-    printf("command: repeat\n");
+// Print the parsed repeat-items command.
+static int process_repeat_items_command(const RepeatOptions *options) {
+    printf("command: repeat-items\n");
     print_int_option("copies", options->copies);
     return 0;
 }
@@ -227,8 +228,8 @@ int main(int argc, char **argv) {
     case OPT_CMD_SampleCliNoDefault_apply:
         rc = process_apply_command(&parsed.command.apply);
         break;
-    case OPT_CMD_SampleCliNoDefault_repeat:
-        rc = process_repeat_command(&parsed.command.repeat);
+    case OPT_CMD_SampleCliNoDefault_repeat_items:
+        rc = process_repeat_items_command(&parsed.command.repeat_items);
         break;
     case OPT_CMD_SampleCliNoDefault_unexplained:
         rc = process_unexplained_command(&parsed.command.unexplained);

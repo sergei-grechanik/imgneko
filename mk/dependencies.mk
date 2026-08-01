@@ -53,6 +53,7 @@ $(BUILD_DIR)/obj/src/main.o: \
 	$(ROOT_DIR)/src/util/array.h \
 	$(ROOT_DIR)/src/util/common.h \
 	$(ROOT_DIR)/src/util/options.h \
+	$(ROOT_DIR)/src/util/print_build_info.h \
 	$(ROOT_DIR)/src/util/string.h
 $(BUILD_DIR)/obj/src/util/error.o: \
 	$(ROOT_DIR)/src/util/error.c \
@@ -97,24 +98,24 @@ $(BUILD_DIR)/obj/test-bin/runner/environment.c.bin: \
 	$(ROOT_DIR)/src/util/path.h \
 	$(ROOT_DIR)/src/util/string.h \
 	$(ROOT_DIR)/testing/support/test_main.h \
-	$(ROOT_DIR)/testing/tests/runner/environment.c
+	$(ROOT_DIR)/testing/tests/default/runner/environment.c
 $(BUILD_DIR)/obj/test-bin/runner/error.c.bin: \
 	$(ROOT_DIR)/src/util/common.h \
 	$(ROOT_DIR)/src/util/error.h \
 	$(ROOT_DIR)/testing/support/test_main.h \
-	$(ROOT_DIR)/testing/tests/runner/error.c
+	$(ROOT_DIR)/testing/tests/default/runner/error.c
 $(BUILD_DIR)/obj/test-bin/runner/markers.c.bin: \
 	$(ROOT_DIR)/src/util/common.h \
 	$(ROOT_DIR)/testing/support/test_main.h \
-	$(ROOT_DIR)/testing/tests/runner/markers.c
+	$(ROOT_DIR)/testing/tests/default/runner/markers.c
 $(BUILD_DIR)/obj/test-bin/runner/no-subtests.c.bin: \
-	$(ROOT_DIR)/testing/tests/runner/no-subtests.c
+	$(ROOT_DIR)/testing/tests/default/runner/no-subtests.c
 $(BUILD_DIR)/obj/test-bin/runner/output.c.bin: \
 	$(ROOT_DIR)/src/util/common.h \
 	$(ROOT_DIR)/testing/support/test_main.h \
-	$(ROOT_DIR)/testing/tests/runner/output.c
+	$(ROOT_DIR)/testing/tests/default/runner/output.c
 $(BUILD_DIR)/obj/test-bin/runner/spaced-subtests.c.bin: \
-	$(ROOT_DIR)/testing/tests/runner/spaced-subtests.c
+	$(ROOT_DIR)/testing/tests/default/runner/spaced-subtests.c
 $(BUILD_DIR)/obj/test-bin/unit/cli/placeholder_bg.c.bin: \
 	$(ROOT_DIR)/src/cli/placeholder_bg.h \
 	$(ROOT_DIR)/src/cli/placeholder_bg_file.h \
@@ -125,7 +126,7 @@ $(BUILD_DIR)/obj/test-bin/unit/cli/placeholder_bg.c.bin: \
 	$(ROOT_DIR)/src/util/path.h \
 	$(ROOT_DIR)/src/util/string.h \
 	$(ROOT_DIR)/testing/support/test_main.h \
-	$(ROOT_DIR)/testing/tests/unit/cli/placeholder_bg.c
+	$(ROOT_DIR)/testing/tests/default/unit/cli/placeholder_bg.c
 $(BUILD_DIR)/obj/test-bin/unit/imgneko/base64.c.bin: \
 	$(ROOT_DIR)/src/imgneko/base64.h \
 	$(ROOT_DIR)/src/imgneko/reader.h \
@@ -134,14 +135,14 @@ $(BUILD_DIR)/obj/test-bin/unit/imgneko/base64.c.bin: \
 	$(ROOT_DIR)/src/util/string.h \
 	$(ROOT_DIR)/testing/support/test_main.h \
 	$(ROOT_DIR)/testing/support/test_reader.h \
-	$(ROOT_DIR)/testing/tests/unit/imgneko/base64.c
+	$(ROOT_DIR)/testing/tests/default/unit/imgneko/base64.c
 $(BUILD_DIR)/obj/test-bin/unit/imgneko/placeholder.c.bin: \
 	$(ROOT_DIR)/src/imgneko/placeholder.h \
 	$(ROOT_DIR)/src/imgneko/rowcolumn_diacritics.h \
 	$(ROOT_DIR)/src/imgneko/writer.h \
 	$(ROOT_DIR)/src/util/common.h \
 	$(ROOT_DIR)/testing/support/test_main.h \
-	$(ROOT_DIR)/testing/tests/unit/imgneko/placeholder.c
+	$(ROOT_DIR)/testing/tests/default/unit/imgneko/placeholder.c
 $(BUILD_DIR)/obj/test-bin/unit/imgneko/reader.c.bin: \
 	$(ROOT_DIR)/src/imgneko/reader.h \
 	$(ROOT_DIR)/src/util/array.h \
@@ -149,12 +150,12 @@ $(BUILD_DIR)/obj/test-bin/unit/imgneko/reader.c.bin: \
 	$(ROOT_DIR)/src/util/string.h \
 	$(ROOT_DIR)/testing/support/test_main.h \
 	$(ROOT_DIR)/testing/support/test_reader.h \
-	$(ROOT_DIR)/testing/tests/unit/imgneko/reader.c
+	$(ROOT_DIR)/testing/tests/default/unit/imgneko/reader.c
 $(BUILD_DIR)/obj/test-bin/unit/imgneko/rowcolumn_diacritics.c.bin: \
 	$(ROOT_DIR)/src/imgneko/rowcolumn_diacritics.h \
 	$(ROOT_DIR)/src/util/common.h \
 	$(ROOT_DIR)/testing/support/test_main.h \
-	$(ROOT_DIR)/testing/tests/unit/imgneko/rowcolumn_diacritics.c
+	$(ROOT_DIR)/testing/tests/default/unit/imgneko/rowcolumn_diacritics.c
 $(BUILD_DIR)/obj/test-bin/unit/imgneko/zlib.c.bin: \
 	$(ROOT_DIR)/src/imgneko/reader.h \
 	$(ROOT_DIR)/src/imgneko/zlib.h \
@@ -163,33 +164,33 @@ $(BUILD_DIR)/obj/test-bin/unit/imgneko/zlib.c.bin: \
 	$(ROOT_DIR)/src/util/string.h \
 	$(ROOT_DIR)/testing/support/test_main.h \
 	$(ROOT_DIR)/testing/support/test_reader.h \
-	$(ROOT_DIR)/testing/tests/unit/imgneko/zlib.c
+	$(ROOT_DIR)/testing/tests/default/unit/imgneko/zlib.c
 $(BUILD_DIR)/obj/test-bin/unit/util/array.c.bin: \
 	$(ROOT_DIR)/src/util/array.h \
 	$(ROOT_DIR)/src/util/common.h \
 	$(ROOT_DIR)/testing/support/test_main.h \
-	$(ROOT_DIR)/testing/tests/unit/util/array.c
+	$(ROOT_DIR)/testing/tests/default/unit/util/array.c
 $(BUILD_DIR)/obj/test-bin/unit/util/expr.c.bin: \
 	$(ROOT_DIR)/src/util/array.h \
 	$(ROOT_DIR)/src/util/common.h \
 	$(ROOT_DIR)/src/util/expr.h \
 	$(ROOT_DIR)/src/util/string.h \
 	$(ROOT_DIR)/testing/support/test_main.h \
-	$(ROOT_DIR)/testing/tests/unit/util/expr.c
+	$(ROOT_DIR)/testing/tests/default/unit/util/expr.c
 $(BUILD_DIR)/obj/test-bin/unit/util/file.c.bin: \
 	$(ROOT_DIR)/src/util/array.h \
 	$(ROOT_DIR)/src/util/common.h \
 	$(ROOT_DIR)/src/util/file.h \
 	$(ROOT_DIR)/src/util/string.h \
 	$(ROOT_DIR)/testing/support/test_main.h \
-	$(ROOT_DIR)/testing/tests/unit/util/file.c
+	$(ROOT_DIR)/testing/tests/default/unit/util/file.c
 $(BUILD_DIR)/obj/test-bin/unit/util/io.c.bin: \
 	$(ROOT_DIR)/src/util/array.h \
 	$(ROOT_DIR)/src/util/common.h \
 	$(ROOT_DIR)/src/util/io.h \
 	$(ROOT_DIR)/src/util/string.h \
 	$(ROOT_DIR)/testing/support/test_main.h \
-	$(ROOT_DIR)/testing/tests/unit/util/io.c
+	$(ROOT_DIR)/testing/tests/default/unit/util/io.c
 $(BUILD_DIR)/obj/test-bin/unit/util/options.c.bin: \
 	$(ROOT_DIR)/src/util/array.h \
 	$(ROOT_DIR)/src/util/common.h \
@@ -197,27 +198,27 @@ $(BUILD_DIR)/obj/test-bin/unit/util/options.c.bin: \
 	$(ROOT_DIR)/src/util/options.h \
 	$(ROOT_DIR)/src/util/string.h \
 	$(ROOT_DIR)/testing/support/test_main.h \
-	$(ROOT_DIR)/testing/tests/unit/util/options.c
+	$(ROOT_DIR)/testing/tests/default/unit/util/options.c
 $(BUILD_DIR)/obj/test-bin/unit/util/path.c.bin: \
 	$(ROOT_DIR)/src/util/array.h \
 	$(ROOT_DIR)/src/util/common.h \
 	$(ROOT_DIR)/src/util/path.h \
 	$(ROOT_DIR)/src/util/string.h \
 	$(ROOT_DIR)/testing/support/test_main.h \
-	$(ROOT_DIR)/testing/tests/unit/util/path.c
+	$(ROOT_DIR)/testing/tests/default/unit/util/path.c
 $(BUILD_DIR)/obj/test-bin/unit/util/string.c.bin: \
 	$(ROOT_DIR)/src/util/array.h \
 	$(ROOT_DIR)/src/util/common.h \
 	$(ROOT_DIR)/src/util/string.h \
 	$(ROOT_DIR)/testing/support/test_main.h \
-	$(ROOT_DIR)/testing/tests/unit/util/string.c
+	$(ROOT_DIR)/testing/tests/default/unit/util/string.c
 $(BUILD_DIR)/obj/test-bin/unit/util/time-sleep.c.bin: \
 	$(ROOT_DIR)/src/util/time.h \
-	$(ROOT_DIR)/testing/tests/unit/util/time-sleep.c
+	$(ROOT_DIR)/testing/tests/default/unit/util/time-sleep.c
 $(BUILD_DIR)/obj/test-bin/unit/util/time.c.bin: \
 	$(ROOT_DIR)/src/util/time.h \
 	$(ROOT_DIR)/testing/support/test_main.h \
-	$(ROOT_DIR)/testing/tests/unit/util/time.c
+	$(ROOT_DIR)/testing/tests/default/unit/util/time.c
 $(BUILD_DIR)/obj/testing/support/test_main.o: \
 	$(ROOT_DIR)/testing/support/test_main.c \
 	$(ROOT_DIR)/testing/support/test_main.h
@@ -228,6 +229,17 @@ $(BUILD_DIR)/obj/testing/support/test_reader.o: \
 	$(ROOT_DIR)/testing/support/test_main.h \
 	$(ROOT_DIR)/testing/support/test_reader.c \
 	$(ROOT_DIR)/testing/support/test_reader.h
+$(BUILD_DIR)/obj/testing/tools/benchmark-readers.o: \
+	$(BUILD_DIR)/generated/build_info.h \
+	$(ROOT_DIR)/src/imgneko/base64.h \
+	$(ROOT_DIR)/src/imgneko/reader.h \
+	$(ROOT_DIR)/src/imgneko/zlib.h \
+	$(ROOT_DIR)/src/util/array.h \
+	$(ROOT_DIR)/src/util/common.h \
+	$(ROOT_DIR)/src/util/options.h \
+	$(ROOT_DIR)/src/util/print_build_info.h \
+	$(ROOT_DIR)/src/util/string.h \
+	$(ROOT_DIR)/testing/tools/benchmark-readers.c
 $(BUILD_DIR)/obj/testing/tools/run-and-check-expr.o: \
 	$(ROOT_DIR)/src/imgneko/rowcolumn_diacritics.h \
 	$(ROOT_DIR)/src/util/array.h \

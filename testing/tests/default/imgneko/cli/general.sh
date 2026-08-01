@@ -6,7 +6,7 @@
 
 set -eu
 
-. "$IMGNEKO_ROOT_DIR/testing/tests/imgneko/cli/common.sh"
+. "$IMGNEKO_ROOT_DIR/testing/tests/default/imgneko/cli/common.sh"
 setup_imgneko_cli
 
 echo '== program help =='
@@ -25,10 +25,12 @@ env COLUMNS=80 "$IMGNEKO" --help 2>&1
 # CHECK-NEXT: {{^$}}
 
 echo '== version =='
-# Verify that the top-level version option keeps reporting build information.
+# Verify that the top-level version option reports build information and the
+# linked zlib version.
 "$IMGNEKO" --version
 # CHECK-NEXT: {{^== version ==$}}
 # CHECK-NEXT: {{^version: .+$}}
+# CHECK:      {{^zlib: .+$}}
 
 echo '== missing command =='
 set +e

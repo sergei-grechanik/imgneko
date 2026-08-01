@@ -482,9 +482,22 @@ cleanup:
     return status;
 }
 
-// Low-level parse helpers should accept the documented bool spellings, reject
-// malformed input, and expose the "none" provenance name for empty wrappers.
+// Low-level parse helpers should accept documented spellings, reject malformed
+// input, parse byte-count suffixes, format named-enum diagnostics, and expose
+// the "none" provenance name.
 static int test_low_level_parse_helpers(TestContext *ctx) {
+    static const OptNamedEnumOption named_enum_options[] = {
+        {"alpha", 3},
+        {"beta", 5},
+        {"gamma", 7},
+    };
+    static const OptNamedEnumOption two_named_enum_options[] = {
+        {"left", 11},
+        {"right", 13},
+    };
+    static const OptNamedEnumOption invalid_named_enum_options[] = {
+        {NULL, 17},
+    };
     const char *name = ctx->test_name;
     String error = str_from_cstr("stale");
     String string_value = str_from_cstr("existing");
@@ -494,6 +507,8 @@ static int test_low_level_parse_helpers(TestContext *ctx) {
     int int_value = 0;
     int64_t int64_value = 0;
     uint64_t uint64_value = 0;
+    size_t byte_count = 0;
+    int named_enum_value = 0;
     char huge_double[] = "1e5000";
     char huge_int[63];
     char too_long_double[80];
@@ -761,6 +776,91 @@ static int test_low_level_parse_helpers(TestContext *ctx) {
         status = fail_message(name, "failed to parse positive integer");
         goto cleanup;
     }
+    if (opt_parse_byte_count_span(NULL, 1, &byte_count)) {
+        status = fail_message(name, "NULL byte count unexpectedly parsed");
+        goto cleanup;
+    }
+    if (opt_parse_byte_count_span("", 0, &byte_count)) {
+        status = fail_message(name, "empty byte count unexpectedly parsed");
+        goto cleanup;
+    }
+    if (opt_parse_byte_count_span("K", strlen("K"), &byte_count)) {
+        status =
+            fail_message(name, "suffix-only byte count unexpectedly parsed");
+        goto cleanup;
+    }
+    if (opt_parse_byte_count_span("/1", strlen("/1"), &byte_count)) {
+        status =
+            fail_message(name, "punctuated byte count unexpectedly parsed");
+        goto cleanup;
+    }
+    if (opt_parse_byte_count_span(
+            "999999999999999999999999999999999999999999999",
+            strlen("999999999999999999999999999999999999999999999"),
+            &byte_count)) {
+        status =
+            fail_message(name, "overflowing byte count unexpectedly parsed");
+        goto cleanup;
+    }
+    char scaled_byte_count[64];
+    int scaled_byte_count_len =
+        snprintf(scaled_byte_count, sizeof(scaled_byte_count), "%zuK",
+                 SIZE_MAX / 1024 + 1);
+    if (scaled_byte_count_len < 0 ||
+        (size_t)scaled_byte_count_len >= sizeof(scaled_byte_count)) {
+        status = fail_message(name, "failed to format scaled byte count");
+        goto cleanup;
+    }
+    if (opt_parse_byte_count_span(scaled_byte_count,
+                                  (size_t)scaled_byte_count_len, &byte_count)) {
+        status = fail_message(
+            name, "overflowing scaled byte count unexpectedly parsed");
+        goto cleanup;
+    }
+    if (!opt_parse_byte_count_span("17", strlen("17"), &byte_count) ||
+        byte_count != 17) {
+        status = fail_message(name, "failed to span-parse decimal byte count");
+        goto cleanup;
+    }
+    if (!opt_parse_byte_count_option(&byte_count, "16K", strlen("16K"),
+                                     &error) ||
+        byte_count != 16 * 1024) {
+        status = fail_message(name, "failed to parse kibibyte byte count");
+        goto cleanup;
+    }
+    if (!opt_parse_byte_count_option(&byte_count, "2M", strlen("2M"), &error) ||
+        byte_count != 2 * 1024 * 1024) {
+        status = fail_message(name, "failed to parse mebibyte byte count");
+        goto cleanup;
+    }
+    if (!opt_parse_byte_count_option(&byte_count, "1G", strlen("1G"), &error) ||
+        byte_count != (size_t)1024 * 1024 * 1024) {
+        status = fail_message(name, "failed to parse gibibyte byte count");
+        goto cleanup;
+    }
+    if (opt_parse_byte_count_option(&byte_count, "2m", strlen("2m"), &error)) {
+        status =
+            fail_message(name, "lowercase byte suffix unexpectedly parsed");
+        goto cleanup;
+    }
+    if (opt_parse_byte_count_option(&byte_count, "0K", strlen("0K"), &error)) {
+        status = fail_message(name, "zero byte count unexpectedly parsed");
+        goto cleanup;
+    }
+    if (byte_count != (size_t)1024 * 1024 * 1024) {
+        status = fail_message(name, "failed byte-count parse changed output");
+        goto cleanup;
+    }
+    if (strcmp(error.cstr, "expected a positive byte count optionally followed "
+                           "by K, M, or G") != 0) {
+        status = fail_message(name, "unexpected byte-count parse error");
+        goto cleanup;
+    }
+    if (opt_parse_byte_count_span("1k", strlen("1k"), &byte_count)) {
+        status =
+            fail_message(name, "lowercase span suffix unexpectedly parsed");
+        goto cleanup;
+    }
     if (!opt_parse_int_option(&int_value, "0", strlen("0"), &error)) {
         status = fail_message(name, "failed to parse zero as an integer");
         goto cleanup;
@@ -876,6 +976,73 @@ static int test_low_level_parse_helpers(TestContext *ctx) {
     }
     if (strcmp(error.cstr, "must be finite") != 0) {
         status = fail_message(name, "unexpected NaN probability error");
+        goto cleanup;
+    }
+
+    if (!opt_parse_named_enum_option(
+            named_enum_options, ARRAY_SIZE(named_enum_options), "beta",
+            strlen("beta"), &named_enum_value, &error) ||
+        named_enum_value != 5) {
+        status = fail_message(name, "failed to parse named enum value");
+        goto cleanup;
+    }
+    if (opt_parse_named_enum_option(NULL, ARRAY_SIZE(named_enum_options),
+                                    "alpha", strlen("alpha"), &named_enum_value,
+                                    &error)) {
+        status =
+            fail_message(name, "NULL named-enum table unexpectedly parsed");
+        goto cleanup;
+    }
+    if (opt_parse_named_enum_option(named_enum_options, 0, "alpha",
+                                    strlen("alpha"), &named_enum_value,
+                                    &error)) {
+        status =
+            fail_message(name, "empty named-enum table unexpectedly parsed");
+        goto cleanup;
+    }
+    if (opt_parse_named_enum_option(named_enum_options,
+                                    ARRAY_SIZE(named_enum_options), "alpha",
+                                    strlen("alpha"), NULL, &error)) {
+        status =
+            fail_message(name, "NULL named-enum output unexpectedly parsed");
+        goto cleanup;
+    }
+    if (opt_parse_named_enum_option(named_enum_options,
+                                    ARRAY_SIZE(named_enum_options), NULL, 0,
+                                    &named_enum_value, &error)) {
+        status =
+            fail_message(name, "NULL named-enum value unexpectedly parsed");
+        goto cleanup;
+    }
+    if (opt_parse_named_enum_option(
+            invalid_named_enum_options, ARRAY_SIZE(invalid_named_enum_options),
+            "alpha", strlen("alpha"), &named_enum_value, &error)) {
+        status =
+            fail_message(name, "invalid named-enum table unexpectedly parsed");
+        goto cleanup;
+    }
+    if (opt_parse_named_enum_option(
+            named_enum_options, ARRAY_SIZE(named_enum_options), "other",
+            strlen("other"), &named_enum_value, &error)) {
+        status = fail_message(name, "unknown named enum value parsed");
+        goto cleanup;
+    }
+    if (named_enum_value != 5) {
+        status = fail_message(name, "failed named enum parse changed output");
+        goto cleanup;
+    }
+    if (strcmp(error.cstr, "expected one of alpha, beta, or gamma") != 0) {
+        status = fail_message(name, "unexpected named enum parse error");
+        goto cleanup;
+    }
+    if (opt_parse_named_enum_option(
+            two_named_enum_options, ARRAY_SIZE(two_named_enum_options), "other",
+            strlen("other"), &named_enum_value, &error)) {
+        status = fail_message(name, "unknown two-value enum parsed");
+        goto cleanup;
+    }
+    if (strcmp(error.cstr, "expected one of left or right") != 0) {
+        status = fail_message(name, "unexpected two-value enum parse error");
         goto cleanup;
     }
 

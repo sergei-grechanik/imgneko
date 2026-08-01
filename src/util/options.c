@@ -106,6 +106,8 @@ static bool opt_find_first_option_alias(const char *cli_spec,
                                         OptCliToken *alias_out);
 static bool opt_append_first_option_alias(String *out, const char *cli_spec);
 static void opt_require_option_aliases(const OptFieldSpec *field);
+static const char *opt_command_name(const OptCommandDesc *command);
+static void opt_require_program_command_names(const OptProgramParser *parser);
 static const OptProgramCommand *
 opt_find_program_command(const OptProgramParser *parser, const char *name);
 static const OptProgramCommand *
@@ -902,6 +904,7 @@ static int opt_finish_program_parse(const OptProgramParser *parser,
 static void opt_run_ctx_init(OptRunCtx *ctx, const OptProgramParser *parser,
                              int argc, char **argv, void *result) {
     memset(result, 0, parser->result_size);
+    opt_require_program_command_names(parser);
 
     *ctx = (OptRunCtx){
         .parser = parser,
@@ -1160,6 +1163,55 @@ bool opt_parse_double_span(const char *text, size_t text_len, double *out) {
     return true;
 }
 
+// Parse a positive decimal byte count, optionally scaled by a binary suffix.
+bool opt_parse_byte_count_span(const char *text, size_t text_len, size_t *out) {
+    size_t parsed = 0;
+    size_t number_len = text_len;
+    size_t multiplier = 1;
+
+    if (text == NULL || text_len == 0)
+        return false;
+
+    switch (text[text_len - 1]) {
+    case 'K':
+        multiplier = 1024;
+        --number_len;
+        break;
+    case 'M':
+        multiplier = 1024 * 1024;
+        --number_len;
+        break;
+    case 'G':
+        multiplier = (size_t)1024 * 1024 * 1024;
+        --number_len;
+        break;
+    default:
+        break;
+    }
+
+    if (number_len == 0)
+        return false;
+
+    for (size_t i = 0; i < number_len; ++i) {
+        unsigned char ch = (unsigned char)text[i];
+        size_t digit = 0;
+
+        if (ch < '0' || ch > '9')
+            return false;
+
+        digit = (size_t)(ch - '0');
+        if (parsed > (SIZE_MAX - digit) / 10)
+            return false;
+        parsed = parsed * 10 + digit;
+    }
+
+    if (parsed == 0 || parsed > SIZE_MAX / multiplier)
+        return false;
+
+    *out = parsed * multiplier;
+    return true;
+}
+
 // Parse a bool value from an explicit or synthesized textual value.
 bool opt_parse_bool_option(void *value_ptr, const char *text, size_t text_len,
                            String *error_out) {
@@ -1203,6 +1255,59 @@ bool opt_parse_int_option(void *value, const char *text, size_t text_len,
     if (!opt_parse_int_span(text, text_len, value))
         return opt_parse_error(error_out, "expected a base-10 integer");
     return true;
+}
+
+// Parse a positive byte-count option and report a user-facing error on failure.
+bool opt_parse_byte_count_option(void *value, const char *text, size_t text_len,
+                                 String *error_out) {
+    if (!opt_parse_byte_count_span(text, text_len, value)) {
+        return opt_parse_error(
+            error_out,
+            "expected a positive byte count optionally followed by K, M, or G");
+    }
+
+    return true;
+}
+
+// Parse a named enum from a fixed option table.
+bool opt_parse_named_enum_option(const OptNamedEnumOption *options,
+                                 size_t num_options, const char *text,
+                                 size_t text_len, int *out, String *error_out) {
+    if (options == NULL || num_options == 0 || out == NULL)
+        return opt_parse_error(error_out, "named enum parser is misconfigured");
+    if (text == NULL)
+        return opt_parse_error(error_out, "value is required");
+
+    for (size_t i = 0; i < num_options; ++i) {
+        if (options[i].name == NULL) {
+            return opt_parse_error(error_out,
+                                   "named enum parser is misconfigured");
+        }
+    }
+
+    for (size_t i = 0; i < num_options; ++i) {
+        if (str_data_equals_cstr(text, text_len, options[i].name)) {
+            *out = options[i].value;
+            return true;
+        }
+    }
+
+    String expected = str_from_cstr("expected one of ");
+    for (size_t i = 0; i < num_options; ++i) {
+        if (i != 0) {
+            if (i + 1 == num_options && num_options == 2)
+                str_append_cstr(expected, " or ");
+            else if (i + 1 == num_options)
+                str_append_cstr(expected, ", or ");
+            else
+                str_append_cstr(expected, ", ");
+        }
+        str_append_cstr(expected, options[i].name);
+    }
+
+    bool result = opt_parse_error(error_out, expected.cstr);
+    str_free(expected);
+    return result;
 }
 
 // Validate that an already parsed int is positive.
@@ -1299,6 +1404,30 @@ void opt_copy_string_list_option(void *dst_value, const void *src_value) {
 // Program Lookup and Help Printers
 //------------------------------------------------------------------------------
 
+// Return the public command-line spelling for a command.
+static const char *opt_command_name(const OptCommandDesc *command) {
+    if (command->attrs.name != NULL)
+        return command->attrs.name;
+    return command->name;
+}
+
+// Validate names that the command parser must be able to distinguish.
+static void opt_require_program_command_names(const OptProgramParser *parser) {
+    for (size_t i = 0; i < parser->command_count; ++i) {
+        const char *name = opt_command_name(parser->commands[i].command);
+
+        // IMGNEKO_UNCOVERED_OK[2 lines]: Generated command descriptors always
+        // provide a nonempty internal name when no public name is specified.
+        require(name != NULL && name[0] != '\0',
+                "program command name must not be empty");
+        for (size_t j = 0; j < i; ++j) {
+            require(strcmp(name,
+                           opt_command_name(parser->commands[j].command)) != 0,
+                    "program parser has duplicate command names");
+        }
+    }
+}
+
 // Return the registered default command or fail if the parser config is
 // inconsistent.
 static const OptProgramCommand *
@@ -1318,7 +1447,7 @@ opt_require_default_program_command(const OptProgramParser *parser) {
 static const OptProgramCommand *
 opt_find_program_command(const OptProgramParser *parser, const char *name) {
     for (size_t i = 0; i < parser->command_count; ++i) {
-        if (strcmp(parser->commands[i].command->name, name) == 0)
+        if (strcmp(opt_command_name(parser->commands[i].command), name) == 0)
             return &parser->commands[i];
     }
 
@@ -1377,7 +1506,7 @@ static void opt_print_program_help(FILE *out, const OptProgramParser *parser) {
 
         default_command = default_program_command->command;
         fprintf(out, "       %s", parser->attrs.program_name);
-        str_append_cstr(options_label, default_command->name);
+        str_append_cstr(options_label, opt_command_name(default_command));
         str_append_cstr(options_label, " options");
         opt_print_schema_usage_suffix(out, default_command->schema,
                                       parser->top_level_schema != NULL,
@@ -1388,11 +1517,12 @@ static void opt_print_program_help(FILE *out, const OptProgramParser *parser) {
 
     fputs("Commands:\n", out);
     for (size_t i = 0; i < parser->command_count; ++i) {
-        String label = str_from_cstr(parser->commands[i].command->name);
+        const char *command_name =
+            opt_command_name(parser->commands[i].command);
+        String label = str_from_cstr(command_name);
 
         if (parser->attrs.default_command != NULL &&
-            strcmp(parser->attrs.default_command,
-                   parser->commands[i].command->name) == 0) {
+            strcmp(parser->attrs.default_command, command_name) == 0) {
             str_append_cstr(label, " (default)");
         }
 
@@ -1414,7 +1544,8 @@ static void opt_print_program_help(FILE *out, const OptProgramParser *parser) {
 // Print a command-specific usage line.
 static void opt_print_command_usage(FILE *out, const OptProgramParser *parser,
                                     const OptCommandDesc *command) {
-    fprintf(out, "Usage: %s %s", parser->attrs.program_name, command->name);
+    fprintf(out, "Usage: %s %s", parser->attrs.program_name,
+            opt_command_name(command));
     opt_print_schema_usage_suffix(out, command->schema, false, "options");
 }
 
@@ -1439,7 +1570,7 @@ static void opt_print_command_help(FILE *out, const OptProgramParser *parser,
 
     opt_print_command_usage(out, parser, command);
     if (parser->attrs.default_command != NULL &&
-        strcmp(parser->attrs.default_command, command->name) == 0) {
+        strcmp(parser->attrs.default_command, opt_command_name(command)) == 0) {
         opt_print_default_command_usage(out, parser, command);
     }
     fputc('\n', out);

@@ -65,6 +65,12 @@ typedef void (*OptValueClearFn)(void *value);
 // Deep-copy the underlying `.value` object from src to dst.
 typedef void (*OptValueCopyFn)(void *dst_value, const void *src_value);
 
+// A textual name and integer enum value accepted by a named-enum parser.
+typedef struct OptNamedEnumOption {
+    const char *name;
+    int value;
+} OptNamedEnumOption;
+
 // Store a short custom parse-error reason in `error_out`, replacing any
 // previous contents. Returns false so parsers can write
 // `return opt_parse_error(error_out, "...");`.
@@ -118,11 +124,15 @@ typedef struct OptSchema {
 
 // Per-command metadata used by the generic program parser.
 typedef struct OptCommandAttrs {
+    // Optional public command name. When unset, the C command identifier is
+    // used as the command-line spelling.
+    const char *name;
     const char *descr;
 } OptCommandAttrs;
 
 // A parsed command plus the schema of its option payload.
 typedef struct OptCommandDesc {
+    // Generated C command identifier, used when attrs.name is unset.
     const char *name;
     OptCommandAttrs attrs;
     const OptSchema *schema;
@@ -237,6 +247,11 @@ bool opt_parse_uint64_hex_or_decimal_span(const char *text, size_t text_len,
 // overflow, and junk.
 bool opt_parse_double_span(const char *text, size_t text_len, double *out);
 
+// Parse a positive base-10 byte count into out. An optional uppercase K, M, or
+// G suffix multiplies the count by 1024, 1024 * 1024, or 1024 * 1024 * 1024,
+// respectively.
+bool opt_parse_byte_count_span(const char *text, size_t text_len, size_t *out);
+
 // Parse a bool value from an explicit or synthesized true/false-like string.
 bool opt_parse_bool_option(void *value, const char *text, size_t text_len,
                            String *error_out);
@@ -248,6 +263,25 @@ bool opt_parse_double_option(void *value, const char *text, size_t text_len,
 // Parse an int value from a textual decimal integer.
 bool opt_parse_int_option(void *value, const char *text, size_t text_len,
                           String *error_out);
+
+// Parse a positive base-10 byte count option into a size_t. Accepted suffixes
+// are the uppercase binary multipliers K, M, and G.
+bool opt_parse_byte_count_option(void *value, const char *text, size_t text_len,
+                                 String *error_out);
+
+// Parse an enum value from a fixed option table.
+//
+// options, num_options
+//     Accepted (name, enum value) pairs.
+// text, text_len
+//     Option value text.
+// out
+//     Output parameter receiving the matching enum value on success.
+// error_out
+//     Optional. Receives a parse-error reason when parsing fails.
+bool opt_parse_named_enum_option(const OptNamedEnumOption *options,
+                                 size_t num_options, const char *text,
+                                 size_t text_len, int *out, String *error_out);
 
 // Validate that an already parsed double is finite and non-negative.
 bool opt_validate_non_negative_double(const void *value, String *error_out);
@@ -507,7 +541,8 @@ int opt_run_program_parser(const OptProgramParser *parser, int argc,
 // X-macro command list of the form:
 //   #define MY_COMMANDS(Name, X)
 //       X(Name, show, ShowOptions, OPT_COMMAND(.descr = "Show items."))
-//       X(Name, list, ListOptions, OPT_COMMAND(.descr = "List items."))
+//       X(Name, list_items, ListOptions,
+//         OPT_COMMAND(.name = "list-items", .descr = "List items."))
 #define OPT_DEFINE_PROGRAM_PARSER(Name, ProgramAttrs, COMMAND_LIST)            \
     OPT__DEFINE_PROGRAM_PARSER_IMPL(Name, ProgramAttrs, NULL, char, false,     \
                                     COMMAND_LIST)

@@ -39,7 +39,7 @@ mkdir -p "$MARKED_C_TEST_DIR/runner" "$MARKED_C_TEST_BIN_DIR/runner"
 mkdir -p "$AMBIGUOUS_TEST_DIR" "$MULTIPLE_MARKERS_TEST_DIR"
 mkfifo "$TMP_TEST_DIR/ignored-fifo"
 echo 'ignored regular file' >"$TMP_TEST_DIR/ignored.txt"
-cp "$IMGNEKO_ROOT_DIR/testing/tests/runner/no-subtests.c" \
+cp "$IMGNEKO_ROOT_DIR/testing/tests/default/runner/no-subtests.c" \
     "$TMP_C_TEST_DIR/runner/no-subtests.c"
 
 cat >"$MARKED_C_TEST_DIR/runner/disabled-subtests.c" <<'EOF'

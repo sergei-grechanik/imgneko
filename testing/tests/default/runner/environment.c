@@ -38,8 +38,8 @@ static int test_output_env(TestContext *ctx) {
         goto cleanup;
     }
 
-    expected_dir =
-        path_join(build_dir, "test-outputs/runner/environment.c/output_env");
+    expected_dir = path_join(
+        build_dir, "test-outputs/default/runner/environment.c/output_env");
     expected_file = path_join(expected_dir.cstr, "output");
 
     if (strcmp(output_dir, expected_dir.cstr) != 0) {

@@ -103,7 +103,7 @@ env -u PATH \
     ASAN_OPTIONS="${ASAN_OPTIONS:+$ASAN_OPTIONS:}symbolize=0" \
     UBSAN_OPTIONS="${UBSAN_OPTIONS:+$UBSAN_OPTIONS:}symbolize=0" \
     "$RUNNER" --jobs=1 --list \
-    "$IMGNEKO_ROOT_DIR/testing/tests/runner/no-subtests.c" 2>&1
+    "$IMGNEKO_ROOT_DIR/testing/tests/default/runner/no-subtests.c" 2>&1
 # CHECK: == path unset ==
 # CHECK-NEXT: runner/no-subtests.c
 

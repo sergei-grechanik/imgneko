@@ -6,7 +6,7 @@
 
 set -eu
 
-. "$IMGNEKO_ROOT_DIR/testing/tests/imgneko/cli/common.sh"
+. "$IMGNEKO_ROOT_DIR/testing/tests/default/imgneko/cli/common.sh"
 setup_imgneko_cli
 
 echo '== missing option =='

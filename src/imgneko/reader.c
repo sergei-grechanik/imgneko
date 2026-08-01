@@ -14,6 +14,23 @@
 #include <sys/types.h>
 #include <unistd.h>
 
+const char *imgneko_reader_status_string(ImgnekoReaderStatus status) {
+    switch (status) {
+    case IMGNEKO_READER_OK:
+        return "ok";
+    case IMGNEKO_READER_EOF:
+        return "end of input";
+    case IMGNEKO_READER_BUFFER_TOO_SMALL:
+        return "output buffer too small";
+    case IMGNEKO_READER_ERROR:
+        return "reader error";
+    case IMGNEKO_READER_WORKSPACE_TOO_SMALL:
+        return "reader workspace too small";
+    }
+
+    return "unknown reader status";
+}
+
 ImgnekoReaderStatus imgneko_memory_reader_func(void *ctx, char *out,
                                                size_t out_cap,
                                                size_t *len_out) {
