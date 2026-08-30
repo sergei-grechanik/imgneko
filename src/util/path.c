@@ -156,7 +156,6 @@ bool path_resolve_absolute(String *out, const char *path) {
     if (path_is_absolute(path)) {
         resolved = str_from_cstr(path);
     } else {
-        // IMGNEKO_UNCOVERED_OK[2 lines]
         if (getcwd(cwd, sizeof(cwd)) == NULL)
             return false;
 

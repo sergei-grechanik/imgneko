@@ -858,7 +858,7 @@ assert_file_contains "$COMPDB_CLANG_BUILD/compile_commands.json" "test-runner.c"
 
 # Enable coverage reporting, patch the copied Makefile to run only a tiny
 # representative subset, and confirm the resulting report still reflects the
-# configured mode.
+# configured mode and reports each quickfix file's line count.
 say "Coverage report generation writes an incremental summary for instrumented source files"
 restrict_coverage_run_to_subset
 sh "$ROOT_DIR/configure" --build-dir="$COVERAGE_BUILD" --profile=debug --cc=clang --coverage-report
@@ -870,11 +870,13 @@ assert_output_contains "error: coverage report inputs are missing in ./build/tes
 run_capture "$LOG_DIR/coverage-build.out" make -C "$COVERAGE_BUILD" coverage
 assert_status_zero
 assert_output_contains "Wrote ./build/test-coverage/coverage/summary.txt"
-assert_output_contains "Wrote ./build/test-coverage/coverage/uncovered.qf"
 assert_file_exists "$COVERAGE_BUILD/coverage/summary.txt"
 assert_file_exists "$COVERAGE_BUILD/coverage/coverage.profdata"
 assert_file_exists "$COVERAGE_BUILD/coverage/uncovered.qf"
+assert_file_exists "$COVERAGE_BUILD/coverage/unused-suppressions.qf"
 assert_file_exists "$COVERAGE_BUILD/coverage/tests.stamp"
+assert_output_contains "Wrote ./build/test-coverage/coverage/uncovered.qf ($(wc -l < "$COVERAGE_BUILD/coverage/uncovered.qf") lines)"
+assert_output_contains "Wrote ./build/test-coverage/coverage/unused-suppressions.qf ($(wc -l < "$COVERAGE_BUILD/coverage/unused-suppressions.qf") lines)"
 assert_file_contains "$COVERAGE_BUILD/coverage/summary.txt" "File 'src/main.c'"
 assert_file_contains "$COVERAGE_BUILD/coverage/summary.txt" "File 'src/util/path.c'"
 assert_file_contains "$COVERAGE_BUILD/coverage/summary.txt" "File 'testing/tools/test-runner.c'"

@@ -183,7 +183,6 @@ void imgneko_file_reader_deinit(ImgnekoFileReader *reader);
 // alive while the returned value is used.
 static inline ImgnekoReader
 imgneko_file_reader_as_reader(ImgnekoFileReader *reader) {
-    // IMGNEKO_UNCOVERED_OK
     return imgneko_fd_reader_as_reader(reader == NULL ? NULL
                                                       : &reader->fd_reader);
 }

@@ -73,10 +73,9 @@ static void append_detail_v(ImgnekoErrorDetail *detail, const char *format,
     }
 
     size_t appended_len = separator_len + diagnostic_len;
-    // Saturation is defensive: reaching SIZE_MAX would require more input and
-    // diagnostics than can exist in an addressable object.
+    // IMGNEKO_UNCOVERED_OK[2 lines]: Saturation requires unaddressable input.
     if (detail->message_len > SIZE_MAX - appended_len)
-        detail->message_len = SIZE_MAX; // IMGNEKO_UNCOVERED_OK
+        detail->message_len = SIZE_MAX;
     else
         detail->message_len += appended_len;
 }
@@ -329,6 +328,8 @@ static const char *command_field_description(CommandFieldScope scope,
     case key_:                                                                 \
         return description_;
 
+    // IMGNEKO_UNCOVERED_OK_START: Every generated key case returns before its
+    // following break.
     switch (scope) {
     case SCOPE_COMMON:
         switch (key) { COMMAND_COMMON_FIELDS(RETURN_DESCRIPTION) }
@@ -352,6 +353,7 @@ static const char *command_field_description(CommandFieldScope scope,
         switch (key) { COMMAND_DELETE_FIELDS(RETURN_DESCRIPTION) }
         break;
     }
+    // IMGNEKO_UNCOVERED_OK_END
 #undef RETURN_DESCRIPTION
 
     // IMGNEKO_UNCOVERED_OK: Callers pass known scope/key combinations.
@@ -470,7 +472,7 @@ validate_representability(const ImgnekoCommand *command,
 // there is a `field_owner` pointer and a `field_scope` variable in scope.
 #define UNKNOWN_VALUE_char unknown_char
 #define UNKNOWN_VALUE_u32 unknown_integer
-#define UNKNOWN_VALUE_i32 unknown_integer
+#define UNKNOWN_VALUE_i32 unknown_integer // IMGNEKO_UNCOVERED_OK
 #define VALIDATE_FIELD(key_, type_, member_, description_, predicate_)         \
     do {                                                                       \
         if (!predicate_(field_owner->member_))                                 \
@@ -920,9 +922,9 @@ static void header_add_char_nonzero(HeaderBuilder *builder, char key,
         header_add_char(builder, key, value);
 }
 
-// Expand a field list into typed serialization calls. The discriminator
-// keys have already been handled explicitly and are filtered from this path.
-// Every serializer declares `field_owner` with the appropriate structure type.
+// Expand a field list into typed serialization calls. Discriminator keys are
+// handled explicitly. Each serializer declares an appropriate `field_owner`.
+// IMGNEKO_UNCOVERED_OK[2 lines]
 #define SERIALIZE_FIELD(key_, type_, member_, description_, predicate_)        \
     if (key_ != 'a' && key_ != 't' && key_ != 'd')                             \
         header_add_##type_##_nonzero(builder, key_, field_owner->member_);
@@ -1208,8 +1210,7 @@ static bool handle_unknown_key(const HeaderPair *pair,
                                ImgnekoCommandParseFlags flags,
                                ImgnekoErrorDetail *error_out) {
     bool drop = flags & IMGNEKO_COMMAND_PARSE_DROP_UNKNOWN_KEYS;
-    // IMGNEKO_UNCOVERED_OK: Testing the diagnostic cap would require an input
-    // span larger than INT_MAX bytes.
+    // IMGNEKO_UNCOVERED_OK: Need a very large input span to test.
     int key_len = pair->key_len > INT_MAX ? INT_MAX : (int)pair->key_len;
     append_detail(error_out, "unknown graphics command key '%.*s'", key_len,
                   pair->key);
@@ -1332,7 +1333,6 @@ static bool parse_command_pair(ImgnekoCommand *command,
     // Parse common fields like i= and I=.
     char key = context->pair->key[0];
     ImgnekoCommand *field_owner = command;
-    // IMGNEKO_UNCOVERED_OK: `a=` is unreachable because it's handled earlier.
     switch (key) { COMMAND_COMMON_FIELDS(PARSE_FIELD) }
 
     // If we don't know the command kind, we can't parse anything else.

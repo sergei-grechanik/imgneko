@@ -18,14 +18,17 @@ well-commented. Comments should explain why we are doing something, and
 sometimes what we are doing if it's not obvious (but prefer clear code that
 doesn't need comments to explain what it's doing). For large enough units, like
 functions, structures, and files, there must be comments describing their
-purpose and behavior.
+purpose and behavior. If a function is longer than ~8 lines, its body should be
+logically divided into paragraphs with comments explaining what they are doing
+(unless the block is absolutely trivial).
 
 Tests should also be commented, explaining what we are testing (and maybe why)
 and what the expected behavior is.
 
 Your comments should be clear and grammatically correct. Avoid using the word
 "one" instead of an article "the/a/an", i.e. instead of "print one error
-message" prefer "print an error message".
+message" prefer "print an error message". After writing a comment, reread it and
+check if it's clear and understandable.
 
 If the logic is complex, comments are mandatory.
 

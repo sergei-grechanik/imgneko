@@ -2225,6 +2225,14 @@ static const ConditionalParseCase conditional_parse_cases[] = {
         IMGNEKO_COMMAND_PARSE_DROP_UNKNOWN_KEYS,
         "unknown graphics command key 'k'",
     },
+    // The range target has a preliminary x/y switch before the general delete
+    // fields, so an unknown key must fall through both mappings.
+    {
+        "a=d,d=r,k=1",
+        "a=d,d=r",
+        IMGNEKO_COMMAND_PARSE_DROP_UNKNOWN_KEYS,
+        "unknown graphics command key 'k'",
+    },
     // The delete-target key is contextual and remains unknown for non-delete
     // commands instead of being mistaken for a discriminator.
     {

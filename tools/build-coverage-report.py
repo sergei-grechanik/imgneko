@@ -4,7 +4,7 @@
 """Generate text coverage artifacts from `llvm-cov export` JSON.
 
 Usage:
-    build-coverage-report.py ROOT_DIR BUILD_DIR PROFDATA JSON SUMMARY UNCOVERED_QF
+    build-coverage-report.py ROOT_DIR BUILD_DIR PROFDATA JSON SUMMARY UNCOVERED_QF UNUSED_SUPPRESSIONS_QF
 
 Inputs:
     ROOT_DIR: repository root, used to filter coverage down to project files
@@ -15,6 +15,7 @@ Inputs:
 Outputs:
     SUMMARY: per-file and total coverage percentages
     UNCOVERED_QF: Vim quickfix-style uncovered locations with source text
+    UNUSED_SUPPRESSIONS_QF: suppression directives that matched no findings
 """
 
 import json
@@ -29,6 +30,7 @@ IGNORE_FILE = "coverage-ignore"
 SUPPRESSION_MARKER = "IMGNEKO_UNCOVERED_OK"
 SUPPRESSION_START_MARKER = f"{SUPPRESSION_MARKER}_START"
 SUPPRESSION_END_MARKER = f"{SUPPRESSION_MARKER}_END"
+LLVM_EXPANSION_REGION_KIND = 1
 SUPPRESSION_COUNT_RE = re.compile(
     rf"{SUPPRESSION_MARKER}\[(\d+) lines\]"
 )
@@ -60,6 +62,64 @@ class FunctionKey(NamedTuple):
     relpath: str
     lineno: int
     display_name: str
+
+
+class SourcePoint(NamedTuple):
+    """A 1-based source coordinate used to match regions with segments."""
+
+    line: int
+    column: int
+
+
+class SuppressionKey(NamedTuple):
+    """The source location of an `IMGNEKO_UNCOVERED_OK` directive."""
+
+    relpath: str
+    line: int
+
+
+class SuppressionInfo(NamedTuple):
+    """Coverage suppression directives and the source lines they affect."""
+
+    directive_lines: Set[int]
+    directives_by_suppressed_line: Dict[int, Set[int]]
+
+
+class LlvmRegion(NamedTuple):
+    """The eight fields in an `llvm-cov export` coverage-region record."""
+
+    start_line: int
+    start_column: int
+    end_line: int
+    end_column: int
+    execution_count: int
+    file_id: int
+    expanded_file_id: int
+    kind: int
+
+    @classmethod
+    def from_json(cls, values: Sequence[Any]) -> "LlvmRegion":
+        """Decode LLVM's fixed-width JSON array into named fields."""
+        (
+            start_line,
+            start_column,
+            end_line,
+            end_column,
+            execution_count,
+            file_id,
+            expanded_file_id,
+            kind,
+        ) = values
+        return cls(
+            int(start_line),
+            int(start_column),
+            int(end_line),
+            int(end_column),
+            int(execution_count),
+            int(file_id),
+            int(expanded_file_id),
+            int(kind),
+        )
 
 
 class IgnoreRule(NamedTuple):
@@ -101,15 +161,15 @@ def read_source_lines(root_dir: str, relpath: str) -> List[str]:
 def load_cached_source_lines(root_dir: str,
                              relpath: str,
                              source_cache: Dict[str, List[str]],
-                             suppressed_lines_by_path: Dict[str, Set[int]]
+                             suppressions_by_path: Dict[str, SuppressionInfo]
                              ) -> Optional[List[str]]:
     """Return cached source lines for one project file.
 
     root_dir is the repository root used to resolve relpath on disk. relpath is
     the repo-relative path to load, such as `src/util/options.c`. source_cache
     memoizes previously read files so callers can reuse the same source text
-    across line, branch, and function passes. suppressed_lines_by_path stores
-    the precomputed `IMGNEKO_UNCOVERED_OK` suppression map for each cached file.
+    across line, branch, and function passes. `suppressions_by_path` stores the
+    parsed `IMGNEKO_UNCOVERED_OK` directives for each cached file.
 
     Returns the file's physical lines, without trailing newlines, or None when
     the file cannot be read.
@@ -124,7 +184,7 @@ def load_cached_source_lines(root_dir: str,
         return None
 
     source_cache[relpath] = source_lines
-    suppressed_lines_by_path[relpath] = suppressed_source_lines(source_lines)
+    suppressions_by_path[relpath] = source_suppression_info(source_lines)
     return source_lines
 
 
@@ -258,8 +318,8 @@ def load_ignore_rules(root_dir: str) -> List[IgnoreRule]:
     return rules
 
 
-def suppressed_source_lines(source_lines: Sequence[str]) -> Set[int]:
-    """Return source lines suppressed by `IMGNEKO_UNCOVERED_OK` comments.
+def source_suppression_info(source_lines: Sequence[str]) -> SuppressionInfo:
+    """Parse `IMGNEKO_UNCOVERED_OK` directives from source lines.
 
     A marker on the same line suppresses that exact line. When the marker
     appears on a standalone comment line, it also suppresses the next physical
@@ -274,44 +334,67 @@ def suppressed_source_lines(source_lines: Sequence[str]) -> Set[int]:
 
     `IMGNEKO_UNCOVERED_OK[N lines]` suppresses the marker line and the next `N`
     physical lines. The word `lines` is mandatory.
+
+    Returns every directive line, every suppressed source line, and the mapping
+    needed to identify which directives suppressed a coverage finding.
     """
-    suppressed: Set[int] = set()
-    suppress_next_lines = 0
-    block_depth = 0
+    directive_lines: Set[int] = set()
+    directives_by_suppressed_line: Dict[int, Set[int]] = {}
+    active_block_directives: List[int] = []
+
+    def record_suppression(target_line: int, directive_line: int) -> None:
+        """Associate a source line with the directive that suppresses it."""
+        directives_by_suppressed_line.setdefault(target_line, set()).add(
+            directive_line
+        )
 
     for lineno, line in enumerate(source_lines, start=1):
-        if block_depth > 0 or suppress_next_lines > 0:
-            suppressed.add(lineno)
-        if suppress_next_lines > 0:
-            suppress_next_lines -= 1
+        for directive_line in active_block_directives:
+            record_suppression(lineno, directive_line)
 
         if SUPPRESSION_START_MARKER in line:
-            suppressed.add(lineno)
-            block_depth += 1
+            directive_lines.add(lineno)
+            active_block_directives.append(lineno)
+            record_suppression(lineno, lineno)
             continue
 
         if SUPPRESSION_END_MARKER in line:
-            suppressed.add(lineno)
-            if block_depth > 0:
-                block_depth -= 1
+            if active_block_directives:
+                active_block_directives.pop()
             continue
 
         count_match = SUPPRESSION_COUNT_RE.search(line)
         if count_match is not None:
-            suppressed.add(lineno)
-            suppress_next_lines = max(suppress_next_lines,
-                                      int(count_match.group(1)))
+            directive_lines.add(lineno)
+            last_line = min(len(source_lines),
+                            lineno + int(count_match.group(1)))
+            for target_line in range(lineno, last_line + 1):
+                record_suppression(target_line, lineno)
             continue
 
         if SUPPRESSION_MARKER not in line:
             continue
 
-        suppressed.add(lineno)
+        directive_lines.add(lineno)
+        record_suppression(lineno, lineno)
         leading = line.lstrip()
-        if leading.startswith("//") or leading.startswith("/*"):
-            suppress_next_lines = max(suppress_next_lines, 1)
+        if ((leading.startswith("//") or leading.startswith("/*")) and
+                lineno < len(source_lines)):
+            record_suppression(lineno + 1, lineno)
 
-    return suppressed
+    return SuppressionInfo(directive_lines, directives_by_suppressed_line)
+
+
+def suppression_keys_for_line(relpath: str,
+                              lineno: int,
+                              suppression_info: SuppressionInfo
+                              ) -> Set[SuppressionKey]:
+    """Return the directives that suppress a source line in a project file."""
+    return {
+        SuppressionKey(relpath, directive_line)
+        for directive_line in
+        suppression_info.directives_by_suppressed_line.get(lineno, set())
+    }
 
 
 def is_ignored_function(ignore_rules: Sequence[IgnoreRule],
@@ -348,13 +431,82 @@ def function_start_line(function: Dict[str, Any]) -> Optional[int]:
     return int(regions[0][0])
 
 
+def expansion_has_executed_descendant(
+    target_regions: Sequence[LlvmRegion],
+    expanded_file_id: int,
+) -> bool:
+    """Report whether an expanded region tree contains an executed region.
+
+    target_regions contains the regions generated by a macro expansion.
+    expanded_file_id identifies the virtual file (it's an llvm thing) containing its
+    generated source. Nested macro expansions refer to additional virtual files, so
+    traverse those files too.
+    """
+    regions_by_file_id: Dict[int, List[LlvmRegion]] = {}
+    for region in target_regions:
+        regions_by_file_id.setdefault(region.file_id, []).append(region)
+
+    pending_file_ids = [expanded_file_id]
+    visited_file_ids: Set[int] = set()
+
+    while pending_file_ids:
+        file_id = pending_file_ids.pop()
+        if file_id in visited_file_ids:
+            continue
+        visited_file_ids.add(file_id)
+
+        for region in regions_by_file_id.get(file_id, []):
+            if region.execution_count > 0:
+                return True
+            if region.kind == LLVM_EXPANSION_REGION_KIND:
+                pending_file_ids.append(region.expanded_file_id)
+
+    return False
+
+
+def find_executed_expansion_wrappers(
+    expansions: Sequence[Dict[str, Any]],
+) -> Set[SourcePoint]:
+    """Return zero-count macro wrappers whose generated code was executed.
+
+    expansions is one file's `expansions` list from `llvm-cov export`.
+
+    LLVM can assign a zero count to an outer expansion region even though its
+    generated descendants have nonzero counts. The flattened file segments do
+    not retain the expansion kind, so preserve the wrappers' source coordinates
+    here for add_uncovered_lines(). An expansion with no executed descendants
+    is deliberately omitted because it represents genuinely uncovered code.
+    """
+    wrappers: Set[SourcePoint] = set()
+
+    for expansion in expansions:
+        source_region = LlvmRegion.from_json(expansion["source_region"])
+        target_regions = [
+            LlvmRegion.from_json(region)
+            for region in expansion.get("target_regions", [])
+        ]
+        if (source_region.kind != LLVM_EXPANSION_REGION_KIND or
+                source_region.execution_count != 0):
+            continue
+        if not expansion_has_executed_descendant(
+            target_regions, source_region.expanded_file_id
+        ):
+            continue
+        wrappers.add(SourcePoint(source_region.start_line,
+                                 source_region.start_column))
+
+    return wrappers
+
+
 def add_uncovered_lines(
-    entries: Set[str],
     relpath: str,
     source_lines: Sequence[str],
     segments: Sequence[Sequence[Any]],
-    suppressed_lines: Set[int],
+    suppression_info: SuppressionInfo,
     ignore_rules: Sequence[IgnoreRule],
+    executed_expansion_wrappers: Set[SourcePoint],
+    triggered_suppressions: Set[SuppressionKey],
+    entries: Set[str],
 ) -> None:
     """Add entries for zero-count executable regions from `llvm-cov` segments.
 
@@ -362,14 +514,25 @@ def add_uncovered_lines(
     segments. A zero-count segment starts an uncovered region, and the next
     segment marks where that region ends. Expand those ranges back into source
     lines so quickfix can jump directly to the uncovered code.
+
+    `relpath` names the project file being processed. `source_lines` contains
+    that file's physical lines. `segments` is the flattened LLVM segment list.
+    `suppression_info` contains explicit source-level suppressions.
+    `ignore_rules` contains repo-wide file exclusions.
+    `executed_expansion_wrappers` contains zero-count segment starts proven to
+    have executed generated descendants. `triggered_suppressions` records the
+    directives that match findings. `entries` is updated with new quickfix
+    records.
     """
     if is_ignored_file(ignore_rules, relpath):
         return
 
     for current, nxt in zip(segments, segments[1:]):
-        line, _column, count, has_count, _is_region_entry, is_gap = current[:6]
+        line, column, count, has_count, _is_region_entry, is_gap = current[:6]
         next_line, next_column = nxt[0], nxt[1]
         if not has_count or is_gap or count != 0:
+            continue
+        if SourcePoint(int(line), int(column)) in executed_expansion_wrappers:
             continue
 
         end_line = next_line
@@ -379,21 +542,25 @@ def add_uncovered_lines(
             continue
 
         for lineno in range(line, end_line + 1):
-            if lineno in suppressed_lines:
-                continue
             text = source_line_text(source_lines, lineno)
             if not text or text == "}":
+                continue
+            suppression_keys = suppression_keys_for_line(
+                relpath, lineno, suppression_info
+            )
+            if suppression_keys:
+                triggered_suppressions.update(suppression_keys)
                 continue
             entries.add(f"{relpath}:{lineno}:1: uncovered line: {text}")
 
 
 def collect_function_branches(
-    branch_totals: Dict[BranchKey, Dict[str, Any]],
     root_dir: str,
     function: Dict[str, Any],
-    source_cache: Dict[str, List[str]],
-    suppressed_lines_by_path: Dict[str, Set[int]],
     ignore_rules: Sequence[IgnoreRule],
+    source_cache: Dict[str, List[str]],
+    suppressions_by_path: Dict[str, SuppressionInfo],
+    branch_totals: Dict[BranchKey, Dict[str, Any]],
 ) -> None:
     """Accumulate branch counts for one source branch site across functions.
 
@@ -403,13 +570,12 @@ def collect_function_branches(
     shows one branch site, not one line per translation unit. A branch is only
     uncovered if the merged counts still miss one side.
 
-    branch_totals is the mutable accumulator keyed by the final quickfix source
-    location. root_dir is used to resolve per-branch filename ids back to
-    project-relative paths. function is one raw LLVM function record whose
-    `branches` array is being merged. source_cache and
-    suppressed_lines_by_path are shared caches populated on demand for whatever
-    file each branch record actually points at. ignore_rules suppress whole-file
-    findings from coverage-ignore.
+    `root_dir` resolves per-branch filename ids back to project paths.
+    `function` is the raw LLVM function record whose `branches` array is being
+    merged. `ignore_rules` suppresses whole-file findings from coverage-ignore.
+    `source_cache` and `suppressions_by_path` are shared caches populated for
+    each branch source file. `branch_totals` is the mutable output accumulator
+    keyed by the final quickfix source location.
 
     The function mutates branch_totals in place and returns None.
     """
@@ -435,13 +601,11 @@ def collect_function_branches(
             continue
 
         source_lines = load_cached_source_lines(root_dir, relpath, source_cache,
-                                                suppressed_lines_by_path)
+                                                suppressions_by_path)
         if source_lines is None:
             continue
 
         lineno = int(branch[0])
-        if lineno in suppressed_lines_by_path.get(relpath, set()):
-            continue
         column = int(branch[1])
         end_line = int(branch[2]) if len(branch) >= 4 else lineno
         end_column = int(branch[3]) if len(branch) >= 4 else column
@@ -454,21 +618,37 @@ def collect_function_branches(
         key = BranchKey(relpath, lineno, column, text)
         totals = branch_totals.setdefault(
             key,
-            {"true_count": 0, "false_count": 0, "instances": 0},
+            {
+                "true_count": 0,
+                "false_count": 0,
+                "instances": 0,
+                "suppression_keys": set(),
+            },
         )
         totals["true_count"] += true_count
         totals["false_count"] += false_count
         totals["instances"] += 1
+        totals["suppression_keys"].update(suppression_keys_for_line(
+            relpath, lineno, suppressions_by_path[relpath]
+        ))
 
 
-def add_merged_branches(entries: Set[str],
-                        branch_totals: Dict[BranchKey, Dict[str, Any]]) -> None:
-    """Emit one quickfix entry per still-uncovered merged branch site."""
+def add_merged_branches(
+    branch_totals: Dict[BranchKey, Dict[str, Any]],
+    triggered_suppressions: Set[SuppressionKey],
+    entries: Set[str],
+) -> None:
+    """Emit unsuppressed branch findings and record triggered directives."""
     for key, totals in sorted(branch_totals.items()):
         relpath, lineno, column, text = key
         true_count = int(totals["true_count"])
         false_count = int(totals["false_count"])
         if true_count > 0 and false_count > 0:
+            continue
+
+        suppression_keys = totals["suppression_keys"]
+        if suppression_keys:
+            triggered_suppressions.update(suppression_keys)
             continue
 
         instance_count = int(totals["instances"])
@@ -482,13 +662,19 @@ def add_merged_branches(entries: Set[str],
 
 
 def collect_functions(
-    function_totals: Dict[FunctionKey, Dict[str, Any]],
     root_dir: str,
     functions: Sequence[Dict[str, Any]],
     ignore_rules: Sequence[IgnoreRule],
-    suppressed_lines_by_path: Dict[str, Set[int]],
+    suppressions_by_path: Dict[str, SuppressionInfo],
+    function_totals: Dict[FunctionKey, Dict[str, Any]],
 ) -> None:
-    """Accumulate execution counts for one source function site across TUs."""
+    """Accumulate execution counts for each source function site across TUs.
+
+    `root_dir` resolves each function's source path. `functions` contains raw
+    LLVM function records. `ignore_rules` excludes configured function sites.
+    `suppressions_by_path` provides directives for each source file.
+    `function_totals` is the mutable output accumulator.
+    """
     for function in functions:
         relpath = function_rel_project_path(root_dir, function)
         if relpath is None:
@@ -498,25 +684,36 @@ def collect_functions(
         if lineno is None:
             continue
         display_name = function_display_name(function.get("name", "<unknown>"))
-        if lineno in suppressed_lines_by_path.get(relpath, set()):
-            continue
         if is_ignored_function(ignore_rules, relpath, display_name):
             continue
         key = FunctionKey(relpath, lineno, display_name)
         totals = function_totals.setdefault(
             key,
-            {"count": 0, "instances": 0},
+            {"count": 0, "instances": 0, "suppression_keys": set()},
         )
         totals["count"] += int(function.get("count", 0))
         totals["instances"] += 1
+        suppression_info = suppressions_by_path.get(relpath)
+        if suppression_info is not None:
+            totals["suppression_keys"].update(suppression_keys_for_line(
+                relpath, lineno, suppression_info
+            ))
 
 
-def add_merged_functions(entries: Set[str],
-                         function_totals: Dict[FunctionKey, Dict[str, Any]]) -> None:
-    """Emit one entry per source function site that never ran anywhere."""
+def add_merged_functions(
+    function_totals: Dict[FunctionKey, Dict[str, Any]],
+    triggered_suppressions: Set[SuppressionKey],
+    entries: Set[str],
+) -> None:
+    """Emit unsuppressed function findings and record triggered directives."""
     for key, totals in sorted(function_totals.items()):
         relpath, lineno, display_name = key
         if int(totals["count"]) != 0:
+            continue
+
+        suppression_keys = totals["suppression_keys"]
+        if suppression_keys:
+            triggered_suppressions.update(suppression_keys)
             continue
 
         instance_count = int(totals["instances"])
@@ -532,21 +729,55 @@ def add_merged_functions(entries: Set[str],
         )
 
 
+def find_unused_suppression_entries(
+    source_cache: Dict[str, List[str]],
+    suppressions_by_path: Dict[str, SuppressionInfo],
+    triggered_suppressions: Set[SuppressionKey],
+) -> Set[str]:
+    """Return quickfix entries for directives that matched no findings.
+
+    Only files present in LLVM's coverage export are considered. A directive is
+    unused when it did not suppress an uncovered line, branch, or function.
+    """
+    entries: Set[str] = set()
+
+    for relpath, suppression_info in suppressions_by_path.items():
+        source_lines = source_cache[relpath]
+        for lineno in suppression_info.directive_lines:
+            if SuppressionKey(relpath, lineno) in triggered_suppressions:
+                continue
+            text = source_line_text(source_lines, lineno)
+            entries.add(
+                f"{relpath}:{lineno}:1: unused coverage suppression: {text}"
+            )
+
+    return entries
+
+
 def format_metric(label: str, metric: Dict[str, Any]) -> str:
     """Render one coverage percentage/count pair for the summary file."""
     return f"{label}: {metric['percent']:.2f}% of {metric['count']}"
 
 
 def main() -> int:
-    """Transform `llvm-cov export` JSON into summary.txt and uncovered.qf."""
-    if len(sys.argv) != 7:
+    """Transform `llvm-cov export` JSON into text coverage artifacts."""
+    if len(sys.argv) != 8:
         print(
-            "usage: build-coverage-report.py ROOT_DIR BUILD_DIR PROFDATA JSON SUMMARY UNCOVERED_QF",
+            "usage: build-coverage-report.py ROOT_DIR BUILD_DIR PROFDATA JSON "
+            "SUMMARY UNCOVERED_QF UNUSED_SUPPRESSIONS_QF",
             file=sys.stderr,
         )
         return 1
 
-    root_dir, build_dir, profdata_path, json_path, summary_path, uncovered_path = sys.argv[1:]
+    (
+        root_dir,
+        build_dir,
+        profdata_path,
+        json_path,
+        summary_path,
+        uncovered_path,
+        unused_suppressions_path,
+    ) = sys.argv[1:]
 
     with open(json_path, encoding="utf-8") as stream:
         export_data = json.load(stream)
@@ -559,7 +790,8 @@ def main() -> int:
 
     payload = export_data["data"][0]
     source_cache: Dict[str, List[str]] = {}
-    suppressed_lines_by_path: Dict[str, Set[int]] = {}
+    suppressions_by_path: Dict[str, SuppressionInfo] = {}
+    triggered_suppressions: Set[SuppressionKey] = set()
     uncovered_entries: Set[str] = set()
     branch_totals: Dict[BranchKey, Dict[str, Any]] = {}
     function_totals: Dict[FunctionKey, Dict[str, Any]] = {}
@@ -573,18 +805,22 @@ def main() -> int:
             continue
 
         source_lines = load_cached_source_lines(root_dir, relpath, source_cache,
-                                                suppressed_lines_by_path)
+                                                suppressions_by_path)
         if source_lines is None:
             continue
 
         summary_rows.append((relpath, file_data["summary"]))
         add_uncovered_lines(
-            uncovered_entries,
             relpath,
             source_lines,
             file_data.get("segments", []),
-            suppressed_lines_by_path[relpath],
+            suppressions_by_path[relpath],
             ignore_rules,
+            find_executed_expansion_wrappers(
+                file_data.get("expansions", [])
+            ),
+            triggered_suppressions,
+            uncovered_entries,
         )
 
     for function in payload.get("functions", []):
@@ -592,26 +828,31 @@ def main() -> int:
         if relpath is None:
             continue
         if load_cached_source_lines(root_dir, relpath, source_cache,
-                                    suppressed_lines_by_path) is None:
+                                    suppressions_by_path) is None:
             continue
         collect_function_branches(
-            branch_totals,
             root_dir,
             function,
-            source_cache,
-            suppressed_lines_by_path,
             ignore_rules,
+            source_cache,
+            suppressions_by_path,
+            branch_totals,
         )
 
-    add_merged_branches(uncovered_entries, branch_totals)
+    add_merged_branches(branch_totals, triggered_suppressions,
+                        uncovered_entries)
     collect_functions(
-        function_totals,
         root_dir,
         payload.get("functions", []),
         ignore_rules,
-        suppressed_lines_by_path,
+        suppressions_by_path,
+        function_totals,
     )
-    add_merged_functions(uncovered_entries, function_totals)
+    add_merged_functions(function_totals, triggered_suppressions,
+                         uncovered_entries)
+    unused_suppression_entries = find_unused_suppression_entries(
+        source_cache, suppressions_by_path, triggered_suppressions
+    )
 
     summary_rows.sort(key=lambda item: item[0])
     totals = payload["totals"]
@@ -637,6 +878,12 @@ def main() -> int:
 
     with open(uncovered_path, "w", encoding="utf-8") as stream:
         for entry in sorted(uncovered_entries, key=uncovered_entry_sort_key):
+            stream.write(entry)
+            stream.write("\n")
+
+    with open(unused_suppressions_path, "w", encoding="utf-8") as stream:
+        for entry in sorted(unused_suppression_entries,
+                            key=uncovered_entry_sort_key):
             stream.write(entry)
             stream.write("\n")
 

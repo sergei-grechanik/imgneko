@@ -986,7 +986,7 @@ static size_t *opt_run_ctx_primary_positional_index(OptRunCtx *ctx) {
 // top-level schema is not primary) and there is a top-level schema.
 static bool opt_run_ctx_has_top_level_option_fallback(const OptRunCtx *ctx) {
     return ctx->selected_command != NULL &&
-           ctx->parser->top_level_schema != NULL; // IMGNEKO_UNCOVERED_OK
+           ctx->parser->top_level_schema != NULL;
 }
 
 // Return true when the next positional slot exists but is blocked until a bare

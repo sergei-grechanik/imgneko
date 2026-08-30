@@ -71,6 +71,7 @@ STAGED_DEPFILE := $(BUILD_DIR)/dependencies.mk
 FINAL_DEPFILE := $(ROOT_DIR)/mk/dependencies.mk
 COVERAGE_SUMMARY := $(COVERAGE_DIR)/summary.txt
 COVERAGE_UNCOVERED := $(COVERAGE_DIR)/uncovered.qf
+COVERAGE_UNUSED_SUPPRESSIONS := $(COVERAGE_DIR)/unused-suppressions.qf
 COVERAGE_PROFDATA := $(COVERAGE_DIR)/coverage.profdata
 
 # Marks the last successful instrumented test run that populated
@@ -482,7 +483,12 @@ coverage-report: check-config-date
 		"$(LLVM_PROFDATA)" "$(LLVM_COV)" \
 		"$(BIN_IMGNEKO)" $(TEST_TOOLS) $(TEST_C_BINS_DEFAULT)
 	@printf '%s\n' "Wrote $(call display_path,$(COVERAGE_SUMMARY))"
-	@printf '%s\n' "Wrote $(call display_path,$(COVERAGE_UNCOVERED))"
+	@printf 'Wrote %s (%d lines)\n' \
+		"$(call display_path,$(COVERAGE_UNCOVERED))" \
+		"$$(wc -l < "$(COVERAGE_UNCOVERED)")"
+	@printf 'Wrote %s (%d lines)\n' \
+		"$(call display_path,$(COVERAGE_UNUSED_SUPPRESSIONS))" \
+		"$$(wc -l < "$(COVERAGE_UNUSED_SUPPRESSIONS)")"
 endif
 else
 coverage: check-config-date

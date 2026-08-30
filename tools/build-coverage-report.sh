@@ -3,8 +3,8 @@
 
 # Build coverage artifacts from Clang source-based profile data. `make
 # coverage` populates OUTPUT_DIR/profiles with raw .profraw files, then calls
-# this script to merge them and emit both a summary and a quickfix-friendly list
-# of uncovered locations.
+# this script to merge them and emit a summary plus quickfix-friendly lists of
+# uncovered locations and unused source suppressions.
 
 set -eu
 
@@ -28,6 +28,7 @@ PROFILE_DIR=$OUTPUT_DIR/profiles
 PROFDATA=$OUTPUT_DIR/coverage.profdata
 SUMMARY=$OUTPUT_DIR/summary.txt
 UNCOVERED_QF=$OUTPUT_DIR/uncovered.qf
+UNUSED_SUPPRESSIONS_QF=$OUTPUT_DIR/unused-suppressions.qf
 TMP_JSON=$(mktemp)
 TMP_WARNINGS=$(mktemp)
 TMP_OBJECTS=$(mktemp)
@@ -79,7 +80,8 @@ done <"$TMP_OBJECTS"
 "$LLVM_COV" export "$@" >"$TMP_JSON" 2>"$TMP_WARNINGS"
 
 python3 "$ROOT_DIR/tools/build-coverage-report.py" \
-    "$ROOT_DIR" "$BUILD_DIR" "$PROFDATA" "$TMP_JSON" "$SUMMARY" "$UNCOVERED_QF"
+    "$ROOT_DIR" "$BUILD_DIR" "$PROFDATA" "$TMP_JSON" "$SUMMARY" \
+    "$UNCOVERED_QF" "$UNUSED_SUPPRESSIONS_QF"
 
 if [ -s "$TMP_WARNINGS" ]; then
     printf '%s\n' "coverage tool warnings:" >&2

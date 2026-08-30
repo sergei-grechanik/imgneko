@@ -1138,11 +1138,8 @@ static PlaceholderError append_row_start(PlaceholderChunker *chunker,
 static PlaceholderError append_row_end(PlaceholderChunker *chunker, void *ctx) {
     AppendRowContext *row_end = ctx;
 
-    if (!row_end->options->grapheme_only && chunker->needs_reset) {
-        // IMGNEKO_UNCOVERED_OK[2 lines]: Reset padding is reserved before
-        // row-end reset, so this never fails.
+    if (!row_end->options->grapheme_only && chunker->needs_reset)
         TRY_APPEND(chunker_put_reset(chunker));
-    }
 
     return append_position(chunker, row_end->placeholder, row_end->options,
                            row_end->row,

@@ -627,8 +627,6 @@ int main(int argc, char **argv) {
     }
 
     switch (parsed.command_id) { // IMGNEKO_UNCOVERED_OK
-    // IMGNEKO_UNCOVERED_OK[4 lines]: The parser either exited early for
-    // `--version` or selected a concrete command before we reach this switch.
     case OPT_CMD_NONE:
         rc = 0;
         break;
