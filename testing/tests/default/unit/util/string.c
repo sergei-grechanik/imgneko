@@ -215,7 +215,40 @@ static int test_printf(TestContext *ctx) {
     string = str_printf("%s:%03d:%s", "value", 7, "abcdefghijklmnopqrstuvwxyz");
     status = expect_string_eq(name, string.cstr, string.len,
                               STR("value:007:abcdefghijklmnopqrstuvwxyz"));
+    if (status != 0)
+        goto cleanup;
 
+    // Mix floating-point arguments with enough integer arguments to require
+    // stack passing, and verify that every argument is read correctly.
+    str_free(string);
+    string =
+        str_printf("%.1f:%d:%d:%d:%d:%d:%d:%s", 1.5, 1, 2, 3, 4, 5, 6, "end");
+    status = expect_string_eq(name, string.cstr, string.len,
+                              STR("1.5:1:2:3:4:5:6:end"));
+    if (status != 0)
+        goto cleanup;
+
+    // A format without arguments.
+    str_free(string);
+    string = str_printf("progress:100%%");
+    status =
+        expect_string_eq(name, string.cstr, string.len, STR("progress:100%"));
+    if (status != 0)
+        goto cleanup;
+
+    // A single floating-point argument.
+    str_free(string);
+    string = str_printf("%.1f", 1.5);
+    status = expect_string_eq(name, string.cstr, string.len, STR("1.5"));
+    if (status != 0)
+        goto cleanup;
+
+    // Two arguments of different types.
+    str_free(string);
+    string = str_printf("%s:%03d", "value", 7);
+    status = expect_string_eq(name, string.cstr, string.len, STR("value:007"));
+
+cleanup:
     str_free(string);
     return status;
 }

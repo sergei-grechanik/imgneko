@@ -67,6 +67,7 @@ jobs:
           git diff --exit-code -- src/imgneko/rowcolumn_diacritics.c
 
   # Run `make test` and `make test-extra` with the default configuration.
+  # Also run the default test suite with TCC to check compiler portability.
   make-test-default:
     runs-on: ubuntu-latest
     needs: generated-file-check
@@ -88,6 +89,14 @@ jobs:
 
       - name: Run extra-profile tests
         run: make -j4 test-extra 2>&1
+
+      - name: Install TCC
+        run: sudo apt-get install -y tcc zlib1g-dev
+
+      - name: Configure and run default test suite with TCC
+        run: |
+          ./configure --profile=tcc
+          make -j4 -C build/tcc test 2>&1
 
   # Run the small benchmark with the release configuration.
   benchmark-small:

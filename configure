@@ -9,7 +9,7 @@ Usage:
   ./configure [OPTIONS] [VAR=VALUE ...]
 
 Options:
-  --profile=NAME       Select profile: default, release, debug, asan, dev
+  --profile=NAME       Select profile: default, release, tcc, debug, asan, dev
   --build-dir=DIR      Build directory (default: build/<profile>)
   --comp-db-mj         Generate compile_commands.json via compiler -MJ output
   --coverage-report    Enable Clang source-based coverage and `make coverage`
@@ -701,6 +701,21 @@ case $PROFILE in
         : "${CC:=cc}"
         : "${CPPFLAGS:=}"
         : "${CFLAGS:=--std=c99 -O2 -DNDEBUG -Wall -Wextra -Wpedantic}"
+        : "${LDFLAGS:=}"
+        : "${LDLIBS:=}"
+        : "${LLVM_PROFDATA:=}"
+        : "${LLVM_COV:=}"
+        : "${FEATURE_X:=OFF}"
+        : "${COMP_DB_MJ:=OFF}"
+        : "${COVERAGE_REPORT:=OFF}"
+        : "${DEPFILES:=OFF}"
+        : "${TEST_JOBS:=$DEFAULT_TEST_JOBS}"
+        ;;
+    tcc)
+        : "${PREFIX:=/usr/local}"
+        : "${CC:=tcc}"
+        : "${CPPFLAGS:=}"
+        : "${CFLAGS:=-std=c99 -O2 -Wall}"
         : "${LDFLAGS:=}"
         : "${LDLIBS:=}"
         : "${LLVM_PROFDATA:=}"

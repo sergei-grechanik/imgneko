@@ -291,6 +291,17 @@ String str_printf(const char *format, ...) {
     va_list args;
 
     va_start(args, format);
+
+#if defined(__TINYC__) && defined(__x86_64__) && !defined(_WIN32)
+    // Older TinyCC versions omit the hidden String return pointer when
+    // initializing the SysV register offset. Both it and format precede the
+    // varargs, so skip format if only a single pointer was accounted for.
+    // Checking the offset also leaves fixed TinyCC versions unaffected.
+    if (args[0].gp_offset == 8)
+        (void)va_arg(args, const char *);
+#endif
+
+    // Format the string before releasing the argument list.
     String result = str_vprintf(format, args);
     va_end(args);
     return result;

@@ -8,7 +8,6 @@
 #include <assert.h>
 #include <errno.h>
 #include <fcntl.h>
-#include <regex.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -16,6 +15,14 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
+
+// Older TinyCC cannot parse the parameter-dependent array bound in glibc's
+// regexec declaration. Omit that optional bound while preserving the ABI.
+#if defined(__TINYC__) && defined(__GLIBC__)
+#define _REGEX_NELTS(n)
+#endif
+
+#include <regex.h>
 
 #include "run-and-check-expr.h"
 #include "util/array.h"
