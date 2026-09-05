@@ -481,13 +481,16 @@ def find_executed_expansion_wrappers(
 
     for expansion in expansions:
         source_region = LlvmRegion.from_json(expansion["source_region"])
+        if (source_region.kind != LLVM_EXPANSION_REGION_KIND or
+                source_region.execution_count != 0):
+            continue
+
+        # LLVM repeats large target-region lists for each expansion. Decode them
+        # only for zero-count wrappers that need a descendant execution check.
         target_regions = [
             LlvmRegion.from_json(region)
             for region in expansion.get("target_regions", [])
         ]
-        if (source_region.kind != LLVM_EXPANSION_REGION_KIND or
-                source_region.execution_count != 0):
-            continue
         if not expansion_has_executed_descendant(
             target_regions, source_region.expanded_file_id
         ):
