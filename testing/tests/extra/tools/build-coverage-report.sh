@@ -3,6 +3,7 @@
 # RUN: sh %s
 
 # Verify coverage-record transformations that require LLVM's structured data.
+# This extra test runs the Python report generator on a synthetic LLVM export.
 # Branches must use their recorded source file, and executed macro expansions
 # must not leave false zero-count wrapper entries behind.
 

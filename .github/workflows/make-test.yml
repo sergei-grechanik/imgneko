@@ -2,9 +2,6 @@
 
 name: Make Test
 
-# This workflow runs all tests with the default and development configurations
-# and the small benchmark suite with the release configuration.
-
 on:
   push:
     branches: ["main", "dev"]
@@ -69,7 +66,7 @@ jobs:
           python3 tools/generate-rowcolumn-helpers.py
           git diff --exit-code -- src/imgneko/rowcolumn_diacritics.c
 
-  # Run `make test` with the default configuration.
+  # Run `make test` and `make test-extra` with the default configuration.
   make-test-default:
     runs-on: ubuntu-latest
     needs: generated-file-check
@@ -87,7 +84,10 @@ jobs:
         run: ./configure
 
       - name: Run default-profile tests
-        run: make test 2>&1
+        run: make -j4 test 2>&1
+
+      - name: Run extra-profile tests
+        run: make -j4 test-extra 2>&1
 
   # Run the small benchmark with the release configuration.
   benchmark-small:
@@ -129,7 +129,7 @@ jobs:
 
       - name: Run dev-profile coverage
         # Note: This will run all tests and also generate a coverage report.
-        run: make BUILD_DIR=build/dev coverage 2>&1
+        run: make -j4 BUILD_DIR=build/dev coverage 2>&1
 
       - name: Require empty uncovered quickfix report
         run: |
@@ -138,6 +138,9 @@ jobs:
             echo "error: build/dev/coverage/uncovered.qf is not empty" >&2
             exit 1
           fi
+
+      - name: Run tests again, just in case
+        run: make -j4 BUILD_DIR=build/dev test 2>&1
 
   # Run `make test` with the dev configuration on macOS.
   make-test-macos:

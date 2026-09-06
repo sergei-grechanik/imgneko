@@ -19,7 +19,9 @@ output_json=$2
 output_dir=$(dirname "$output_json")
 mkdir -p "$output_dir"
 
-tmp_output=$output_json.tmp
+# Independent refreshes can run concurrently. Give each writer its own file
+# beside the destination so the final rename remains atomic.
+tmp_output=$(mktemp "$output_json.tmp.XXXXXX")
 trap 'rm -f "$tmp_output"' EXIT HUP INT TERM
 
 {

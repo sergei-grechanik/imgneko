@@ -38,10 +38,13 @@ BIN_DIR        := $(BUILD_DIR)/bin
 OBJ_DIR        := $(BUILD_DIR)/obj
 GEN_DIR        := $(BUILD_DIR)/generated
 TEST_BIN_DIR   := $(OBJ_DIR)/test-bin
+TEST_BIN_DIR_EXTRA := $(OBJ_DIR)/test-bin-extra
 TEST_OUTPUT_DIR := $(BUILD_DIR)/test-outputs
 TEST_OUTPUT_DIR_DEFAULT := $(TEST_OUTPUT_DIR)/default
+TEST_OUTPUT_DIR_EXTRA := $(TEST_OUTPUT_DIR)/extra
 TEST_OUTPUT_DIR_BENCHMARK := $(TEST_OUTPUT_DIR)/benchmark
 TESTS_DIR_DEFAULT := $(ROOT_DIR)/testing/tests/default
+TESTS_DIR_EXTRA := $(ROOT_DIR)/testing/tests/extra
 TESTS_DIR_BENCHMARK := $(ROOT_DIR)/testing/tests/benchmark
 COVERAGE_DIR   := $(BUILD_DIR)/coverage
 COVERAGE_PROFILE_DIR := $(COVERAGE_DIR)/profiles
@@ -99,6 +102,7 @@ TEST_TOOL_SOURCES := $(addprefix testing/tools/,$(addsuffix .c,$(TEST_TOOL_NAMES
 TEST_SUPPORT_SOURCES := $(shell if [ -d "$(ROOT_DIR)/testing/support" ]; then cd "$(ROOT_DIR)" && find testing/support -type f -name '*.c' -print | LC_ALL=C sort; fi)
 TEST_SOURCES_DEFAULT := $(shell if [ -d "$(TESTS_DIR_DEFAULT)" ]; then cd "$(ROOT_DIR)" && find testing/tests/default -type f -print | LC_ALL=C sort; fi)
 TEST_C_SOURCES_DEFAULT := $(shell if [ -d "$(TESTS_DIR_DEFAULT)" ]; then cd "$(ROOT_DIR)" && find testing/tests/default -type f -name '*.c' -print | LC_ALL=C sort; fi)
+TEST_C_SOURCES_EXTRA := $(shell if [ -d "$(TESTS_DIR_EXTRA)" ]; then cd "$(ROOT_DIR)" && find testing/tests/extra -type f -name '*.c' -print | LC_ALL=C sort; fi)
 TEST_SOURCES_BENCHMARK := $(shell if [ -d "$(TESTS_DIR_BENCHMARK)" ]; then cd "$(ROOT_DIR)" && find testing/tests/benchmark -type f -print | LC_ALL=C sort; fi)
 TEST_C_SOURCES_BENCHMARK := $(shell if [ -d "$(TESTS_DIR_BENCHMARK)" ]; then cd "$(ROOT_DIR)" && find testing/tests/benchmark -type f -name '*.c' -print | LC_ALL=C sort; fi)
 
@@ -119,13 +123,14 @@ TEST_SUPPORT_OBJECTS := $(addprefix $(OBJ_DIR)/,$(TEST_SUPPORT_SOURCES:.c=.o))
 TEST_TOOLS := $(BIN_TEST_RUNNER) $(BIN_RUN_AND_CHECK) $(TEST_TOOL_BINS)
 BENCHMARK_TOOLS := $(BIN_TEST_RUNNER) $(BIN_BENCHMARK_READERS)
 TEST_C_BINS_DEFAULT := $(patsubst testing/tests/default/%.c,$(TEST_BIN_DIR)/%.c.bin,$(TEST_C_SOURCES_DEFAULT))
+TEST_C_BINS_EXTRA := $(patsubst testing/tests/extra/%.c,$(TEST_BIN_DIR_EXTRA)/%.c.bin,$(TEST_C_SOURCES_EXTRA))
 TEST_C_BINS_BENCHMARK := $(patsubst testing/tests/benchmark/%.c,$(TEST_BIN_DIR)/%.c.bin,$(TEST_C_SOURCES_BENCHMARK))
 ALL_OBJECTS_AND_BINS := \
 		$(OBJECTS) $(TEST_RUNNER_OBJECT) $(RUN_AND_CHECK_OBJECTS) \
 		$(BENCHMARK_READERS_OBJECT) \
 		$(TEST_TOOL_OBJECTS) \
 		$(TEST_SUPPORT_OBJECTS) $(TEST_C_BINS_DEFAULT) \
-		$(TEST_C_BINS_BENCHMARK)
+		$(TEST_C_BINS_EXTRA) $(TEST_C_BINS_BENCHMARK)
 
 ###############################################################################
 # Fixed project metadata
@@ -148,7 +153,7 @@ IMGNEKO_VERSION := $(strip $(file <$(VERSION_FILE)))
 #   - output cleanup targets: should remove stale logs without requiring
 #     configure
 #   - clean: should remove outputs even if the build dir was never configured
-NO_CONFIG_TARGETS := help clean clean-all clean-test-output clean-benchmark-output
+NO_CONFIG_TARGETS := help clean clean-all clean-test-output clean-test-extra-output clean-benchmark-output
 
 # Use the requested goals, or "all" if the user did not name one explicitly.
 REQUESTED_GOALS := $(if $(MAKECMDGOALS),$(MAKECMDGOALS),all)
@@ -351,6 +356,12 @@ $(TEST_C_BINS_DEFAULT): $(TEST_BIN_DIR)/%.c.bin: testing/tests/default/%.c $(TES
 	@mkdir -p "$(dir $@)"
 	$(CC) $(TEST_INCLUDES) $(COMMON_COMPILE_FLAGS) $(COMMON_LINK_FLAGS) "$<" $(TEST_SUPPORT_OBJECTS) $(TEST_BIN_SHARED_OBJECTS) -o "$@" $(COMMON_LDLIBS)
 
+ifneq ($(strip $(TEST_C_BINS_EXTRA)),)
+$(TEST_C_BINS_EXTRA): $(TEST_BIN_DIR_EXTRA)/%.c.bin: testing/tests/extra/%.c $(TEST_SUPPORT_OBJECTS) $(TEST_BIN_SHARED_OBJECTS) $(CONFIG_MK) $(BUILD_INFO_H) | check-config-date
+	@mkdir -p "$(dir $@)"
+	$(CC) $(TEST_INCLUDES) $(COMMON_COMPILE_FLAGS) $(COMMON_LINK_FLAGS) "$<" $(TEST_SUPPORT_OBJECTS) $(TEST_BIN_SHARED_OBJECTS) -o "$@" $(COMMON_LDLIBS)
+endif
+
 ifneq ($(strip $(TEST_C_BINS_BENCHMARK)),)
 $(TEST_C_BINS_BENCHMARK): $(TEST_BIN_DIR)/%.c.bin: testing/tests/benchmark/%.c $(TEST_SUPPORT_OBJECTS) $(TEST_BIN_SHARED_OBJECTS) $(CONFIG_MK) $(BUILD_INFO_H) | check-config-date
 	@mkdir -p "$(dir $@)"
@@ -381,27 +392,31 @@ endif
 
 .PHONY: all install clean coverage coverage-report depfile help \
 	check-config-date test test-deps test-list test-tools test-c-bins \
+	test-extra test-extra-deps test-extra-list test-extra-c-bins \
 	benchmark benchmark-small benchmark-large benchmark-deps \
 	benchmark-tools benchmark-c-bins \
-	clean-test-output clean-benchmark-output clean-all
+	clean-test-output clean-test-extra-output clean-benchmark-output clean-all
 
 # Targets to build things.
 all: check-config-date $(BIN_IMGNEKO)
-	@$(COMPILE_DB_REFRESH)
 test-tools: check-config-date $(TEST_TOOLS)
-	@$(COMPILE_DB_REFRESH)
 test-c-bins: check-config-date $(TEST_C_BINS_DEFAULT)
-	@$(COMPILE_DB_REFRESH)
+test-extra-c-bins: check-config-date $(TEST_C_BINS_EXTRA)
 benchmark-tools: check-config-date $(BENCHMARK_TOOLS)
-	@$(COMPILE_DB_REFRESH)
 benchmark-c-bins: check-config-date $(TEST_C_BINS_BENCHMARK)
-	@$(COMPILE_DB_REFRESH)
 
 # Build everything required to run tests without actually executing them.
 test-deps: check-config-date all test-tools test-c-bins
-
-# Build everything required to run benchmarks without executing them.
+test-extra-deps: check-config-date all test-tools test-extra-c-bins
 benchmark-deps: check-config-date benchmark-tools benchmark-c-bins
+
+# Share the compile db refresh recipe across build targets. Aggregate targets
+# refresh again after all their prerequisites finish, so the final database is
+# complete even when helper targets refresh while other parts of a parallel
+# build are running.
+all test-tools test-c-bins test-extra-c-bins benchmark-tools benchmark-c-bins \
+test-deps test-extra-deps benchmark-deps:
+	@$(COMPILE_DB_REFRESH)
 
 # Install the built binary.
 install: check-config-date all
@@ -413,6 +428,15 @@ test: check-config-date test-deps clean-test-output
 	@set --; \
 	if [ -n "$(FILTER)" ]; then set -- "$(FILTER)"; else set -- --all; fi; \
 	"$(BIN_TEST_RUNNER)" -j "$(TEST_RUNNER_JOBS)" "$$@"
+
+# Run the optional test set explicitly; normal tests and coverage never use it.
+test-extra: check-config-date test-extra-deps clean-test-extra-output
+	@set -- --all; \
+	if [ -n "$(FILTER)" ]; then set -- "$(FILTER)"; fi; \
+	"$(BIN_TEST_RUNNER)" -j "$(TEST_RUNNER_JOBS)" \
+		--tests-dir "$(TESTS_DIR_EXTRA)" \
+		--test-bin-dir "$(TEST_BIN_DIR_EXTRA)" \
+		--out-dir "$(TEST_OUTPUT_DIR_EXTRA)" "$$@"
 
 # The plain benchmark target runs the large workload; this shortcut selects the
 # small workload for quicker comparisons.
@@ -452,7 +476,7 @@ benchmark: check-config-date benchmark-deps
 
 
 ifeq ($(COVERAGE_REPORT),ON)
-# Run the full instrumented test suite only when any instrumented binary
+# Run the default instrumented test suite only when any instrumented binary
 # changed, then regenerate the merged coverage artifacts only when the raw
 # profiles or reporting inputs changed.
 $(COVERAGE_TESTS_STAMP): $(BIN_IMGNEKO) $(TEST_TOOLS) $(TEST_C_BINS_DEFAULT) $(TEST_SOURCES_DEFAULT) | check-config-date
@@ -501,20 +525,34 @@ endif
 
 # List tests.
 test-list: check-config-date test-tools test-c-bins
+	@$(COMPILE_DB_REFRESH)
 	@set -- --list; \
 	if [ -n "$(FILTER)" ]; then set -- "$$@" "$(FILTER)"; fi; \
 	"$(BIN_TEST_RUNNER)" "$$@"
 
+# List optional tests without discovering or building the default C tests.
+test-extra-list: check-config-date test-tools test-extra-c-bins
+	@$(COMPILE_DB_REFRESH)
+	@set -- --list; \
+	if [ -n "$(FILTER)" ]; then set -- "$$@" "$(FILTER)"; fi; \
+	"$(BIN_TEST_RUNNER)" --tests-dir "$(TESTS_DIR_EXTRA)" \
+		--test-bin-dir "$(TEST_BIN_DIR_EXTRA)" \
+		--out-dir "$(TEST_OUTPUT_DIR_EXTRA)" "$$@"
+
 # Remove captured per-test output files so each `make test` run starts fresh.
 clean-test-output:
 	rm -rf "$(TEST_OUTPUT_DIR_DEFAULT)"
+
+# Extra test runs replace only their own captured output.
+clean-test-extra-output:
+	rm -rf "$(TEST_OUTPUT_DIR_EXTRA)"
 
 # Remove all retained benchmark runs without touching default test output.
 clean-benchmark-output:
 	rm -rf "$(TEST_OUTPUT_DIR_BENCHMARK)"
 
 # Remove ordinary build and test outputs while retaining benchmark history.
-clean: clean-test-output
+clean: clean-test-output clean-test-extra-output
 	rm -rf "$(OBJ_DIR)" "$(BIN_DIR)" "$(GEN_DIR)" "$(COVERAGE_DIR)" "$(STAGED_DEPFILE)" "$(COMPILE_DB)"
 
 # Remove every generated output, including retained benchmark history.
