@@ -195,7 +195,17 @@ jobs:
         run: |
           apt-get update
           apt-get install -y --no-install-recommends \
-            gcc libc6-dev make zlib1g-dev
+            gcc libc6-dev make passwd util-linux zlib1g-dev
+
+      # Root bypasses the directory permissions exercised by the default tests.
+      # passwd provides useradd; util-linux provides runuser.
+      - name: Create unprivileged test user
+        run: useradd --create-home --user-group imgneko-test
+
+      - name: Give the test user ownership of the build directory
+        run: |
+          mkdir -p build/default
+          chown imgneko-test:imgneko-test build/default
 
       # Check after installation so transitive dependencies cannot silently
       # introduce a Python interpreter into the test system.
@@ -209,8 +219,12 @@ jobs:
           done
           printf "%s\n" "Confirmed that no Python interpreter is on PATH."
 
-      - name: Configure default build
-        run: ./configure --profile=default
+      - name: Configure default build as the test user
+        run: |
+          runuser --user imgneko-test -- \
+            ./configure --profile=default
 
-      - name: Run default-profile tests
-        run: make -C build/default test 2>&1
+      - name: Run default-profile tests as the test user
+        run: |
+          runuser --user imgneko-test -- \
+            make -C build/default test 2>&1

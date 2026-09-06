@@ -1693,8 +1693,8 @@ test_decompress_reader_prebuffered_truncated_input(TestContext *ctx) {
     return 0;
 }
 
-// Verify a compressor can call zlib with no input after writing its wrapper
-// header, then fetch source input and complete the stream.
+// Verify a compressor recovers from calls to zlib without buffered input and
+// produces a complete stream, regardless of when zlib emits its wrapper header.
 static int test_compress_reader_no_input_call(TestContext *ctx) {
     ImgnekoMemoryReader source = {0};
     ImgnekoZlibCompressReader compressor = {0};
@@ -1714,40 +1714,44 @@ static int test_compress_reader_no_input_call(TestContext *ctx) {
         goto cleanup;
     }
 
-    // Pretend zlib has pending work. The first call should emit only wrapper
-    // bytes and leave the source untouched.
+    // Pretend zlib has pending work. Older versions require source input before
+    // emitting the header, while newer versions can emit it immediately.
     compressor.needs_input = false;
     int status =
         imgneko_reader_read(imgneko_zlib_compress_reader_as_reader(&compressor),
                             out, sizeof(out), &len);
     if (test_expect_status(ctx, status, IMGNEKO_READER_OK,
-                           "no-input-call compression header") ||
-        test_expect_size(ctx, source.offset, 0,
-                         "no-input-call source offset before retry")) {
+                           "no-input-call compression header")) {
         result = 1;
         goto cleanup;
     }
-
-    // Repeat the unusual state after the header. With no pending output left,
-    // the implementation must recover by reading the source.
-    compressor.needs_input = false;
-    status =
-        imgneko_reader_read(imgneko_zlib_compress_reader_as_reader(&compressor),
-                            out, sizeof(out), &len);
-    if (test_expect_status(ctx, status, IMGNEKO_READER_OK,
-                           "no-input-call compression retry") ||
-        test_expect_size(ctx, source.offset, 1,
-                         "no-input-call source offset after retry")) {
-        result = 1;
-        goto cleanup;
-    }
-
-    // Preserve bytes returned by the manual calls, then drain the remainder to
-    // ensure the recovered state can finish a valid stream.
     str_append_data(compressed, out, len);
+
+    // Repeat the unusual state after the header and drain the stream. The
+    // source may already have been read, but both paths must recover and finish
+    compressor.needs_input = false;
     result = test_drain_reader(
         ctx, imgneko_zlib_compress_reader_as_reader(&compressor),
         /*chunk_size=*/8, &compressed);
+    if (result != 0)
+        goto cleanup;
+    if (test_expect_size(ctx, source.offset, 1,
+                         "no-input-call source offset after recovery")) {
+        result = 1;
+        goto cleanup;
+    }
+
+    // Decode all returned bytes with zlib's independent convenience API to
+    // verify that recovery preserved the header, payload, and stream trailer.
+    char recovered[16];
+    uLongf recovered_len = sizeof(recovered);
+    int zstatus = uncompress((Bytef *)recovered, &recovered_len,
+                             (const Bytef *)compressed.cstr, compressed.len);
+    if (test_expect_status(ctx, zstatus, Z_OK,
+                           "no-input-call output decoding") ||
+        test_expect_data(ctx, recovered, recovered_len, STR("x"),
+                         "no-input-call recovered data"))
+        result = 1;
 
 cleanup:
     str_free(compressed);
